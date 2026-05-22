@@ -1,0 +1,65 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/bluesky_sandbox/ui/designer/web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+
+      # Build the frontend explicitly rather than leaving it to setup.py, so a
+      # failure here is attributed to the frontend instead of to packaging.
+      - name: Build designer frontend
+        working-directory: src/bluesky_sandbox/ui/designer/web
+        run: npm ci --no-audit --no-fund && npm run build
+
+      - name: Build sdist and wheel
+        env:
+          BLUESKY_SANDBOX_FORCE_NPM: "1"
+        run: python -m build
+
+      # A wheel without the frontend installs cleanly and 404s at runtime, so
+      # verify the artifact carries it rather than trusting the build.
+      - name: Verify the wheel carries the frontend
+        run: |
+          python - <<'PY'
+          import glob, zipfile, sys
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          web = [n for n in names if "/ui/designer/web/dist/" in n]
+          assert any(n.endswith("index.html") for n in web), "no index.html in wheel"
+          assert any(n.endswith(".js") for n in web), "no JS bundle in wheel"
+          assert not any("node_modules" in n for n in names), "node_modules leaked"
+          print(f"frontend present: {len(web)} files")
+          PY
+          twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # PyPI trusted publishing; no API token needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

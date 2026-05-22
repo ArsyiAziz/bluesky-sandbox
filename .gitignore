@@ -1,0 +1,49 @@
+# Tests
+test.py
+merge_test.py
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Type checker cache
+.mypy_cache/
+mypy.ini
+
+# Test cache
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+checkpoints/
+runs/
+wandb/
+cleanrl_centralized_sac/
+
+.claude/
+/rl
+sac_eval.py
+sac_train.py
+
+/src/bluesky_sandbox/tasks/
+
+# Designer frontend. The compiled output is NOT committed: the release workflow
+# runs `npm run build` before packaging, so the wheel always carries a frontend
+# built from the sources in the same commit.
+/src/bluesky_sandbox/ui/designer/web/node_modules/
+/src/bluesky_sandbox/ui/designer/web/dist/
+/src/bluesky_sandbox/ui/designer/web/*.tsbuildinfo

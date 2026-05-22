@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bluesky-sandbox"
+dynamic = ["version"]
+description = "Configurable Gymnasium / PettingZoo environments on top of the BlueSky air traffic simulator"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Arsyi Aziz", email = "arsyia@gwu.edu" }]
+keywords = ["bluesky", "air-traffic", "atc", "reinforcement-learning", "gymnasium", "pettingzoo"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Version floors rather than pins: a library must not dictate exact versions
+# to the application installing it.
+#
+# bluesky-simulator is pinned to a fork by direct URL. Upstream's OpenAP
+# performance model has two defects this package is exposed to, because spawn
+# altitudes and speeds are drawn from the flight envelope:
+#   perfoap.py  the fixed-wing phase test reads `(phase >= CL) | (phase <= DE)`,
+#               true for every phase, so en-route limits apply in all phases -
+#               initial climb is held to the en-route envelope.
+#   coeff.py    `vsmin` is taken from the climb_vs_* wrappers, which are climb
+#               rates; the minimum vertical speed must come from descent_vs_*.
+# Both are fixed on the fork's `combined-fixes`. They are not separable into a
+# runtime shim: coeff.py runs at coefficient-load time, before anything of ours
+# is importable.
+#
+# NOTE: PyPI rejects distributions whose metadata carries a direct reference.
+# This pin must be resolved - fixes upstreamed, or the fork published under its
+# own name - before `bluesky-sandbox` can be uploaded.
+dependencies = [
+    "bluesky-simulator @ git+https://github.com/ArsyiAziz/bluesky.git@60e64486aca3dce205384d9a5e12b5318e6ecc50",
+    "numpy>=2.1",
+    "scipy>=1.14",
+    "shapely>=2.1",
+    "openap>=2.5",
+    "pyzmq>=27.1",
+    "wurlitzer>=3.1",
+    "gymnasium>=1.2",
+    "pettingzoo>=1.25",
+]
+
+[project.optional-dependencies]
+# Environment Designer web API (bluesky_sandbox.ui.designer)
+designer = ["fastapi>=0.115", "uvicorn>=0.34"]
+# render_mode="pygame"
+pygame = ["pygame>=2.6"]
+# render_mode="qtgl" - drives BlueSky's own QtGL radar window
+qtgl = ["bluesky-guidata>=1.0", "PyOpenGL>=3.1", "PyQt6>=6.7", "PyQt6-WebEngine>=6.7"]
+# render_mode="panda3d"
+panda3d = ["Panda3D>=1.10"]
+# video recording in the pygame driver
+recording = ["imageio>=2.37", "imageio-ffmpeg>=0.6"]
+all = ["bluesky-sandbox[designer,pygame,qtgl,panda3d,recording]"]
+dev = ["bluesky-sandbox[all]", "pytest>=8", "black>=24"]
+
+[project.scripts]
+bluesky-sandbox-doctor = "bluesky_sandbox.doctor:main"
+bluesky-sandbox-designer = "bluesky_sandbox.ui.designer.api:main"
+
+[project.urls]
+Homepage = "https://github.com/ArsyiAziz/bluesky_sandbox"
+Issues = "https://github.com/ArsyiAziz/bluesky_sandbox/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "bluesky_sandbox.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# The built designer frontend is served by the API at runtime; the TypeScript
+# sources and node_modules that produce it are not shipped.
+"bluesky_sandbox.ui.designer" = ["web/dist/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src/bluesky_sandbox/ui/designer/tests"]
+
+[tool.black]
+line-length = 88

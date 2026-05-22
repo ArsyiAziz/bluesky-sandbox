@@ -1,0 +1,2539 @@
+:root {
+  --bg: #1e1e1e;
+  --panel: #252526;
+  --border: #3c3c3c;
+  --text: #d4d4d4;
+  --muted: #888;
+  --accent: #3b82f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Single row, never wraps and never pushes the window into a horizontal
+   scrollbar. Everything that can lose width does so in a deliberate order:
+   the brand ellipsises first, then the project name and load select shrink,
+   while the tabs and the run/generate actions keep their full size - losing
+   the buttons you came to press is worse than losing a label. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: nowrap;
+  min-width: 0;
+  /* Scroll rather than clip. `overflow: hidden` here hides the fact that a
+     child has been squeezed past its content, which paints text over its
+     neighbours instead of admitting it does not fit. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.toolbar > * {
+  flex-shrink: 0;
+}
+
+.brand {
+  color: #fff;
+  margin-right: 8px;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+/* Below this the shrinkable fields have bottomed out and the actions would
+   start to clip, so the brand - the one element carrying no function - goes. */
+@media (max-width: 760px) {
+  .brand {
+    display: none;
+  }
+}
+
+.tab {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.undo-redo {
+  display: flex;
+  gap: 2px;
+  margin-left: 8px;
+}
+
+.undo-redo button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 7px;
+}
+
+.undo-redo svg {
+  display: block;
+}
+
+button,
+select,
+input {
+  background: #333;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.name-input {
+  width: 120px;
+}
+
+/* Shrink behaviour belongs to the toolbar only: `.name-input` is shared with
+   the Metadata tab, whose `.metadata-field` is a column flex container - there
+   a `flex` basis would size the box vertically and render it as a square. */
+.toolbar .name-input {
+  min-width: 72px;
+  flex: 0 1 120px;
+}
+
+.project-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 1;
+  overflow: hidden;
+}
+
+/* The right-hand group must be shrinkable, otherwise the `flex-shrink: 0` on
+   the toolbar's direct children stops the name field and load select inside it
+   from ever giving up width. Its buttons opt back out individually. */
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 1;
+}
+
+.toolbar-group > button,
+.toolbar-group > .toolbar-divider {
+  flex-shrink: 0;
+}
+
+.toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: var(--border);
+}
+
+.generate-btn {
+  border-color: var(--accent);
+  color: #cfe3ff;
+}
+
+.generate-btn:not(:disabled):hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.badge.ok {
+  background: #14532d;
+  color: #4ade80;
+}
+
+.badge.error {
+  background: #4c1d1d;
+  color: #f87171;
+}
+
+.badge.pending {
+  background: #333;
+  color: var(--muted);
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Map tab */
+.map-tab {
+  display: flex;
+  height: 100%;
+  width: 100%;
+}
+
+/* ---- Route tab: graph editor (top) over a read-only map (bottom) -------- */
+.route-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.route-top {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 60%;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.route-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.route-toolbar .route-select {
+  min-width: 160px;
+}
+
+.route-graph-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.route-graph {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.route-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.route-inspector {
+  width: 260px;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  overflow: auto;
+  padding: 10px;
+}
+
+.route-inspector-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.route-opt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.route-opt-row .route-weight {
+  width: 64px;
+}
+
+.route-bottom {
+  position: relative;
+  flex: 1 1 40%;
+  min-height: 0;
+}
+
+.route-map,
+.route-map.maplibregl-map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* React Flow custom nodes */
+.rf-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #2a2a2b;
+  font-size: 12px;
+  color: var(--fg, #ddd);
+  white-space: nowrap;
+}
+
+.rf-node.sel {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.rf-waypoint { background: #1f3a44; border-color: #2f6b7e; }
+.rf-subroute { background: #3a2f44; border-color: #6b4f8e; }
+.rf-start { background: #243524; border-color: #3f6b3f; }
+.rf-branch { background: #44381f; border-color: #8e6b2f; border-radius: 50%; padding: 6px 8px; }
+.rf-merge { background: #333; border-radius: 50%; width: 10px; height: 10px; padding: 0; }
+
+.rf-node-x {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+.rf-node-x:hover { color: #f87171; }
+
+.rf-handle {
+  width: 6px;
+  height: 6px;
+  background: var(--muted);
+  border: none;
+  opacity: 0.5;
+}
+.rf-merge .rf-handle { opacity: 0; }
+
+.map-area {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Higher specificity than maplibre's `.maplibregl-map` (which is loaded after
+   this file and would otherwise override position:absolute to relative and
+   collapse the height to 0). */
+.map-area .map-canvas,
+.map-area .map-canvas.maplibregl-map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.edit-handle-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  /* Clip handles to the map area so a shape panned past the right/top edge
+     doesn't render its drag dots on top of the design panel sidebar. */
+  overflow: hidden;
+}
+
+.edit-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 2px solid;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: grab;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+}
+
+.edit-handle:active {
+  cursor: grabbing;
+}
+
+.edit-handle.rotation {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 0;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.edit-handle.move {
+  width: 22px;
+  height: 22px;
+  border-width: 2px;
+  /* visible filled circle so the center drag point reads as distinct */
+}
+
+/* the 4-way move arrows rendered inside the move circle */
+.move-glyph {
+  position: absolute;
+  inset: 3px;
+  background: #fff;
+  pointer-events: none;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.map-overlay {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+  background: rgba(37, 37, 38, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 320px;
+}
+
+.map-info {
+  color: var(--muted);
+}
+
+.map-hint {
+  color: var(--accent);
+}
+
+.map-error {
+  color: #f87171;
+  white-space: pre-wrap;
+}
+
+.map-warning {
+  color: #fbbf24;
+  white-space: pre-wrap;
+}
+
+/* Code tab */
+.code-tab {
+  display: flex;
+  height: 100%;
+}
+
+.editor-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.editor-pane > :last-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.file-tree {
+  width: 220px;
+  background: #1b1b1b;
+  border-right: 1px solid var(--border);
+  overflow: auto;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.tree-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px 2px;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-family: ui-monospace, monospace;
+}
+
+.file-item:hover {
+  background: #2a2d2e;
+}
+
+.file-item.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.file-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.small {
+  font-size: 11px;
+}
+
+.inspector {
+  width: 300px;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px;
+  overflow: auto;
+}
+
+.inspector h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.summary dt {
+  color: var(--muted);
+}
+
+.summary dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.error-text {
+  color: #f87171;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.overlay-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.overlay-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.basemap-select {
+  width: 100%;
+}
+
+.layer-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 12px;
+}
+
+.layer-toggles label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.layer-toggles label.off {
+  color: var(--muted);
+}
+
+.overlay-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.line-width {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.line-width input[type="range"] {
+  width: 84px;
+  padding: 0;
+}
+
+.eye-toggle {
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.eye-toggle.off {
+  color: #f87171;
+  opacity: 0.85;
+}
+
+.lock-toggle {
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.lock-toggle.on {
+  opacity: 1;
+  filter: none;
+}
+
+/* Search box */
+.search-box {
+  position: relative;
+}
+
+.search-box > input {
+  width: 100%;
+}
+
+.search-results {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  background: #1b1b1b;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.search-results li {
+  display: flex;
+  align-items: center;
+}
+
+.search-results .result {
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 5px 8px;
+}
+
+.search-results .result:hover {
+  background: #2a2d2e;
+}
+
+.search-results .add {
+  border: none;
+  background: #2563eb;
+  border-radius: 0;
+  padding: 5px 9px;
+}
+
+.tag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-right: 6px;
+}
+
+.tag.apt {
+  background: #7c5b13;
+  color: #ffd98a;
+}
+
+.tag.wpt {
+  background: #234;
+  color: #9cf;
+}
+
+/* Design (properties) panel */
+/* Width is set inline by MapTab (drag-resizable, persisted); this is the
+   fallback for any other mount and the value the resizer resets to. */
+.design-panel {
+  width: 360px;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  overflow: auto;
+  padding: 6px 10px 30px;
+}
+
+/* Drag handle between the map and the design panel. The hit area is wider
+   than the visible line so it is grabbable without pixel-hunting. */
+.panel-resizer {
+  flex: 0 0 auto;
+  width: 6px;
+  margin: 0 -3px;
+  z-index: 6;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 120ms ease;
+  touch-action: none;
+}
+
+.panel-resizer:hover,
+.panel-resizer:active {
+  background: var(--accent);
+}
+
+.panel-tabs {
+  display: flex;
+  gap: 2px;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  padding: 4px 0 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  z-index: 1;
+}
+
+.panel-tab {
+  flex: 1;
+  padding: 5px 4px;
+  font-size: 11px;
+  background: #2a2a2b;
+  border: 1px solid var(--border);
+}
+
+.panel-tab.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.panel-section h4 {
+  margin: 10px 0 6px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.panel-section h4 em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 10px;
+  margin-left: auto;
+}
+
+.chev {
+  color: var(--muted);
+}
+
+.card {
+  background: #2a2a2b;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.row.between {
+  justify-content: space-between;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  margin-top: 6px;
+}
+
+.numfield {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--muted);
+  gap: 2px;
+}
+
+.numfield input,
+.numfield select,
+.numfield .picker {
+  width: 100%;
+}
+
+.numfield.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.numfield.inline > span {
+  min-width: 64px;
+}
+
+.numfield.inline input,
+.numfield.inline select,
+.numfield.inline .picker {
+  flex: 1;
+}
+
+.latlon {
+  display: grid;
+  grid-template-columns: 52px 1fr 1fr auto;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 6px;
+}
+
+.latlon-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.coordlist {
+  margin-top: 6px;
+}
+
+.vertex-alt-list {
+  display: grid;
+  gap: 6px;
+}
+
+.vertex-alt-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.opt-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.opt-field .numfield {
+  flex: 1;
+}
+
+.boolean-fp {
+  margin-top: 4px;
+}
+
+.operand {
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+  margin-top: 6px;
+  position: relative;
+}
+
+.operand-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.alt-select {
+  margin-top: 8px;
+}
+
+.sub-label {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  margin: 10px 0 2px;
+}
+
+/* Stronger break between the regions and waypoints groups in Queryables. */
+.sub-label.queryable-group {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.config-editor .grid2 {
+  margin-top: 6px;
+}
+
+.route-settings {
+  display: grid;
+  gap: 6px;
+}
+
+.route-item {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #2f2f31;
+}
+
+.route-item:hover {
+  border-color: #5f7eb7;
+}
+
+.route-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.route-item-head .name-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.route-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.route-control {
+  display: grid;
+  gap: 6px;
+}
+
+.route-waypoints {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.route-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.route-chip {
+  max-width: 100%;
+  padding: 2px 4px 2px 2px;
+  gap: 3px;
+}
+
+.route-seq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #1f2733;
+  color: #8fb3e0;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.route-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-add {
+  width: 100%;
+}
+
+.route-weights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.kind-tag {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.link {
+  background: transparent;
+  border: none;
+  color: #6ab0ff;
+  padding: 2px 4px;
+}
+
+.link.danger {
+  color: #f87171;
+}
+
+.radio {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.raw-json summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+.json-area {
+  width: 100%;
+  height: 120px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+/* Field lists (observations / actions) */
+.sample-region {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+}
+
+.subroute-chip {
+  background: #2f4a3a;
+  color: #cfead8;
+}
+
+/* A {choice} branch step: full-width block within the step row, holding one
+   editable option list per branch. */
+.route-branch {
+  flex: 1 0 100%;
+  border: 1px solid #4a5a3a;
+  border-left: 3px solid #8fb36a;
+  border-radius: 5px;
+  background: rgba(143, 179, 106, 0.08);
+  padding: 4px 6px 6px;
+}
+
+.route-branch-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.route-branch-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #b6d48a;
+  letter-spacing: 0.04em;
+}
+
+.route-branch-option {
+  margin-top: 5px;
+  padding: 4px 5px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+}
+
+.route-branch-option-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.route-branch-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #9bb0c8;
+  flex: 1;
+}
+
+.branch-weight {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.branch-weight input {
+  width: 46px;
+  padding: 1px 4px;
+}
+
+.branch-add-option {
+  margin-top: 5px;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+/* A waypoint step carrying a route-local crossing restriction. */
+.constrained-chip {
+  border: 1px solid #6a5a3a;
+  background: rgba(212, 175, 106, 0.12);
+}
+
+.route-xing {
+  font-size: 9px;
+  font-weight: 700;
+  color: #e0c48f;
+  background: #3a3324;
+  border-radius: 6px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.chip-cfg.on {
+  color: #e0c48f;
+}
+
+.route-xing-edit {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  padding: 4px 6px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+}
+
+.xing-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.xing-field input {
+  width: 56px;
+  padding: 1px 4px;
+}
+
+.route-assign-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.sec-search {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.card.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.card-body {
+  margin-top: 6px;
+}
+
+/* ---- Geometry tab: master (outline) + detail (inspector) --------------- */
+.geo-tab {
+  display: flex;
+  flex-direction: column;
+}
+
+.geo-search {
+  margin-bottom: 8px;
+}
+
+.geo-outline {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+
+.geo-group {
+  margin-bottom: 8px;
+}
+
+.geo-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.geo-group-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.geo-add {
+  font-size: 11px;
+  padding: 1px 7px;
+  background: #2a2a2b;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.geo-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.geo-row:hover {
+  background: #2a2a2b;
+}
+
+.geo-row.selected {
+  background: #2a2a2b;
+  border-color: var(--accent);
+}
+
+.geo-row-kind {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: #1f1f20;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  flex: none;
+}
+
+.geo-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.geo-inspector-empty {
+  padding: 16px 4px;
+  text-align: center;
+}
+
+/* A locked element's body: strip the fieldset chrome, then dim + block input
+   (the disabled fieldset already disables native controls; pointer-events
+   guards the custom div-based ones). */
+.geo-locked {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-inline-size: auto;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.geo-inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.geo-inspector-head .name-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.geo-inspector-name {
+  flex: 1;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* ---- Inspector sub-groups (FieldGroup) -------------------------------- */
+.field-group {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  margin-bottom: 6px;
+  background: #242425;
+}
+
+.field-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.field-group.open > .field-group-head {
+  border-bottom: 1px solid var(--border);
+}
+
+.field-group-title {
+  font-weight: 600;
+}
+
+.field-group-hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.field-group-body {
+  padding: 6px 8px 8px;
+}
+
+/* ---- Coordinates disclosure inside BoundsEditor ----------------------- */
+.coord-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 3px 0;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.coord-summary {
+  margin-left: auto;
+  color: var(--fg, #ddd);
+  font-size: 11px;
+}
+
+.kind-tag.clickable {
+  cursor: pointer;
+}
+
+.kind-tag.clickable:hover {
+  color: var(--text);
+}
+
+.chev-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0 4px 0 0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chev-btn:hover {
+  color: var(--text);
+}
+
+.route-assign-name {
+  min-width: 72px;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hook-add {
+  margin: 4px 6px;
+  width: calc(100% - 12px);
+}
+
+.hook-sig {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.hook-sig-def {
+  color: #9cdcfe;
+  font-weight: 600;
+}
+
+.hook-sig-name {
+  color: #dcdcaa; /* Monaco/VS function-name yellow */
+  font-weight: 700;
+}
+
+.hook-sig-doc {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.hook-hint h3 {
+  margin: 12px 0 4px;
+}
+
+/* Generic searchable dropdown (uniform with the fields/actions picker) */
+.picker {
+  position: relative;
+}
+
+.load-select {
+  min-width: 140px;
+}
+
+.toolbar .load-select {
+  min-width: 104px;
+  flex: 0 1 140px;
+  width: 140px;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.run-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.run-mode {
+  min-width: 96px;
+}
+
+.run-btn,
+.generate-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #1f6f43;
+  border-color: #2c8a57;
+  color: #eafff2;
+  font-weight: 600;
+}
+
+.run-btn:disabled {
+  opacity: 0.7;
+}
+
+.view-toggles {
+  display: flex;
+  gap: 2px;
+}
+
+.run-modal {
+  width: 420px;
+  max-width: 92vw;
+}
+
+.run-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.run-modal-body .run-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-modal-body .run-row-label {
+  min-width: 64px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.run-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.run-status {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.run-status.error {
+  color: #f08a8a;
+}
+
+/* Pulsing dot while the run is live. */
+.run-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5ad17a;
+  flex: none;
+  animation: run-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes run-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.run-log-panel {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.run-log-panel.crashed {
+  border-color: #7a3a3a;
+}
+
+.run-log-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.run-log-panel.crashed .run-log-head {
+  color: #f0a0a0;
+  background: rgba(122, 58, 58, 0.18);
+}
+
+.run-log {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 6px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #d8d8d8;
+}
+
+.view-toggle {
+  font-size: 10px;
+  padding: 3px 6px;
+  background: #2a2a2a;
+  color: var(--muted);
+}
+
+.view-toggle.on {
+  background: #2f4a3a;
+  color: #cfead8;
+  border-color: #3a6b4f;
+}
+
+.spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.picker-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+}
+
+.picker-trigger.open {
+  border-color: var(--accent);
+}
+
+.picker-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-placeholder {
+  color: var(--muted);
+}
+
+.picker-caret {
+  color: var(--muted);
+  font-size: 10px;
+  flex: 0 0 auto;
+}
+
+/* Portal menu — fixed-positioned so it never clips inside scroll containers. */
+.picker-menu {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  max-width: 360px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.picker-search {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg);
+}
+
+.picker-scroll {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.picker-empty {
+  padding: 8px;
+}
+
+.picker-group-label {
+  position: sticky;
+  top: 0;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+
+.picker-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 5px 8px;
+}
+
+.picker-opt.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.picker-opt.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.picker-opt.current .picker-opt-name::after {
+  content: " ✓";
+  color: var(--accent);
+}
+
+.picker-opt.active.current .picker-opt-name::after {
+  color: #fff;
+}
+
+.picker-opt-name {
+  font-size: 12px;
+}
+
+.picker-opt-doc {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.picker-opt.active .picker-opt-doc {
+  color: #e5edff;
+}
+
+.route-assign {
+  margin-top: 8px;
+}
+
+.route-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.route-matrix th,
+.route-matrix td {
+  border: 1px solid var(--border);
+  padding: 3px 4px;
+  text-align: center;
+}
+
+.route-matrix thead th {
+  color: var(--muted);
+  font-weight: 500;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-matrix .route-matrix-row {
+  text-align: left;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-matrix-cell {
+  cursor: pointer;
+}
+
+.field-list {
+  margin-bottom: 6px;
+}
+
+.rel-badge {
+  color: #cfb06a;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  flex: 1;
+}
+
+.value-field {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Footprint shape params: a vertical list of ValueFields, compacted to one
+   row each - [label | mode | value] - so four params don't tower over the
+   panel the way the stacked two-row layout would. The bulky distribution
+   editor breaks out to a full-width row beneath its param. */
+.fp-params {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.fp-params .value-field {
+  margin-top: 0;
+  display: grid;
+  grid-template-columns: minmax(60px, auto) 100px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px 6px;
+}
+
+.fp-params .value-field > .vf-head {
+  display: contents;
+}
+
+.fp-params .vf-spacer {
+  display: none;
+}
+
+.fp-params .value-field .vf-mode {
+  flex: none;
+  width: 100%;
+}
+
+.fp-params .value-field > .vf-input,
+.fp-params .value-field > .vf-row {
+  grid-column: 3;
+  min-width: 0;
+}
+
+.fp-params .value-field > .vf-dist,
+.fp-params .value-field > .muted {
+  grid-column: 1 / -1;
+}
+
+.opt-value-field {
+  margin-top: 6px;
+}
+
+.opt-value-field .value-field {
+  margin-top: 4px;
+  margin-left: 18px;
+}
+
+/* Two rows: [label … mode] then the value editor full width below. Keeps each
+   row within the narrow panel (nothing overflows). */
+.value-field .vf-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.value-field .vf-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.value-field .vf-spacer {
+  flex: 1;
+}
+
+.value-field .vf-mode {
+  flex: 0 0 110px;
+}
+
+.value-field .vf-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.value-field .vf-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.value-field .vf-row .vf-input {
+  flex: 1;
+  width: auto;
+}
+
+.value-field .vf-sep {
+  color: var(--muted);
+}
+
+.value-field .vf-dist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+}
+
+.value-field .vf-distname {
+  width: 100%;
+}
+
+.value-field .vf-params {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+}
+
+.value-field .vf-param {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.value-field .vf-param > span {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.value-field .vf-param input {
+  width: 100%;
+  min-width: 0;
+}
+
+.value-field .vf-sig {
+  word-break: break-word;
+}
+
+.swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.swatch.on {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.swatch.custom {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: conic-gradient(red, orange, yellow, lime, cyan, blue, magenta, red);
+  overflow: hidden;
+}
+
+.swatch.custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.groups-editor > .card {
+  margin-bottom: 6px;
+}
+
+.chip.member {
+  cursor: pointer;
+  background: #2a2a2a;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.chip.member.on {
+  background: #2f4a3a;
+  color: #cfead8;
+  border-color: #3a6b4f;
+}
+
+.strategy-note {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  line-height: 1.4;
+  font-style: italic;
+}
+
+.field-picker {
+  position: relative;
+}
+
+.field-picker-input {
+  width: 100%;
+}
+
+.field-picker-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.field-picker-empty {
+  padding: 8px;
+}
+
+.field-picker-group-label {
+  position: sticky;
+  top: 0;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+
+.field-picker-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 5px 8px;
+}
+
+.field-picker-opt.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.field-picker-opt-name {
+  font-size: 12px;
+}
+
+.field-picker-opt-doc {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-picker-opt.active .field-picker-opt-doc {
+  color: #e5edff;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #2f3a4a;
+  color: #cfe3ff;
+  border-radius: 10px;
+  padding: 2px 4px 2px 8px;
+  font-size: 11px;
+}
+
+.invalid-chip {
+  border: 1px solid #ff6b6b;
+  background: #4a2630;
+  color: #ffe5e5;
+}
+
+.chip-sig {
+  color: #8ba6c9;
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+}
+
+.chip-sig:empty {
+  display: none;
+}
+
+.rel-toggle {
+  margin: 2px 0 6px;
+}
+
+.chip-x {
+  background: transparent;
+  border: none;
+  color: #9ab;
+  padding: 0 2px;
+  font-size: 10px;
+}
+
+.intruder-block {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+
+.sampling {
+  font-size: 11px;
+}
+
+.sample-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+}
+
+.sample-table th,
+.sample-table td {
+  text-align: left;
+  padding: 2px 4px;
+  border-bottom: 1px solid #333;
+}
+
+.sample-table th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* Generate modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal {
+  width: 80vw;
+  height: 75vh;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-title {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modal-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  width: 220px;
+  border-right: 1px solid var(--border);
+  overflow: auto;
+}
+
+.file-list li {
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+}
+
+.file-list li.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.file-view {
+  flex: 1;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+
+/* Status bar */
+.statusbar {
+  display: flex;
+  gap: 10px;
+  padding: 4px 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+}
+
+.statusbar.invalid {
+  background: #7f1d1d;
+}
+
+.invalid-reason {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70vw;
+  font-weight: 600;
+}
+
+.chip-cfg {
+  background: transparent;
+  border: none;
+  color: #cfe3ff;
+  padding: 0 2px;
+  font-size: 10px;
+}
+
+.kwargs-editor {
+  margin: 4px 0;
+}
+
+.field-doc {
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+.field-config-modal {
+  width: min(1040px, 92vw);
+  height: min(760px, 86vh);
+}
+
+.modal-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.modal-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.modal-pane + .modal-pane {
+  border-left: 1px solid var(--border);
+}
+
+.normalizer-label {
+  margin-top: 16px;
+}
+
+.normalizer-params {
+  margin-top: 6px;
+}
+
+.modal-check {
+  margin-top: 8px;
+}
+
+.profile-list {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr);
+  gap: 4px 8px;
+  margin: 0 0 10px;
+  font-size: 11px;
+}
+
+.profile-list dt {
+  color: var(--muted);
+}
+
+.profile-list dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.source-profile {
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  max-height: 520px;
+  background: #1b1b1b;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: #d6e1f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.custom-code-editor {
+  height: 520px;
+  min-height: 280px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.function-modal {
+  width: min(920px, 90vw);
+  height: min(680px, 82vh);
+}
+
+.function-modal .modal-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.function-code-editor {
+  flex: 1;
+  min-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.code-ref-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 7px 9px;
+  text-align: left;
+  background: #2a2a2b;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.code-ref-card:hover {
+  border-color: #5f7eb7;
+  background: #2f3137;
+}
+
+.code-ref-title {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.code-ref-open {
+  color: #9ec5ff;
+  font-size: 11px;
+}
+
+@media (max-width: 820px) {
+  .modal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-pane + .modal-pane {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+
+/* Observation/action sample (Sampling tab) */
+.obs-sample .sample-agent { margin-top: 8px; }
+.obs-sample-scroll { overflow-x: auto; max-width: 100%; }
+.obs-sample .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.checkbox-row input {
+  cursor: pointer;
+}
+
+/* Waypoint stacks (merge points). Mirrors the route library's card vocabulary;
+   only the member row and the clearable value need their own rules. */
+.stack-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #272729;
+}
+
+.stack-member .route-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.optional-value {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.optional-value > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Metadata tab: the design's name-adjacent data - version + notes */
+.metadata-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+  overflow: auto;
+  /* .content sets no padding - each tab owns its own, and the map/code tabs
+     want none because they fill edge to edge. This one is a form, so it does. */
+  padding: 20px 24px 32px;
+  /* Prose and a single-column form: cap the measure rather than letting the
+     note stretch to a 2000px window, where it becomes unreadable. */
+  max-width: 820px;
+}
+.metadata-field { display: flex; flex-direction: column; gap: 6px; }
+.metadata-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7;
+}
+.metadata-note {
+  min-height: 340px; resize: vertical; font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px; line-height: 1.5; padding: 8px; border-radius: 4px;
+  background: inherit; color: inherit; border: 1px solid rgba(128, 128, 128, 0.35);
+}
+
+/* Picker option badge: a short qualifier (version, state) beside the label.
+   Coloured and tracked apart from the name so a design and its version read as
+   two facts, not one long string. */
+.picker-opt-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+  color: #2f7d8f;
+  background: rgba(47, 125, 143, 0.13);
+}
+@media (prefers-color-scheme: dark) {
+  .picker-opt-badge { color: #7fd0e0; background: rgba(127, 208, 224, 0.15); }
+}
+
+/* Hint marker: signals that a heading or label carries a hover explanation.
+   Deliberately quiet - it sits beside a title, so it must not compete with it.
+
+   The bubble below is a real element rather than the native ``title`` tooltip:
+   the native one waits about a second before appearing, which reads as "there
+   is no hint here". ``title`` is kept as well, for accessibility and for the
+   rest of the heading. */
+.hint-mark {
+  position: relative;
+  /* A z-index is required, not just ``position``. Without one the marker never
+     forms a stacking context, so its bubble is painted in the parent's context
+     and any later-positioned sibling - the input rows below a heading - lands
+     on top of it. Raised only while hovered, so it never shadows anything at
+     rest. */
+  z-index: 0;
+  margin-left: 5px;
+  font-size: 10px;
+  opacity: 0.45;
+  cursor: help;
+  user-select: none;
+}
+.hint-mark:hover {
+  opacity: 0.9;
+  z-index: 80;
+}
+
+.hint-bubble {
+  position: fixed;          /* placed by Hint.tsx; escapes sidebar clipping */
+  z-index: 100;
+  width: max-content;
+  max-width: 280px;         /* Hint.tsx assumes this when clamping to the right edge */
+  padding: 7px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  text-align: left;
+  color: #f2f5f7;
+  background: #1b2530;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  pointer-events: none;     /* never steals the hover that spawned it */
+}
+
+/* A heading that hosts a hint must not clip its bubble, and must sit above the
+   rows beneath it while showing one. Scoped to :hover so normal layout and
+   scrolling are untouched. */
+.panel-section h4:hover,
+.geo-group-head:hover,
+.opt-value-field > .radio:hover {
+  position: relative;
+  z-index: 80;
+  overflow: visible;
+}

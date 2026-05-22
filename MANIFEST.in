@@ -1,0 +1,4 @@
+include README.md
+recursive-include src/bluesky_sandbox/ui/designer/web/dist *
+prune src/bluesky_sandbox/ui/designer/web/node_modules
+exclude src/bluesky_sandbox/ui/designer/web/*.tsbuildinfo
