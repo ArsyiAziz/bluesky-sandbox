@@ -63,7 +63,9 @@ panda3d = ["Panda3D>=1.10"]
 # video recording in the pygame driver
 recording = ["imageio>=2.37", "imageio-ffmpeg>=0.6"]
 all = ["bluesky-sandbox[designer,pygame,qtgl,panda3d,recording]"]
-dev = ["bluesky-sandbox[all]", "pytest>=8", "black>=24"]
+# httpx2 backs starlette.testclient (starlette >=1.3 imports `httpx2 as httpx`);
+# without it the designer API tests fail at import, not at assertion.
+dev = ["bluesky-sandbox[all]", "pytest>=8", "black>=24", "httpx2>=2"]
 
 [project.scripts]
 bluesky-sandbox-doctor = "bluesky_sandbox.doctor:main"

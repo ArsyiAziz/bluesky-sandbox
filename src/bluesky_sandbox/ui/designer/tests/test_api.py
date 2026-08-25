@@ -159,5 +159,15 @@ def main() -> int:
     return 1 if failures else 0
 
 
+def test_api_smoke() -> None:
+    """Run the checks above under pytest.
+
+    ``main`` is written to be runnable standalone, so before this wrapper the
+    module collected zero tests: pytest imported it (and could fail on that
+    import) without ever executing a single check.
+    """
+    assert main() == 0
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
