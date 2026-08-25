@@ -4,6 +4,12 @@ Flexible Air Traffic Control (ATC) environment framework for Machine Learning.
 
 Bluesky Sandbox provides highly configurable PettingZoo (multi-agent) environments built on top of the [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) open-source ATM simulator. It allows you to emulate complex ATC scenarios—from sector conflict resolution to trajectory management, with minimal code.
 
+<p align="center">
+  <img src="docs/media/point-merge.gif" alt="Twenty aircraft sequencing onto a point merge, with live ETA and distance-to-merge tables" width="620">
+  <br>
+  <em>A point-merge task: twenty arrivals sequenced onto a single merge point, ETA and distance-to-merge tracked per callsign.</em>
+</p>
+
 ## Features
 
 * **Standard RL Interfaces:** PettingZoo `ParallelEnv` multi-agent environments.
@@ -58,6 +64,23 @@ for _ in range(1000):
 env.close()
 ```
 
+## Rendering
+
+Every task runs headless or in any of three renderers, selected with
+`render_mode`.
+
+**`render_mode="pygame"`** — 2D horizontal/vertical views with a sequencing table:
+
+![Pygame renderer showing an arrival sector, airspace boundary and labelled traffic](docs/media/screenshots/pygame.png)
+
+**`render_mode="panda3d"`** — the same airspace in 3D, with altitude made visible:
+
+![Panda3D renderer showing the airspace volume in 3D with labelled aircraft](docs/media/screenshots/panda3d.png)
+
+**`render_mode="qtgl"`** — BlueSky's own radar client, driven over ZMQ:
+
+![BlueSky QtGL radar window showing traffic over the Netherlands with conflict detection](docs/media/screenshots/qtgl.png)
+
 
 
 ## Installation
@@ -92,8 +115,12 @@ python -m bluesky_sandbox.ui.designer --port 8765 --reload
 
 Open `http://localhost:8765` in your browser to access the designer.
 
+![The Environment Designer with a CAMRN FOUR arrival into JFK: named waypoints, spawn regions and routes on the map, with the geometry outline alongside](docs/media/screenshots/designer.png)
+
+*Designing a CAMRN FOUR arrival into JFK — waypoints resolved from the navigation database, spawn regions, routes and per-element bounds, all editable on the map.*
+
 * **Frontend Development:** To work on the UI directly, run the Vite dev server inside `src/bluesky_sandbox/ui/designer/web`.
-* **Build Behavior:** The compiled frontend is not committed. A source install builds it with npm (so Node is required); a released wheel ships it prebuilt and needs no Node.
+* **Build Behavior:** The compiled frontend is not committed. A source install builds it with npm (so Node is required).
 
 ### Build Environment Flags
 
