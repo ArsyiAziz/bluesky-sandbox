@@ -72,8 +72,8 @@ bluesky-sandbox-doctor = "bluesky_sandbox.doctor:main"
 bluesky-sandbox-designer = "bluesky_sandbox.ui.designer.api:main"
 
 [project.urls]
-Homepage = "https://github.com/ArsyiAziz/bluesky_sandbox"
-Issues = "https://github.com/ArsyiAziz/bluesky_sandbox/issues"
+Homepage = "https://github.com/ArsyiAziz/bluesky-sandbox"
+Issues = "https://github.com/ArsyiAziz/bluesky-sandbox/issues"
 
 [tool.setuptools.dynamic]
 version = { attr = "bluesky_sandbox.__version__" }

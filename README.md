@@ -65,7 +65,7 @@ env.close()
 Not yet on PyPI — see [BlueSky Fork](#bluesky-fork). Install from git:
 
 ```bash
-pip install "bluesky-sandbox @ git+https://github.com/ArsyiAziz/bluesky_sandbox.git"
+pip install "bluesky-sandbox @ git+https://github.com/ArsyiAziz/bluesky-sandbox.git"
 ```
 
 ### Optional Extras
@@ -116,7 +116,7 @@ bluesky-sandbox-doctor
 
 ```bash
 # Clone the repository
-git clone https://github.com/ArsyiAziz/bluesky_sandbox.git
+git clone https://github.com/ArsyiAziz/bluesky-sandbox.git
 cd bluesky_sandbox
 
 # Install editable package with dev dependencies (Node required for UI build)
