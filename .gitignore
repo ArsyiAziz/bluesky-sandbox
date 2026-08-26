@@ -47,3 +47,6 @@ sac_train.py
 /src/bluesky_sandbox/ui/designer/web/node_modules/
 /src/bluesky_sandbox/ui/designer/web/dist/
 /src/bluesky_sandbox/ui/designer/web/*.tsbuildinfo
+
+# Sphinx build output
+docs/_build/
