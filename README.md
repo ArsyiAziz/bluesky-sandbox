@@ -1,12 +1,10 @@
 # Bluesky Sandbox
 
-Flexible Air Traffic Control (ATC) environment framework for Machine Learning.
+Highly Modular Air Traffic Control environment framework for Machine Learning.
 
-Bluesky Sandbox provides highly configurable PettingZoo (multi-agent) environments built on top of the [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) open-source ATM simulator. It allows you to emulate complex ATC scenarios—from sector conflict resolution to trajectory management, with minimal code.
+Bluesky Sandbox is a PettingZoo framework powered by the open-source BlueSky ATM simulator. It transforms complex Air Traffic Control challenges, from sector conflict resolution to trajectory optimization, into customizable machine learning environments with minimal setup.
 
-> **⚠️ Not on PyPI yet** — install from git:
-> `pip install "bluesky-sandbox @ git+https://github.com/ArsyiAziz/bluesky-sandbox.git"`
-> See [Installation](#installation) for extras and the reason why.
+> ⚠️ Note: Bluesky Sandbox is currently in active development and not yet on PyPI. Install directly via Git (see [Installation](#installation)).
 
 
 <p align="center">
@@ -17,16 +15,14 @@ Bluesky Sandbox provides highly configurable PettingZoo (multi-agent) environmen
 
 ## Features
 
-* **Standard RL Interfaces:** PettingZoo `ParallelEnv` multi-agent environments.
-* **Low Boilerplate:** Define complex airspace geometry, flight dynamics, and traffic scenarios in just a few lines.
-* **Low-Code UI:** Includes a web-based Environment Designer to visually construct custom scenarios.
-* **Flexible Rendering:** Modular support for Pygame, Panda3D, or BlueSky's native QtGL radar view.
+* **Native Multi-Agent RL:** Built from the ground up on the PettingZoo ParallelEnv standard.
+* **Low Boilerplate:**  Graphically plot airspaces, routes, and spawn sectors right in your browser.
+* **Low-Code UI:** Export full, clean Python task packages with pre-configured rewards, actions, and observations.
+* **Multi-Backend Rendering:** Choose between lightweight Pygame, immersive 3D Panda3D, or BlueSky’s native QtGL radar interface.
 
 ## Quickstart
 
-There is no catalogue of prebuilt environments to `gym.make` — an environment is
-something you design. The airspace, the traffic, the observations, the actions
-and the reward are all part of the task you are defining, so the first step is
+Instead of selecting from static prebuilt environments, Bluesky Sandbox lets you design custom tasks tailored to your exact research goals. The first step is
 always to build one.
 
 **1. Design an environment.** Start the designer and open `http://localhost:8765`:
@@ -50,7 +46,8 @@ demo_task/
   __main__.py   # python -m demo_task — a short smoke rollout
 ```
 
-**2. Run it.** The generated package exposes `Env`, ready to insert any algorithm:
+**2.  Plug in Your RL Algorithm.** The generated package exposes a standard PettingZoo Env interface:
+
 
 ```python
 from demo_task import Env
@@ -71,26 +68,21 @@ env.close()
 
 ## Rendering
 
-Every task runs headless or in any of three renderers, selected with
-`render_mode`.
+Switch renderers with a single argument (render_mode):
 
-**`render_mode="pygame"`**:
 
-![Pygame renderer showing an arrival sector, airspace boundary and labelled traffic](docs/media/screenshots/pygame.png)
+| Mode | Visual | Best For |
+| :--- | :--- | :--- |
+| `pygame` | ![Pygame](docs/media/screenshots/pygame.png) | High-speed 2D prototyping & quick debugging |
+| `panda3d` | ![Panda3D](docs/media/screenshots/panda3d.png) | 3D altitude visualization & spatial analysis |
+| `qtgl` | ![QtGL](docs/media/screenshots/qtgl.png) | High-fidelity BlueSky native radar display |
 
-**`render_mode="panda3d"`**:
-
-![Panda3D renderer showing the airspace volume in 3D with labelled aircraft](docs/media/screenshots/panda3d.png)
-
-**`render_mode="qtgl"`**:
-
-![BlueSky QtGL radar window showing traffic over the Netherlands with conflict detection](docs/media/screenshots/qtgl.png)
 
 
 
 ## Installation
 
-Not yet on PyPI — see [BlueSky Fork](#bluesky-fork). Install from git:
+Install the base package directly from source:
 
 ```bash
 pip install "bluesky-sandbox @ git+https://github.com/ArsyiAziz/bluesky-sandbox.git"
@@ -98,10 +90,11 @@ pip install "bluesky-sandbox @ git+https://github.com/ArsyiAziz/bluesky-sandbox.
 
 ### Optional Extras
 
-Rendering backends and the designer are optional. Name the extras you want in
-the brackets — they combine:
+Tailor your installation based on your visualization and design needs:
+
 
 ```bash
+# Example: Install with web designer and Pygame support
 pip install "bluesky-sandbox[designer,pygame] @ git+https://github.com/ArsyiAziz/bluesky-sandbox.git"
 ```
 
@@ -110,8 +103,8 @@ pip install "bluesky-sandbox[designer,pygame] @ git+https://github.com/ArsyiAziz
 | `pygame` | Pygame visualization backend (`render_mode="pygame"`) |
 | `qtgl` | BlueSky's native QtGL radar window |
 | `panda3d` | 3D rendering via Panda3D (`render_mode="panda3d"`) |
-| `designer` | The web-based Environment Designer API |
-| `all` | All backends and designer tools |
+| `designer` | Web-based Environment Designer |
+| `all` | Full suite (all backends + designer tools) |
 
 ## Environment Designer
 
@@ -172,7 +165,7 @@ The `bluesky-simulator` dependency is currently pinned to a custom fork of BlueS
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Distributed under the MIT License. See [LICENSE](LICENSE).
 
 
 ## Related Projects
