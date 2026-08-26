@@ -31,3 +31,22 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Tests
         run: pytest -q
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      # Mirrors the Read the Docs build: docs/requirements.txt only. No Node
+      # and no package install - conf.py puts src/ on sys.path, so a docs build
+      # never compiles the designer frontend.
+      - name: Install docs dependencies
+        run: pip install -r docs/requirements.txt
+      # `strict` is sphinx-build -W --keep-going, defined once in docs/Makefile
+      # so CI and a local build cannot drift apart.
+      - name: Build docs (warnings are errors)
+        run: make -C docs strict
