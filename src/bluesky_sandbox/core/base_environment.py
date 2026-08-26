@@ -246,12 +246,14 @@ class BlueskyBaseEnvironment(ParallelEnv):
         Internal EnvConfig instance. Task authors should normally inherit
         BlueskyEnv instead of constructing this runner directly.
     render_mode:
-        ``"qtgl"``    - open the full BlueSky QtGL radar window.
-        ``"pygame"``  - open a lightweight pygame top-down view in the
-                        bluesky-gym style.
-        ``"panda3d"`` - open an interactive Panda3D viewer in true-scale
-                        metres (orbit camera, click-to-select aircraft).
-        ``None``      - no rendering (default).
+        How to display the simulation:
+
+        * ``"qtgl"`` - open the full BlueSky QtGL radar window.
+        * ``"pygame"`` - open a lightweight pygame top-down view in the
+          bluesky-gym style.
+        * ``"panda3d"`` - open an interactive Panda3D viewer in true-scale
+          metres (orbit camera, click-to-select aircraft).
+        * ``None`` - no rendering (default).
     """
 
     metadata = {
@@ -409,9 +411,13 @@ class BlueskyBaseEnvironment(ParallelEnv):
     @property
     def has_future_agents(self) -> bool:
         """True when later steps can expose controllable agents."""
-        return bool(self._maintain_target) or bool(self._spawn_queue) or any(
-            state is AircraftControlState.BACKGROUND
-            for state in self._aircraft_control_state.values()
+        return (
+            bool(self._maintain_target)
+            or bool(self._spawn_queue)
+            or any(
+                state is AircraftControlState.BACKGROUND
+                for state in self._aircraft_control_state.values()
+            )
         )
 
     @property
@@ -1047,7 +1053,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
         lon0 = float(bs.traf.lon[acidx]) if from_lon is None else float(from_lon)
         _qdr, d_nm = kwikqdrdist(lat0, lon0, float(wp_lat), float(wp_lon))
         alt0_ft = (
-            float(bs.traf.alt[acidx]) / ft if from_alt_ft is None else float(from_alt_ft)
+            float(bs.traf.alt[acidx]) / ft
+            if from_alt_ft is None
+            else float(from_alt_ft)
         )
 
         reach_ft = f * vs_max_fpm * (60.0 * float(d_nm) / gs_kt)  # f * vsmax * t_min
@@ -1109,8 +1117,13 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 vs_fraction = float(step.get("reachable_vs_fraction", 1.0))
                 from_lat, from_lon, from_alt_ft = from_state or (None, None, None)
                 reach_lo, reach_hi = self._reachable_alt_window(
-                    acidx, lat, lon, vs_fraction,
-                    from_lat=from_lat, from_lon=from_lon, from_alt_ft=from_alt_ft,
+                    acidx,
+                    lat,
+                    lon,
+                    vs_fraction,
+                    from_lat=from_lat,
+                    from_lon=from_lon,
+                    from_alt_ft=from_alt_ft,
                 )
                 if reach_lo is not None:
                     alt_min_ft = (
@@ -1272,7 +1285,6 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 cas_kts,
             )
 
-      
         route = self._resolve_route_for_aircraft(callsign, item.route, rng)
         if route:
             self._runtime.append_aircraft_route(

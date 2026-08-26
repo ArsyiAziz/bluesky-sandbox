@@ -3143,7 +3143,7 @@ class RelPosAtCpaCrossTrackNm(PairObsField):
     """Cross-track relative position at predicted CPA, nm (right +).
 
     The sign is which side the intruder passes at closest approach - the key cue
-    for turn direction. |along, cross| == the horizontal miss dcpa.
+    for turn direction. ``|along, cross|`` == the horizontal miss dcpa.
 
     Metadata:
         name: rel_pos_at_cpa_cross_track_nm

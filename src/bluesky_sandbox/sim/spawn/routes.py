@@ -3,7 +3,7 @@
 A route is a list of steps - a waypoint name, a junction, or a weighted
 choice between branches. This module turns that declarative spec into the
 concrete waypoint sequence one aircraft flies. Independent of where the
-aircraft comes from, which is :mod:`.regions`.
+aircraft comes from, which is :mod:`~bluesky_sandbox.sim.spawn.regions`.
 """
 
 from __future__ import annotations

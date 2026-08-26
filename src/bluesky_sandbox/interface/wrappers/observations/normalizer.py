@@ -11,6 +11,7 @@ Each subclass declares:
   * ``normalize(field, value, idx)`` - scale a value for ``field``.
   * ``denormalize(field, value, idx)`` - map external action value(s) back to
     physical units.
+
 Typical field-level usage::
 
     obs.TrkDeg(normalizer=CircularNormalizer())

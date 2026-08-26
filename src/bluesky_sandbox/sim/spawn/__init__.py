@@ -1,7 +1,8 @@
 """Spawn configuration: where aircraft appear and what route they fly.
 
-Split into :mod:`.routes` (the route-spec grammar) and :mod:`.regions`
-(spawn volumes and the episode spawn queue); everything is re-exported
+Split into :mod:`~bluesky_sandbox.sim.spawn.routes` (the route-spec grammar)
+and :mod:`~bluesky_sandbox.sim.spawn.regions` (spawn volumes and the episode
+spawn queue); everything is re-exported
 here, so the import path is unchanged.
 """
 
