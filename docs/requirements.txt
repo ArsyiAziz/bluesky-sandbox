@@ -1,0 +1,33 @@
+# Documentation build dependencies (Read the Docs installs only this file).
+#
+# The package itself is deliberately NOT installed: `pip install .` runs
+# setup.py, which builds the designer frontend and hard-fails without either
+# Node or a committed web/dist. conf.py puts src/ on sys.path instead, so what
+# is listed here is only what autodoc needs to *import* the modules.
+
+# -- Sphinx toolchain --------------------------------------------------------
+sphinx>=8.1
+furo>=2024.8.6
+myst-parser>=4.0
+sphinx-copybutton>=0.5.2
+sphinx-design>=0.6.1
+linkify-it-py>=2.0
+
+# -- Import-time dependencies of the package ---------------------------------
+# Not mocked, because mocking them breaks the import rather than standing in
+# for it: BlueSky is divided by at module scope (see conf.py), classes subclass
+# pettingzoo.ParallelEnv, and numpy/scipy/shapely run real code at import.
+#
+# NOTE: this pin must be kept in step with the one in pyproject.toml. It is
+# duplicated rather than derived because installing the package to obtain it
+# is what this file exists to avoid. When the fork is dropped for an upstream
+# release, both change together.
+bluesky-simulator @ git+https://github.com/ArsyiAziz/bluesky.git@60e64486aca3dce205384d9a5e12b5318e6ecc50
+numpy>=2.1
+scipy>=1.14
+shapely>=2.1
+openap>=2.5
+pyzmq>=27.1
+wurlitzer>=3.1
+gymnasium>=1.2
+pettingzoo>=1.25
