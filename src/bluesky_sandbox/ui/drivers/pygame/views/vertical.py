@@ -23,12 +23,15 @@ vertical situation display.
 
 from __future__ import annotations
 
+import itertools
 import math
 from typing import TYPE_CHECKING, Literal
 
 import bluesky as bs
 import pygame
 from bluesky.tools.aero import Rearth, ft
+from shapely.geometry import LineString
+from shapely.geometry import Polygon as _ShPolygon
 
 from bluesky_sandbox.ui.drivers.common import (
     CursorHint,
@@ -37,7 +40,6 @@ from bluesky_sandbox.ui.drivers.common import (
 )
 from bluesky_sandbox.ui.drivers.pygame import colors as C
 from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView
-import itertools
 
 if TYPE_CHECKING:
     from bluesky_sandbox.ui.display.overlays import Point, Polygon, Polyline
@@ -631,8 +633,6 @@ class VerticalView(PygameView):
         """Return the lateral polygon clipped to the current visible half-plane."""
         if len(vertices) < 3:
             return None
-        from shapely.geometry import Polygon as _ShPolygon
-
         try:
             shape = _ShPolygon([(lon, lat) for lat, lon in vertices])
         except Exception:
@@ -645,8 +645,6 @@ class VerticalView(PygameView):
 
     def _front_halfplane_shape(self, bounds):
         """Large polygon covering the front side of the active slice line."""
-        from shapely.geometry import Polygon as _ShPolygon
-
         min_lon, min_lat, max_lon, max_lat = bounds
         la0, lo0 = self._axis_origin
         cos_b, sin_b, cos_lat = self._axis_proj
@@ -696,8 +694,6 @@ class VerticalView(PygameView):
         return self._latlon_from_intersection(geom.intersection(line))
 
     def _cross_section_line(self, bounds, axis_x: float):
-        from shapely.geometry import LineString
-
         min_lon, min_lat, max_lon, max_lat = bounds
         lat, lon = self.v_to_latlon(axis_x)
         cos_b, sin_b, cos_lat = self._axis_proj

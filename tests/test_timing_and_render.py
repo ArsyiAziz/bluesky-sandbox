@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import time
 
+import bluesky as bs
 import pytest
+
+from bluesky_sandbox import config as config_module
+from bluesky_sandbox.config import apply_performance_model, requested_performance_model
+from bluesky_sandbox.core.runtime import BlueSkyRuntime
+from bluesky_sandbox.env import BlueskyEnv
+from bluesky_sandbox.sim.performance.envelope import _aircraft_limits_cached
+from bluesky_sandbox.sim.scenario import EpisodeSpec
+from bluesky_sandbox.sim.spawn import SpawnConfig
+from bluesky_sandbox.ui.drivers import sim_driver
+from bluesky_sandbox.ui.drivers.panda3d.driver import Panda3DSimDriver
+from bluesky_sandbox.ui.drivers.sim_driver import SimDriver
 
 
 def test_env_config_rejects_non_integer_substep_ratio(monkeypatch):
-    from bluesky_sandbox import config as config_module
-
     monkeypatch.setattr(
         config_module,
         "_available_aircraft",
@@ -19,11 +29,6 @@ def test_env_config_rejects_non_integer_substep_ratio(monkeypatch):
 
 
 def test_env_step_advances_exact_config_dt(monkeypatch):
-    from bluesky_sandbox import config as config_module
-    from bluesky_sandbox.env import BlueskyEnv
-    from bluesky_sandbox.sim.scenario import EpisodeSpec
-    from bluesky_sandbox.sim.spawn import SpawnConfig
-
     monkeypatch.setattr(
         config_module,
         "_available_aircraft",
@@ -65,10 +70,6 @@ def test_env_step_advances_exact_config_dt(monkeypatch):
 
 
 def test_operate_does_not_advance_clock_without_step():
-    import bluesky as bs
-
-    from bluesky_sandbox.core.runtime import BlueSkyRuntime
-
     class _Env:
         class config:
             simdt = 0.1
@@ -96,9 +97,6 @@ def test_operate_does_not_advance_clock_without_step():
 
 
 def test_realtime_driver_step_uses_fixed_simdt_despite_wall_clock_lag():
-    from bluesky_sandbox.core.runtime import BlueSkyRuntime
-    from bluesky_sandbox.ui.drivers.sim_driver import SimDriver
-
     class _Env:
         class config:
             simdt = 0.01
@@ -130,10 +128,6 @@ def test_realtime_driver_step_uses_fixed_simdt_despite_wall_clock_lag():
 
 
 def test_realtime_driver_fastforward_skips_pacing_sleep(monkeypatch):
-    from bluesky_sandbox.core.runtime import BlueSkyRuntime
-    from bluesky_sandbox.ui.drivers import sim_driver
-    from bluesky_sandbox.ui.drivers.sim_driver import SimDriver
-
     class _Env:
         class config:
             simdt = 0.01
@@ -168,10 +162,6 @@ def test_realtime_driver_fastforward_skips_pacing_sleep(monkeypatch):
 
 
 def test_realtime_driver_finite_fastforward_stops_at_ffstop(monkeypatch):
-    from bluesky_sandbox.core.runtime import BlueSkyRuntime
-    from bluesky_sandbox.ui.drivers import sim_driver
-    from bluesky_sandbox.ui.drivers.sim_driver import SimDriver
-
     class _Env:
         class config:
             simdt = 0.01
@@ -205,8 +195,6 @@ def test_realtime_driver_finite_fastforward_stops_at_ffstop(monkeypatch):
 
 
 def test_panda_update_refreshes_scene_before_render():
-    from bluesky_sandbox.ui.drivers.panda3d.driver import Panda3DSimDriver
-
     driver = Panda3DSimDriver.__new__(Panda3DSimDriver)
     calls: list[str] = []
 
@@ -236,8 +224,6 @@ def test_type_limit_caches_are_keyed_by_performance_model():
     later lookup returned it - reported as "openap ceiling data is unavailable"
     for a type the configured model knows.
     """
-    from bluesky_sandbox.sim.performance.envelope import _aircraft_limits_cached
-
     # Same type, two models -> two cache entries, not one shared answer.
     a = _aircraft_limits_cached("openap", "A320")
     b = _aircraft_limits_cached("bada", "A320")
@@ -257,10 +243,6 @@ def test_requested_performance_model_survives_bs_init():
     reporting the model as ``openap`` and looking like the design had been
     ignored.
     """
-    import bluesky as bs
-
-    from bluesky_sandbox.config import apply_performance_model, requested_performance_model
-
     before = requested_performance_model()
     try:
         apply_performance_model("bada")

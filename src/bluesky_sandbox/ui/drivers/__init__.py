@@ -1,3 +1,6 @@
+# ruff: noqa: PLC0415 - the driver backends (qtgl / pygame / panda3d) are
+# optional extras; each is imported only when that render_mode is selected.
+
 from __future__ import annotations
 
 from collections.abc import Mapping

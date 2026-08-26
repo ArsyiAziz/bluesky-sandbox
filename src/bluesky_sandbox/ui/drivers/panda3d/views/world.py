@@ -13,6 +13,10 @@ camera math / HUD text overlays - lives in the driver.  WorldView's
 contract is "what gets painted into the 3D scene".
 """
 
+# ruff: noqa: PLC0415 - panda3d is an optional extra ([panda3d]); every import
+# below is a panda3d/direct symbol pulled in at draw time so that importing
+# this module (e.g. for type hints or tests) never requires the engine.
+
 from __future__ import annotations
 
 import math
@@ -22,6 +26,7 @@ import bluesky as bs
 from bluesky.tools.aero import ft
 
 from bluesky_sandbox.interface.task import WaypointReadoutKey
+from bluesky_sandbox.sim.queryables import QueryRegion
 from bluesky_sandbox.ui.drivers.common import CursorHint, CursorHintName
 from bluesky_sandbox.ui.drivers.panda3d.colors import (
     CHEVRON_NOTCH_FRAC,
@@ -810,8 +815,6 @@ class WorldView(Panda3DView):
     ) -> tuple[float, float, float] | None:
         """Colour of the first :class:`QueryRegion` containing the
         aircraft, or ``None`` if it lies outside every region."""
-        from bluesky_sandbox.sim.queryables import QueryRegion
-
         if driver._env is None:
             return None
         for qable in driver._env.episode_queryables.values():

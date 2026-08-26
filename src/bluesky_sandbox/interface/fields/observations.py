@@ -17,6 +17,11 @@ from bluesky_sandbox.sim.geometry.conflict import (
     windowed_min_vsep_ft,
     windowed_signed_vsep_at_entry_ft,
 )
+from bluesky_sandbox.sim.performance.envelope import (
+    _warn_type_data_mismatch,
+    active_performance_model,
+)
+from bluesky_sandbox.sim.performance.models import type_limits
 from bluesky_sandbox.sim.performance.speeds import crossover_speed_state
 
 from .base import ObsField, ObsMeta, ObsQuantity, PairObsField, Unit
@@ -1774,15 +1779,8 @@ def _mtow_kg(actype: str) -> float:
     key = str(actype).upper()
     cached = _MTOW_KG_CACHE.get(key)
     if cached is None:
-        from bluesky_sandbox.sim.performance.envelope import (
-            _warn_type_data_mismatch,
-            active_performance_model,
-        )
-
         # Same registry the envelope uses, so MTOW and the flight envelope can
         # never come from different databases for one aircraft.
-        from bluesky_sandbox.sim.performance.models import type_limits
-
         model = active_performance_model()
         mtow = (type_limits(key, model) or {}).get("MTOW")
         if mtow is None and model != "openap":

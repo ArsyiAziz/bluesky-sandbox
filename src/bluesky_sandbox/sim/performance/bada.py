@@ -20,6 +20,7 @@ answers "where are they" and the question here is "where do I put them".
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import bluesky as bs
@@ -114,8 +115,6 @@ def load_perf_bada():
     package alone and reports the data as missing when it is simply not
     registered yet.
     """
-    import importlib
-
     ensure_user_resource_root()
     errors = []
     for mod in _PERFBADA_MODULES:
@@ -138,8 +137,6 @@ def bada_aircraft_types() -> frozenset[str]:
     exposes no type listing. ``coeff_bada.init()`` is what populates them - the
     tables are empty until it runs.
     """
-    import importlib
-
     load_perf_bada()  # surfaces a missing/broken install with the right message
     for mod in ("bluesky.traffic.performance.bada.coeff_bada",
                 "bluesky.bs_traf.performance.bada.coeff_bada"):
@@ -164,8 +161,6 @@ def bada_coefficients(actype: str):
 
     The raw record; :mod:`.models` turns it into normalised limits.
     """
-    import importlib
-
     try:
         load_perf_bada()  # registers the user resource root
         for mod in ("bluesky.traffic.performance.bada.coeff_bada",

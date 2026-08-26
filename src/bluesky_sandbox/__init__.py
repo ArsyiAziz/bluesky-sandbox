@@ -1,6 +1,7 @@
 __version__ = "0.1.0"
 
 import sys as _sys
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 from bluesky_sandbox.core.base_environment import AircraftControlState
@@ -121,8 +122,6 @@ if TYPE_CHECKING:
 
 def __getattr__(name: str):
     if name == "qobs":
-        from importlib import import_module
-
         module = import_module(f"{__name__}.fields.queryables")
         globals()[name] = module
         return module

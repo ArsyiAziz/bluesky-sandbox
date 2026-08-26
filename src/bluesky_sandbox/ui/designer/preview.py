@@ -16,6 +16,7 @@ from bluesky.tools.geo import qdrpos
 from bluesky_sandbox.sim.bounds import Bounds
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 from bluesky_sandbox.sim.sampling.distributions import Categorical
+from bluesky_sandbox.sim.scenario import transforms as _t
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from .builder import build_scenario
@@ -265,8 +266,6 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
     group_maps = getattr(scenario, "last_group_maps", None)
     group_chains = getattr(scenario, "design_region_group_chains", None) or {}
     if isinstance(sink, dict):
-        from bluesky_sandbox.sim.scenario import transforms as _t
-
         for name, bounds in sink.items():
             episode_bounds = bounds
             if rot:

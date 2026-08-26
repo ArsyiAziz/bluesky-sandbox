@@ -12,19 +12,25 @@ only reaches ``sys.path`` when pytest runs a test, not while it collects one.
 
 from __future__ import annotations
 
+import numpy as np
+import pytest
+from gymnasium.spaces import Box, Sequence
+from gymnasium.spaces import Dict as DictSpace
+
+from bluesky_sandbox import (
+    actor_obs,
+    actor_observation_space,
+    critic_obs,
+    critic_observation_space,
+)
+
 
 def _spaces():
-    import numpy as np
-    from gymnasium.spaces import Box, Sequence
-    from gymnasium.spaces import Dict as DictSpace
-
     return Box, DictSpace, Sequence, np
 
 
 def _obs(n_intruders=3, own=4, intr=6, c_own=2, c_intr=5):
     """A synthetic observation shaped exactly like the env's."""
-    import numpy as np
-
     return {
         "ownship": np.zeros(own, np.float32),
         "intruders": np.zeros((n_intruders, intr), np.float32),
@@ -34,14 +40,10 @@ def _obs(n_intruders=3, own=4, intr=6, c_own=2, c_intr=5):
 
 
 def test_actor_view_drops_privileged_blocks():
-    from bluesky_sandbox import actor_obs
-
     assert set(actor_obs(_obs())) == {"ownship", "intruders"}
 
 
 def test_critic_view_widens_both_blocks():
-    from bluesky_sandbox import critic_obs
-
     view = critic_obs(_obs())
     assert set(view) == {"ownship", "intruders"}
     assert view["ownship"].shape == (4 + 2,)
@@ -51,8 +53,6 @@ def test_critic_view_widens_both_blocks():
 def test_zero_intruders_keeps_the_merged_width():
     """An agent alone in the sector must still emit rows of the merged width,
     or a batch of such agents ends up ragged in the feature axis."""
-    from bluesky_sandbox import critic_obs
-
     view = critic_obs(_obs(n_intruders=0))
     assert view["intruders"].shape == (0, 6 + 5)
 
@@ -61,10 +61,6 @@ def test_misaligned_rows_raise():
     """Subsampling ``intruders`` for the actor and then asking for the critic
     view is the realistic mistake; merging anyway would un-privilege the critic
     without any signal."""
-    import pytest
-
-    from bluesky_sandbox import critic_obs
-
     obs = _obs(n_intruders=3)
     obs["intruders"] = obs["intruders"][:1]
     with pytest.raises(ValueError, match="not row-aligned"):
@@ -72,8 +68,6 @@ def test_misaligned_rows_raise():
 
 
 def test_observations_without_privileged_blocks_pass_through():
-    from bluesky_sandbox import actor_obs, critic_obs
-
     obs = {k: v for k, v in _obs().items() if not k.startswith("critic_")}
     assert actor_obs(obs) is obs
     assert critic_obs(obs) is obs
@@ -82,13 +76,6 @@ def test_observations_without_privileged_blocks_pass_through():
 def test_spaces_match_the_views_they_describe():
     """The encoders are built from the spaces and fed the views; if the two
     disagree the mismatch only surfaces at the first forward pass."""
-    from bluesky_sandbox import (
-        actor_obs,
-        actor_observation_space,
-        critic_obs,
-        critic_observation_space,
-    )
-
     Box, DictSpace, Sequence, np = _spaces()
     space = DictSpace(
         {

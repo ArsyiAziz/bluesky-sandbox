@@ -43,6 +43,7 @@ Mouse:
 
 from __future__ import annotations
 
+import itertools
 import math
 import os
 
@@ -64,7 +65,6 @@ from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView
 from bluesky_sandbox.ui.drivers.pygame.views.horizontal import HorizontalView
 from bluesky_sandbox.ui.drivers.pygame.views.vertical import VerticalView
 from bluesky_sandbox.ui.drivers.sandbox_gui_driver import SandboxGUIDriver
-import itertools
 
 # Hit-zone around each splitter divider for drag-resize, in pixels.
 _DIVIDER_HIT_PX = 5
@@ -260,7 +260,8 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
         if self._record_path:
             # Imported lazily so non-recording runs don't import imageio.
-            import imageio
+            # optional extra: [recording]
+            import imageio  # noqa: PLC0415
 
             self._video_writer = imageio.get_writer(
                 self._record_path,

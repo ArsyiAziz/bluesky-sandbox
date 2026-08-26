@@ -16,28 +16,27 @@ import math
 
 import pytest
 
+from bluesky_sandbox.ui.drivers.common.trails import (
+    _DECIMATE_H_NM,
+    _DECIMATE_MAX_RUN,
+    Trail,
+)
+from bluesky_sandbox.ui.drivers.panda3d.views.world import _TRAIL_CHUNK, _TrailGeometry
+from bluesky_sandbox.ui.drivers.pygame.views.horizontal import _TrailPixelCache
+
 # Arbitrary but fixed plan-view projection parameters.
 CX, CY, CLAT, CLON, LAT_PP, LON_PP = 500.0, 400.0, 56.0, 2.0, 0.001, 0.002
 
 
 def _trail():
-    from bluesky_sandbox.ui.drivers.common.trails import Trail
-
     return Trail
 
 
 def _pixel_cache():
-    from bluesky_sandbox.ui.drivers.pygame.views.horizontal import _TrailPixelCache
-
     return _TrailPixelCache
 
 
 def _geometry():
-    from bluesky_sandbox.ui.drivers.panda3d.views.world import (
-        _TRAIL_CHUNK,
-        _TrailGeometry,
-    )
-
     return _TrailGeometry, _TRAIL_CHUNK
 
 
@@ -199,8 +198,6 @@ def test_decimation_keeps_turns_and_level_changes():
 
 def test_decimation_caps_how_long_one_chord_may_run():
     """The run cap bounds per-append cost, at the price of a spare vertex."""
-    from bluesky_sandbox.ui.drivers.common.trails import _DECIMATE_MAX_RUN
-
     trail = _trail()()
     steps = 5 * _DECIMATE_MAX_RUN
     for step in range(steps):
@@ -221,8 +218,6 @@ def test_decimation_never_strays_further_than_the_corridor(turn_deg_per_step):
     a gently curving 400-point arc collapse to 4 points and a 2.3 nm error,
     because the deepest deviation is in the MIDDLE of a dropped run.
     """
-    from bluesky_sandbox.ui.drivers.common.trails import _DECIMATE_H_NM
-
     trail = _trail()()
     flown = []
     lat, lon, heading = 56.0, 2.0, 90.0

@@ -1,6 +1,6 @@
 # Integrations
 
-Optional utilities layered on core primitives—enabling environment registration, space transformations, vectorized execution, and asymmetric state features for Centralized Training with Decentralized Execution (CTDE).
+Optional utilities layered on core primitives—enabling space transformations, vectorized execution, and asymmetric state features for Centralized Training with Decentralized Execution (CTDE).
 
 
 ## `bluesky_sandbox.integrations.asymmetric`
@@ -17,14 +17,6 @@ Separates critic observations from actor inputs, giving centralized critics acce
 
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.integrations.common.parallel
-   :members:
-   :show-inheritance:
-```
-
-## `bluesky_sandbox.integrations.common.registry`
-
-```{eval-rst}
-.. automodule:: bluesky_sandbox.integrations.common.registry
    :members:
    :show-inheritance:
 ```

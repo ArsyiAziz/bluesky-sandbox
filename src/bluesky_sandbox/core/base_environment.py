@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import string
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
@@ -20,6 +21,8 @@ from typing import (
 
 import bluesky as bs
 import numpy as np
+from bluesky.tools.aero import ft, kts, vcas2tas
+from bluesky.tools.geo import kwikqdrdist
 from pettingzoo import ParallelEnv
 
 from bluesky_sandbox.config import (
@@ -585,10 +588,6 @@ class BlueskyBaseEnvironment(ParallelEnv):
         ``config.gust_tau_s`` and a stationary RMS of ``config.turbulence_kts``.
         No-op (steady mean wind, applied once at reset) when turbulence is off.
         """
-        import math
-
-        from bluesky.tools.aero import kts
-
         turb = float(getattr(self.config, "turbulence_kts", 0.0))
         if turb <= 0.0:
             return
@@ -1028,11 +1027,6 @@ class BlueskyBaseEnvironment(ParallelEnv):
         for the caller to intersect with the envelope, or ``(None, None)`` when no
         meaningful speed / rate is available (leaving the window unbounded).
         """
-        import math
-
-        from bluesky.tools.aero import ft, kts, vcas2tas
-        from bluesky.tools.geo import kwikqdrdist
-
         vsmax = getattr(bs.traf.perf, "vsmax", None)
         if vsmax is None:
             return None, None

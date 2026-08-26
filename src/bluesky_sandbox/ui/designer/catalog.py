@@ -8,20 +8,31 @@ from the code.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import inspect
 import math
 import pathlib
 import re
+import textwrap
 import types
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
+from scipy import stats as ss
+
+from bluesky_sandbox.config import _available_aircraft
+from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as _actions
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.interface.fields import queryables as _queryable_fields
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
 from bluesky_sandbox.interface.wrappers.observations import normalizer as _normalizers
 from bluesky_sandbox.sim import bounds as _bounds
+from bluesky_sandbox.sim.performance.models import spawnable_types
+from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
+
+from .emit import _normalizer_import_line
+from .spec import SCENARIO_HOOKS
 
 
 def _doc(obj: Any) -> str:
@@ -119,8 +130,6 @@ def altitude_bands() -> list[dict[str, Any]]:
 
 def queryables() -> list[dict[str, Any]]:
     """Built-in queryable kinds. Custom queryables come via code references."""
-    from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
-
     return [
         {"name": "QueryRegion", "doc": _doc(QueryRegion), "params": _dataclass_params(QueryRegion)},
         {"name": "Waypoint", "doc": _doc(Waypoint), "params": _dataclass_params(Waypoint)},
@@ -395,8 +404,6 @@ def _custom_module_header() -> str:
     """Scaffold header with the normalizer import derived by introspection
     (same helper generated task code uses), so a new normalizer is available
     in custom-field modules without editing this template."""
-    from .emit import _normalizer_import_line
-
     return CUSTOM_MODULE_HEADER + _normalizer_import_line() + "\n"
 
 
@@ -430,9 +437,6 @@ def _hook_default(fn) -> str | None:
     Parses the method source rather than hard-coding defaults, so it stays in
     sync if a base hook's no-op return changes.
     """
-    import ast
-    import textwrap
-
     try:
         tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
     except (OSError, SyntaxError):
@@ -467,8 +471,6 @@ def hooks() -> list[dict[str, Any]]:
     an optional richer ``scaffold`` — so the designer can offer and describe them
     without a hard-coded list.
     """
-    from bluesky_sandbox.env import BlueskyEnv
-
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for cls in inspect.getmro(BlueskyEnv):
@@ -621,8 +623,6 @@ def distributions() -> list[dict[str, Any]]:
     designer's value editor can show the right named fields for whichever
     distribution is picked, instead of asking for a freeform ``k=v`` string.
     """
-    from scipy import stats as ss
-
     out: list[dict[str, Any]] = []
     for name in dir(ss):
         obj = getattr(ss, name, None)
@@ -678,7 +678,10 @@ def colors() -> dict[str, str]:
     palette (guarded so the catalog never hard-depends on pygame).
     """
     try:
-        from bluesky_sandbox.ui.drivers.pygame.colors import NAMED_COLORS as _named
+        # optional extra: [pygame] - catalog must not hard-depend on it
+        from bluesky_sandbox.ui.drivers.pygame.colors import (  # noqa: PLC0415
+            NAMED_COLORS as _named,
+        )
     except Exception:
         _named = {
             "red": (220, 20, 60), "green": (30, 150, 30), "blue": (30, 80, 200),
@@ -695,7 +698,8 @@ def colors() -> dict[str, str]:
 
 def drivers() -> list[dict[str, Any]]:
     """Live-run render modes and the view layouts each one offers."""
-    from .runner import DRIVER_VIEWS, VALID_RENDER_MODES
+    # cycle: catalog -> runner -> codegen -> catalog
+    from .runner import DRIVER_VIEWS, VALID_RENDER_MODES  # noqa: PLC0415
 
     return [
         {
@@ -709,8 +713,6 @@ def drivers() -> list[dict[str, Any]]:
 
 def aircraft_types(model: str | None = None) -> list[str]:
     """ICAO aircraft types available in the active performance model."""
-    from bluesky_sandbox.config import _available_aircraft
-
     return sorted(t.upper() for t in _available_aircraft(model))
 
 
@@ -720,8 +722,6 @@ def aircraft_by_model() -> dict[str, Any]:
     Each value is either a sorted list of ICAO types or ``{"error": msg}`` when
     that model's database can't be loaded (e.g. BADA not installed).
     """
-    from bluesky_sandbox.sim.performance.models import spawnable_types
-
     out: dict[str, Any] = {}
     for model in ("openap", "bada"):
         try:
@@ -741,8 +741,6 @@ def scenario_hooks() -> list[dict[str, Any]]:
     structured design cannot express. Derived from the spec's own table so the
     designer never carries a second, drifting copy of the hook list.
     """
-    from .spec import SCENARIO_HOOKS
-
     return [
         {
             "name": name,

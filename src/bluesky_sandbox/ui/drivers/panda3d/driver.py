@@ -75,6 +75,9 @@ issues one ``bs.sim.step()`` (or ``update()``), then dispatches
 renders exactly one frame.
 """
 
+# ruff: noqa: PLC0415 - panda3d is an optional extra ([panda3d]); it is probed
+# in __init__ and its symbols are imported at start/HUD-setup time.
+
 from __future__ import annotations
 
 import math

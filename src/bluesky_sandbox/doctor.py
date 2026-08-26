@@ -11,17 +11,21 @@ from __future__ import annotations
 
 import sys
 
+import bluesky as bs
+
 
 def report() -> tuple[list[str], bool]:
     """Return ``(lines, ok)`` describing the install."""
-    import bluesky as bs
-
     # BADA is found via ``bs.resource()``, whose search roots include the user
     # directory only after init. Probing first reports installed data missing.
     bs.init("sim")
 
-    from bluesky_sandbox.config import _available_aircraft
-    from bluesky_sandbox.sim.performance.bada import bada_available, bada_data_dir
+    # Deferred for the same reason: both probe BADA on import path.
+    from bluesky_sandbox.config import _available_aircraft  # noqa: PLC0415
+    from bluesky_sandbox.sim.performance.bada import (  # noqa: PLC0415
+        bada_available,
+        bada_data_dir,
+    )
 
     lines: list[str] = []
     ok = True

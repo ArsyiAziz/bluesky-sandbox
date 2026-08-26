@@ -23,11 +23,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from itertools import product
 from typing import Any
 
 import numpy as np
 
-from bluesky_sandbox.sim.bounds import Bounds
+from bluesky_sandbox.sim.bounds import Bounds, RegionBounds, union_footprints
 from bluesky_sandbox.sim.queryables import Queryable, Waypoint
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
@@ -413,10 +414,6 @@ class RegionParamSampler:
 
     def support_regions(self) -> dict[str, Any]:
         """Named regions with every sampled region widened to its union support."""
-        from itertools import product
-
-        from bluesky_sandbox.sim.bounds import RegionBounds, union_footprints
-
         rep = self._representative_draw()
         regions = self._regions_fn(rep)
         by_region: dict[str, list[str]] = {}

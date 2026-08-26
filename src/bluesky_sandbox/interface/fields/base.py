@@ -450,7 +450,8 @@ class ObsField(_BoundedField, ABC):
         ``low``/``high`` fix the delta bounds; when omitted they derive from the
         underlying field's (possibly per-aircraft dynamic) bounds.
         """
-        from .observations import AngleDifference, Difference
+        # cycle: .observations imports .base
+        from .observations import AngleDifference, Difference  # noqa: PLC0415
 
         field_name = name or f"relative_{self.meta.name}"
         if self.meta.circular:
@@ -480,7 +481,8 @@ class ObsField(_BoundedField, ABC):
         already in the observation: stacking a value whose derivative is a named
         field (``AltFt`` next to ``VsFtMin``) just widens the vector.
         """
-        from .observations import LaggedObs
+        # cycle: .observations imports .base
+        from .observations import LaggedObs  # noqa: PLC0415
 
         # Inherit the normalizer: the assembler picks it off the OUTER field
         # (``_field_normalizer``/``_field_output_size`` in core.services), so a
@@ -566,7 +568,8 @@ class PairObsField(_BoundedField, ABC):
         ``RelVel*``, along/cross realized accelerations). See
         :class:`~.observations.LaggedPair` for why.
         """
-        from .observations import LaggedPair
+        # cycle: .observations imports .base
+        from .observations import LaggedPair  # noqa: PLC0415
 
         # Inherits the inner normalizer - see :meth:`ObsField.lagged`.
         return LaggedPair(inner=self, steps=int(steps), normalizer=self.normalizer)

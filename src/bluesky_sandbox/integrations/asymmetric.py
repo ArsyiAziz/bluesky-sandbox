@@ -28,6 +28,8 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from gymnasium.spaces import Box, Sequence
+from gymnasium.spaces import Dict as DictSpace
 
 __all__ = [
     "CRITIC_OBS_KEYS",
@@ -114,8 +116,6 @@ def critic_obs(obs: dict[str, Any]) -> dict[str, Any]:
 
 def actor_observation_space(space: Any) -> Any:
     """Space the policy network is built from: ``space`` minus the critic keys."""
-    from gymnasium.spaces import Dict as DictSpace
-
     if not isinstance(space, DictSpace) or not has_privileged_obs(space):
         return space
     kept = {k: v for k, v in space.spaces.items() if k not in CRITIC_OBS_KEYS}
@@ -127,9 +127,6 @@ def critic_observation_space(space: Any) -> Any:
 
     Mirrors :func:`critic_obs` so the encoder is sized for what it will be fed.
     """
-    from gymnasium.spaces import Box, Sequence
-    from gymnasium.spaces import Dict as DictSpace
-
     if not isinstance(space, DictSpace) or not has_privileged_obs(space):
         return space
     spaces = dict(space.spaces)

@@ -8,19 +8,13 @@ expressed against.
 from __future__ import annotations
 
 from .bada import (
-    bada_available,
-    bada_data_dir,
-    bada_coefficients,
-    ensure_user_resource_root,
-    bada_install_hint,
     bada_aircraft_types,
+    bada_available,
+    bada_coefficients,
+    bada_data_dir,
+    bada_install_hint,
+    ensure_user_resource_root,
     load_perf_bada,
-)
-from .models import (
-    MODELS,
-    available_types,
-    spawnable_types,
-    type_limits,
 )
 from .envelope import (
     EnvelopeSample,
@@ -31,6 +25,12 @@ from .envelope import (
     fleet_max_cas_kt,
     fleet_sim_ceiling_ft,
     fleet_speed_band_kt,
+)
+from .models import (
+    MODELS,
+    available_types,
+    spawnable_types,
+    type_limits,
 )
 from .speeds import (
     CrossoverSpeedState,

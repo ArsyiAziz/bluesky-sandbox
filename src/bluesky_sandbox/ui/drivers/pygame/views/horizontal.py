@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING
 import bluesky as bs
 import numpy as np
 import pygame
-from bluesky.tools.aero import ft
+from bluesky.tools.aero import ft, kts
 
 from bluesky_sandbox.interface.task import WaypointReadoutKey
+from bluesky_sandbox.sim.geometry.conflict import ConflictView, predicted_tlos_s
 from bluesky_sandbox.ui.drivers.common import (
     CursorHint,
     CursorHintName,
@@ -347,10 +348,6 @@ class HorizontalView(PygameView):
         the default frac 1.0 the overlay coincides 1:1 with BlueSky's detector,
         and shorter horizons drop conflicts out as their ``tinconf`` exceeds ``T``.
         """
-        import numpy as np
-
-        from bluesky_sandbox.sim.geometry.conflict import ConflictView, predicted_tlos_s
-
         acid = driver.tracked_acid() if hasattr(driver, "tracked_acid") else None
         if not acid or acid not in bs.traf.id:
             return
@@ -667,9 +664,6 @@ class HorizontalView(PygameView):
         wind = getattr(bs.traf, "wind", None)
         if driver.font is None or int(getattr(wind, "winddim", 0)) < 1:
             return
-        import numpy as np
-        from bluesky.tools.aero import kts
-
         clat, clon = self._center_lat, self._center_lon
         vn, ve = wind.getdata(
             np.array([clat]), np.array([clon]), np.array([1.0e4])

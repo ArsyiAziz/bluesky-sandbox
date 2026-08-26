@@ -30,6 +30,12 @@ window is BlueSky's own QtGL client.
 
 from __future__ import annotations
 
+import time
+
+import bluesky as bs
+
+from bluesky_sandbox.sim.spawn import expand_route_paths
+
 from .common import PrimitiveDrawMixin, TrailMixin
 from .sim_driver import SimDriver
 
@@ -98,8 +104,6 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
         """
         if self.render_fps <= 0:
             return True
-        import time
-
         now = time.monotonic()
         if now - self._last_render_s >= 1.0 / self.render_fps:
             self._last_render_s = now
@@ -109,8 +113,6 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
     def tracked_acid(self) -> str | None:
         """The aircraft whose route/info to display: the clicked one, else (when
         ``auto_track``) the first live aircraft, else ``None``."""
-        import bluesky as bs
-
         selected = getattr(self, "_selected", None)
         if selected is not None and selected in bs.traf.id:
             return selected
@@ -151,8 +153,6 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
         cached = getattr(self, "_defined_routes_cache", None)
         if cached is not None:
             return cached
-
-        from bluesky_sandbox.sim.spawn import expand_route_paths
 
         polylines: list[list[tuple[float, float, float | None]]] = []
         env = getattr(self, "_env", None)

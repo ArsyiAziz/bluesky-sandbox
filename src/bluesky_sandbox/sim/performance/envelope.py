@@ -15,13 +15,14 @@ arbitrary altitude.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 import warnings
+from dataclasses import dataclass
 from functools import cache, lru_cache
 
 import bluesky as bs
 from bluesky.tools.aero import ft, kts, vmach2cas
 
+from bluesky_sandbox.sim.performance.models import type_limits
 
 # NOTE: the caches are keyed by MODEL as well as type. Keying by type alone
 # looks harmless and is not: the performance model is chosen when an EnvConfig
@@ -40,7 +41,8 @@ def active_performance_model() -> str:
     ``settings.cfg`` and overwrites it, so a BADA design reverts to whatever
     that file says as soon as the runtime initialises.
     """
-    from bluesky_sandbox.config import requested_performance_model
+    # cycle: config -> fields.observations -> envelope
+    from bluesky_sandbox.config import requested_performance_model  # noqa: PLC0415
 
     return requested_performance_model()
 
@@ -88,8 +90,6 @@ def _aircraft_limits_cached(model: str, actype: str) -> dict | None:
     without a licence, so it is better than nothing - but it must be said, or a
     sampled envelope silently disagrees with what the simulator flies.
     """
-    from bluesky_sandbox.sim.performance.models import type_limits
-
     limits = type_limits(actype, model)
     if limits is not None and limits.get("ceiling_ft") is not None:
         return limits
@@ -125,7 +125,8 @@ def _vmax_cas_kt(actype: str, alt_ft: float) -> float | None:
     binds, and its equivalent CAS falls with altitude.
     """
     try:
-        from openap import aero
+        # expensive: openap costs ~1.8s to import
+        from openap import aero  # noqa: PLC0415
     except Exception:
         return None
     limits = _aircraft_limits(actype)
@@ -218,7 +219,8 @@ def _sim_limit_table() -> dict:
     a guess.
     """
     try:
-        from bluesky.traffic.performance.openap import coeff
+        # expensive: openap costs ~1.8s to import
+        from bluesky.traffic.performance.openap import coeff  # noqa: PLC0415
 
         return dict(coeff.Coefficient().limits_fixwing)
     except Exception:

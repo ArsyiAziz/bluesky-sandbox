@@ -14,7 +14,13 @@ Covers the three foundation pieces:
 
 from __future__ import annotations
 
+import importlib
+import itertools
 import math
+import sys
+import tempfile
+import traceback
+from pathlib import Path
 
 import numpy as np
 from scipy.stats import poisson, randint, truncnorm
@@ -49,15 +55,24 @@ from bluesky_sandbox.sim.queryables import (
     WaypointResult,
 )
 from bluesky_sandbox.sim.sampling.distributions import Bounded, Categorical
-from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
-from bluesky_sandbox.ui.designer import codegen, nav
+from bluesky_sandbox.sim.spawn import (
+    SpawnConfig,
+    SpawnRegion,
+    expand_route_paths,
+    resolve_route,
+    route_step_names,
+    sample_route_path,
+)
+from bluesky_sandbox.ui.designer import catalog, codegen, nav
 from bluesky_sandbox.ui.designer import spec as S
+from bluesky_sandbox.ui.designer.api import _spec_completion_context
 from bluesky_sandbox.ui.designer.builder import (
     BuildError,
     build_design_config,
     build_scenario,
 )
-import itertools
+from bluesky_sandbox.ui.designer.preview import airspace_warnings, scenario_preview
+from bluesky_sandbox.ui.designer.runner import _REPO_ROOT
 
 
 # --------------------------------------------------------------------------- #
@@ -495,10 +510,6 @@ def test_sampled_region_params():
 
     # The preview exposes the sampled named-region shapes in the episode frame:
     # with a whole-geometry rotation, the region geometry rotates with the seed.
-    import math
-
-    from bluesky_sandbox.ui.designer.preview import scenario_preview
-
     spec.transform = {"rotation": {"angle_deg": {"type": "range", "low": 0.0, "high": 360.0},
                                    "pivot": [52.0, 4.7]}}
     zones = [scenario_preview(spec, seed=s)["regions"]["zone"] for s in (0, 1)]
@@ -542,10 +553,6 @@ def test_group_transforms_route_samples_and_preview_regions():
     # the episode's route-step sample bounds must carry the group transform
     # (regression: _apply_groups used to leave routes untransformed), and the
     # preview's named-region geometry must land in the same episode frame.
-    import math
-
-    from bluesky_sandbox.ui.designer.preview import scenario_preview
-
     spec = _example_design_spec()
     spec.regions = {
         "corridor": {"type": "region",
@@ -583,8 +590,6 @@ def test_group_transforms_route_samples_and_preview_regions():
 def test_airspace_warning_ignores_shared_bounds():
     # A queryable that reuses the airspace bounds sits on its boundary; it must
     # not be flagged "outside airspace", while genuinely-outside content is.
-    from bluesky_sandbox.ui.designer.preview import airspace_warnings
-
     spec = _example_design_spec()
     spec.regions = {
         "air": {"type": "region",
@@ -650,8 +655,6 @@ def test_spawn_altitude_from_bounds():
 def test_per_aircraft_sampled_waypoint():
     # A waypoint with sample_per="aircraft" becomes route-step sampling metadata;
     # the Waypoint queryable itself remains a static/query definition.
-    from bluesky_sandbox.sim.queryables import Waypoint
-
     spec = _example_design_spec()
     spec.regions = {
         "goalzone": {"type": "region",
@@ -684,8 +687,6 @@ def test_per_aircraft_sampled_waypoint():
 def test_envelope_value_waypoint():
     # A waypoint with alt_ft / speed_kts == {"type": "envelope"} defers those
     # route constraints to a per-aircraft draw within the flight envelope.
-    from bluesky_sandbox.sim.queryables import Waypoint
-
     spec = _example_design_spec()
     spec.queryables = {
         "goal": {
@@ -722,8 +723,6 @@ def test_envelope_value_waypoint():
 
 def test_active_route_waypoint_fields_catalogued():
     # The name-free active-route obs fields are offered with no queryable_spec.
-    from bluesky_sandbox.ui.designer import catalog
-
     fields = {f["name"]: f for f in catalog.obs_fields()}
     for name in ("ActiveRouteWaypointDistanceNm", "ActiveRouteWaypointBearingDeg",
                  "ActiveRouteWaypointTrackErrorDeg", "ActiveRouteWaypointAltDiffFt",
@@ -735,8 +734,6 @@ def test_active_route_waypoint_fields_catalogued():
 
 def test_route_composition_subroutes():
     # A route can include {"route": name} steps, expanded recursively at resolve.
-    from bluesky_sandbox.sim.spawn import resolve_route
-
     routes = {"approach": ["FAF", "RWY"], "arrival": ["IAF", {"route": "approach"}, "MISSED"]}
     assert resolve_route(routes["arrival"], routes) == ["IAF", "FAF", "RWY", "MISSED"]
     # nested + cycle
@@ -766,14 +763,6 @@ def test_route_composition_subroutes():
 def test_route_composition_branches():
     # {"choice": [...]} lets a procedure diverge (SID transitions) or merge
     # (STAR entries onto a shared trunk); shared junction waypoints collapse.
-    import numpy as np
-
-    from bluesky_sandbox.sim.spawn import (
-        expand_route_paths,
-        resolve_route,
-        sample_route_path,
-    )
-
     routes = {
         "SID_CORE": ["DER", "ARNEM", "SUGOL"],
         "EAST": ["SUGOL", "EEL"],
@@ -817,15 +806,6 @@ def test_route_composition_branches():
 def test_route_step_crossing_restrictions():
     # A {"waypoint": name, speed_kts, alt_ft} step is a route-local crossing
     # restriction: preserved for ADDWPT, but names-only for viz/validation/hooks.
-    import numpy as np
-
-    from bluesky_sandbox.sim.spawn import (
-        expand_route_paths,
-        resolve_route,
-        route_step_names,
-        sample_route_path,
-    )
-
     routes = {"STAR": ["RIVER", {"waypoint": "EEL", "speed_kts": 250, "alt_ft": 10000}]}
     rng = np.random.default_rng(0)
     sampled = sample_route_path(routes["STAR"], routes, rng)
@@ -896,8 +876,6 @@ def test_route_speed_requires_resolved_altitude():
 def test_env_hooks_catalog_and_codegen():
     # Hooks are discovered by introspection (no hard-coded list) and only the
     # customised ones are emitted - no super() boilerplate for the rest.
-    from bluesky_sandbox.ui.designer import catalog
-
     hook_names = {h["name"] for h in catalog.hooks()}
     assert {"on_aircraft_spawned", "define_agent_context", "on_episode_reset"} <= hook_names
     # clean (annotation-free, underscore-stripped) signatures for codegen
@@ -917,9 +895,6 @@ def test_env_hooks_catalog_and_codegen():
 
 
 def test_completion_context_uses_built_config_and_hook_protocols():
-    from bluesky_sandbox.ui.designer import catalog
-    from bluesky_sandbox.ui.designer.api import _spec_completion_context
-
     spec = _example_design_spec()
     spec.queryables["wp"] = S.dump(Waypoint(lat=52.0, lon=4.5, alt_ft=3000, color="magenta"))
     spec.env.hook_setup = "import numpy as np\nSCALE = np.ones(1)"
@@ -983,8 +958,6 @@ def test_completion_context_uses_built_config_and_hook_protocols():
     assert "def auto_cost_constraint_intrinsic_cost" in autocost_scaffold["setup"]
     assert "AutoCostConstraintTaskInfoProvider(" in autocost_scaffold["setup"]
 def test_codegen_task_info_provider_object_scaffold():
-    from bluesky_sandbox.ui.designer import catalog
-
     spec = _example_design_spec()
     scaffold = {
         item["name"]: item for item in catalog.task_info_types()
@@ -1163,10 +1136,6 @@ def test_nav_search():
 # codegen                                                                      #
 # --------------------------------------------------------------------------- #
 def test_codegen_generates_importable_package():
-    import importlib
-    import sys
-    import tempfile
-
     spec = _example_design_spec()
     spec.env.hook_setup = "import math\nimport math\nHOOK_SCALE = math.sqrt(4.0)"
     spec.env.hooks["reward"] = "return HOOK_SCALE"
@@ -1402,10 +1371,6 @@ def test_unbound_query_results_reject_lazy_current_access():
 
 
 def test_codegen_with_custom_code_imports():
-    import importlib
-    import sys
-    import tempfile
-
     spec = _spec_with_custom_code()
     files = codegen.generate_task(spec, "custom_pkg")
     assert "custom_pkg/custom_fields.py" in files and "custom_pkg/task.py" not in files
@@ -1524,8 +1489,6 @@ def main() -> int:
             fn()
         except Exception as e:  # noqa: BLE001 - test runner reports all failures
             failures += 1
-            import traceback
-
             print(f"  FAILED: {e}")
             traceback.print_exc()
     total = len(_all_tests())
@@ -1546,10 +1509,6 @@ def test_runner_repo_root_is_the_package_parent():
     with ``ModuleNotFoundError: No module named 'bluesky_sandbox'`` - a break
     invisible from inside the parent process, which imports fine either way.
     """
-    from pathlib import Path
-
-    from bluesky_sandbox.ui.designer.runner import _REPO_ROOT
-
     root = Path(_REPO_ROOT)
     assert (root / "bluesky_sandbox" / "__init__.py").is_file(), (
         f"{root} is not the parent of the bluesky_sandbox package"

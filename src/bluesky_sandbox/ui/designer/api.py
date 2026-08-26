@@ -20,6 +20,7 @@ otherwise run Vite's dev server and point it at this API.
 
 from __future__ import annotations
 
+import argparse
 import ast
 import dataclasses
 import importlib
@@ -34,6 +35,17 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+
+from bluesky_sandbox.env import BlueskyEnv
+from bluesky_sandbox.interface.task import (
+    AgentStepContext,
+    BaseAgentInfo,
+    RewardFn,
+    TaskInfoProvider,
+    TerminationFn,
+    TruncationFn,
+)
+from bluesky_sandbox.sim.queryables import RegionResult
 
 from . import catalog as _catalog
 from . import codegen as _codegen
@@ -187,9 +199,6 @@ def _assigned_names(node: ast.AST) -> list[str]:
 
 
 def _hook_contexts_by_name() -> dict[str, dict[str, Any]]:
-    from bluesky_sandbox.env import BlueskyEnv
-    from bluesky_sandbox.interface.task import RewardFn, TerminationFn, TruncationFn
-
     protocol_hooks = {
         "reward": RewardFn,
         "terminated": TerminationFn,
@@ -415,13 +424,6 @@ def _member_type_map(cls: type | None) -> dict[str, type]:
 
 
 def _spec_completion_context(spec: DesignSpec) -> dict[str, Any]:
-    from bluesky_sandbox.interface.task import (
-        AgentStepContext,
-        BaseAgentInfo,
-        TaskInfoProvider,
-    )
-    from bluesky_sandbox.sim.queryables import RegionResult
-
     cfg = build_design_config(spec)
     support = build_scenario(spec).support()
     hook_catalog = _catalog.hooks()
@@ -564,14 +566,10 @@ def _spec_completion_context(spec: DesignSpec) -> dict[str, Any]:
 
 
 def spec_max_aircraft(spec: DesignSpec) -> int:
-    from .builder import build_scenario
-
     return int(build_scenario(spec).support().max_aircraft)
 
 
 def _airspace_validation_errors(spec: DesignSpec) -> list[str]:
-    from .builder import build_scenario
-
     return airspace_warnings(build_scenario(spec).support())
 
 
@@ -852,9 +850,8 @@ app = create_app()
 
 
 def main() -> None:
-    import argparse
-
-    import uvicorn
+    # optional extra: [designer]
+    import uvicorn  # noqa: PLC0415
 
     parser = argparse.ArgumentParser(description="Run the Environment Designer API.")
     parser.add_argument("--host", default="127.0.0.1")

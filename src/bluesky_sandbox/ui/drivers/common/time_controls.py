@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import bluesky as bs
 
 
@@ -71,8 +73,6 @@ class TimeControlMixin:
         """
         if not self.realtime:
             return
-        import time
-
         simdt = float(getattr(bs.sim, "simdt", 0.0) or 0.0)
         dtmult = max(float(self._desired_dtmult), 1e-6)
         budget = simdt / dtmult

@@ -1,5 +1,8 @@
 """TSASView - draggable per-waypoint sequencing table in the Panda3D HUD."""
 
+# ruff: noqa: PLC0415 - panda3d is an optional extra ([panda3d]); every import
+# below is a panda3d/direct.gui symbol pulled in at draw time.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -10,6 +13,7 @@ from bluesky_sandbox.ui.drivers.common import (
     TsasDataMixin,
     TsasTable,
 )
+from bluesky_sandbox.ui.drivers.panda3d.colors import NAMED_COLORS
 from bluesky_sandbox.ui.drivers.panda3d.views.base import Panda3DView
 
 if TYPE_CHECKING:
@@ -440,7 +444,5 @@ class TSASView(TsasDataMixin, Panda3DView):
 
     @staticmethod
     def _waypoint_color(name: str) -> tuple[float, float, float, float]:
-        from bluesky_sandbox.ui.drivers.panda3d.colors import NAMED_COLORS
-
         rgb = NAMED_COLORS.get(name.lower(), NAMED_COLORS["cyan"])
         return (*rgb, 1.0)

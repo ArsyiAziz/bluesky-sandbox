@@ -44,6 +44,8 @@ import time
 
 import bluesky as bs
 import zmq
+from bluesky.core.walltime import Timer
+from bluesky.stack import simstack
 
 from bluesky_sandbox.ui.display.overlays import Point, Polygon, Polyline
 from bluesky_sandbox.ui.drivers.human_driver import HumanSimDriver
@@ -152,9 +154,6 @@ class QtGLSimDriver(HumanSimDriver):
         if self._proc is not None and self._proc.poll() is not None:
             raise SystemExit("BlueSky GUI window closed")
 
-        from bluesky.core.walltime import Timer
-        from bluesky.stack import simstack
-
         Timer.update_timers()
         bs.net.update()
         bs.scr.update()
@@ -201,8 +200,6 @@ class QtGLSimDriver(HumanSimDriver):
 
     def toggle_all_routes(self) -> None:
         """Flip the flag and add/remove the defined-route polylines live."""
-        from bluesky.stack import simstack
-
         super().toggle_all_routes()
         if self.show_all_routes:
             self._draw_defined_routes()
@@ -212,8 +209,6 @@ class QtGLSimDriver(HumanSimDriver):
 
     def _draw_defined_routes(self) -> None:
         """Stack ``POLYLINE``/``COLOR`` for each of the design's defined routes."""
-        from bluesky.stack import simstack
-
         self._clear_defined_routes()
         for i, pts in enumerate(self.defined_route_polylines()):
             name = f"ROUTE_{i}"

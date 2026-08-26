@@ -28,7 +28,7 @@ from collections.abc import Callable
 from types import ModuleType
 from typing import Any
 
-from bluesky_sandbox.config import EnvConfig
+from bluesky_sandbox.config import EnvConfig, apply_performance_model
 from bluesky_sandbox.interface.fields import actions as _actions
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.interface.fields import queryables as _queryable_fields
@@ -48,7 +48,7 @@ from bluesky_sandbox.sim.scenario import transforms as _t
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from . import spec as _spec
-from .spec import DesignSpec, FieldRef, TaskInfoSpec
+from .spec import SCENARIO_HOOKS, DesignSpec, FieldRef, TaskInfoSpec
 
 
 class BuildError(ValueError):
@@ -671,8 +671,6 @@ def compile_scenario_hooks(spec: DesignSpec) -> dict[str, Callable[..., Any]]:
     make will fail here exactly as it would in the generated module, rather than
     picking up a name this module happens to have.
     """
-    from .spec import SCENARIO_HOOKS
-
     hooks = {k: v for k, v in (spec.scenario_hooks or {}).items() if v.strip()}
     if not hooks:
         return {}
@@ -807,8 +805,6 @@ def _waypoint_field_dists(spec: DesignSpec) -> dict[str, dict[str, Any]]:
 
 def build_scenario(spec: DesignSpec) -> DesignScenario:
     """Compile the spec's geometry/spawn/queryables into a runnable scenario."""
-    from bluesky_sandbox.config import apply_performance_model
-
     # Before any sampling: spawn altitudes and speeds are drawn from the
     # aircraft's flight envelope, which is read from whichever performance
     # model BlueSky is set to. This path never builds an EnvConfig (the

@@ -7,10 +7,14 @@ reads as Python code rather than a serialized blob.
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from bluesky_sandbox.interface.fields import queryables as _queryable_fields
+from bluesky_sandbox.interface.wrappers.observations import normalizer as _norm
 
+from . import spec as _spec
+from .builder import expand_region_members
 from .spec import (
     DesignSpec,
     EnvSpec,
@@ -30,10 +34,6 @@ def _normalizer_import_line() -> str:
     Every concrete ``Normalizer`` subclass is included, so a newly added
     normalizer is importable in generated code without editing this module.
     """
-    import inspect
-
-    from bluesky_sandbox.interface.wrappers.observations import normalizer as _norm
-
     names = sorted(
         name
         for name, obj in inspect.getmembers(_norm, inspect.isclass)
@@ -207,8 +207,6 @@ class _Emitter:
         # (reusing the same rotation as the runtime), so the emitted Python needs
         # no special rotation primitive.
         if d.get("rotation_deg"):
-            from . import spec as _spec
-
             d = _spec.dump(_spec.load(d))
         return f"RegionBounds({self.footprint(d['footprint'])}, {self.band(d.get('altitude'))})"
 
@@ -238,8 +236,6 @@ class _Emitter:
             # sample may be a footprint, a bounds, or a {"ref": name}.
             sample = d.get("sample")
             if (lat is None or lon is None) and sample:
-                from . import spec as _spec
-
                 region = self.regions[sample["ref"]] if "ref" in sample else sample
                 (lat_min, lat_max), (lon_min, lon_max) = _spec.load(region).bounding_box
                 lat = (lat_min + lat_max) / 2.0
@@ -602,8 +598,6 @@ def _emit_group(em: _Emitter, spec: DesignSpec, g: dict[str, Any]) -> str:
     ``members`` are bounds names in the spec; they're expanded to the element ids
     the runtime transforms (matching :func:`builder._parse_groups`).
     """
-    from .builder import expand_region_members
-
     angle_expr = em.value(g.get("angle_deg", 0.0))
     scale_expr = em.value(g.get("scale", 1.0))
     pivot = tuple(g["pivot"]) if g.get("pivot") else None

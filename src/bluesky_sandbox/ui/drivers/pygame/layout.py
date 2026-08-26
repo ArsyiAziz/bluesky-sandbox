@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Literal, Union
 
 import pygame
 
+from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView
+
 if TYPE_CHECKING:
     from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView
 
@@ -110,8 +112,6 @@ def parse(spec, default_orientation: Orientation = "v") -> Node:
         The orientation to assume for an untagged outer tuple.  Defaults
         to ``"v"`` (vertical stack - preserves the legacy default).
     """
-    from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView
-
     # Already a Node? Fine.
     if isinstance(spec, (Leaf, Split)):
         return spec

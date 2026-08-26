@@ -33,17 +33,20 @@ class Footprint(ABC):
         """Draw a random ``(lat_deg, lon_deg)`` point inside this footprint."""
 
     def union(self, other: Footprint) -> Footprint:
-        from .derived import BooleanFootprint
+        # cycle: .derived/.altitude import .base
+        from .derived import BooleanFootprint  # noqa: PLC0415
 
         return BooleanFootprint("union", self, other)
 
     def intersection(self, other: Footprint) -> Footprint:
-        from .derived import BooleanFootprint
+        # cycle: .derived/.altitude import .base
+        from .derived import BooleanFootprint  # noqa: PLC0415
 
         return BooleanFootprint("intersection", self, other)
 
     def difference(self, other: Footprint) -> Footprint:
-        from .derived import BooleanFootprint
+        # cycle: .derived/.altitude import .base
+        from .derived import BooleanFootprint  # noqa: PLC0415
 
         return BooleanFootprint("difference", self, other)
 
@@ -130,7 +133,8 @@ class RegionBounds(Bounds):
 
     def __post_init__(self) -> None:
         if self.altitude is None:
-            from .altitude import ConstantAltitudeBand
+            # cycle: .derived/.altitude import .base
+            from .altitude import ConstantAltitudeBand  # noqa: PLC0415
 
             self.altitude = ConstantAltitudeBand()
         self._shape = self.footprint.shape

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import bluesky as bs
+import numpy as np
 from bluesky.core import simtime
 from bluesky.stack import simstack
 from bluesky.tools.aero import ft, kts, nm, vcas2tas
+from bluesky.tools.geo import kwikqdrdist
 from wurlitzer import pipes
 
 from bluesky_sandbox.sim.queryables import WaypointTarget
@@ -54,8 +57,6 @@ class BlueSkyRuntime:
         top-up to reject positions that would place a new aircraft on top of
         existing traffic (an instant loss of separation).
         """
-        import numpy as np
-
         n = int(bs.traf.ntraf)
         if n == 0:
             return float("inf")
@@ -90,9 +91,6 @@ class BlueSkyRuntime:
         breach (horizontal ``asas_pzr`` and vertical ``asas_pzh``) at closest
         point of approach within ``asas_dtlookahead``. 
         """
-        import numpy as np
-        from bluesky.tools.geo import kwikqdrdist
-
         n = int(bs.traf.ntraf)
         if n == 0:
             return False
@@ -233,8 +231,6 @@ class BlueSkyRuntime:
         turbulence gust). A single wind point yields a spatially uniform field.
         No-op when there's no mean wind and no gust.
         """
-        import math
-
         config = self._config()
         if config.wind_kts <= 0.0 and config.turbulence_kts <= 0.0:
             return

@@ -25,6 +25,7 @@ asks (task packages live outside this library - see ``write_task``):
 
 from __future__ import annotations
 
+import ast
 import copy
 import keyword
 import re
@@ -33,8 +34,9 @@ from pathlib import Path
 from typing import Any
 
 from .builder import with_inferred_temporal_tracking
+from .catalog import hooks as _hook_catalog
 from .emit import emit_env_sources, emit_scenario_sources
-from .spec import DesignSpec, TaskInfoSpec
+from .spec import SCENARIO_HOOKS, DesignSpec, TaskInfoSpec
 
 
 def _valid_package_name(name: str) -> str:
@@ -192,8 +194,6 @@ def _emit_scenario_hooks(scenario_hooks: dict[str, str]) -> str:
     the identity, and emitting a pass-through would just be boilerplate that
     obscures which hooks a design really uses.
     """
-    from .spec import SCENARIO_HOOKS
-
     blocks: list[str] = []
     for name in sorted(scenario_hooks):
         spec_entry = SCENARIO_HOOKS.get(name)
@@ -495,8 +495,6 @@ def _emit_hooks(hooks: dict[str, str]) -> str:
     default); other hooks are emitted only when the user customised them -
     uncustomised ones inherit the base behaviour (no ``super()`` boilerplate).
     """
-    from .catalog import hooks as _hook_catalog
-
     sigs = {h["name"]: h["def_signature"] for h in _hook_catalog()}
     names = list(_DEFAULT_HOOK_BODIES) + [n for n in sorted(hooks) if n not in _DEFAULT_HOOK_BODIES]
     blocks: list[str] = []
@@ -639,8 +637,6 @@ def _setup_exports(source: str) -> set[str]:
     so a ``from .setup import *`` would silently miss exactly the names the
     hooks depend on. Hence an explicit import list, computed here.
     """
-    import ast
-
     names: set[str] = set()
     for node in ast.parse(source).body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -660,8 +656,6 @@ def _setup_exports(source: str) -> set[str]:
 
 def _names_used(source: str) -> set[str]:
     """Every identifier ``source`` reads. Used to import only what is needed."""
-    import ast
-
     return {
         node.id
         for node in ast.walk(ast.parse(source))

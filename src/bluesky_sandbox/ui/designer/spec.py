@@ -40,6 +40,33 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Any
 
+import scipy.stats as _scipy_stats
+
+from bluesky_sandbox.sim.bounds import (
+    AnnularSectorFootprint,
+    BooleanFootprint,
+    Bounds,
+    BoxFootprint,
+    ConstantAltitudeBand,
+    DiskFootprint,
+    Footprint,
+    LatLon,
+    LinearAltitudeBand,
+    PolygonFootprint,
+    RadialAltitudeBand,
+    RegionBounds,
+    SectorFootprint,
+    VertexAltitudeBand,
+)
+from bluesky_sandbox.sim.bounds.altitude import AltitudeBand
+from bluesky_sandbox.sim.bounds.footprints import ShapelyFootprint
+from bluesky_sandbox.sim.performance.envelope import EnvelopeSample
+from bluesky_sandbox.sim.queryables import Queryable, QueryRegion, Waypoint
+from bluesky_sandbox.sim.sampling.distributions import Bounded, Categorical
+from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
+
+from .transforms import bbox_center, rotate_bounds
+
 # reward/terminated/truncated are always-present env hooks (default 0.0 / False).
 DEFAULT_HOOKS = ("reward", "terminated", "truncated")
 
@@ -87,30 +114,6 @@ def _func_body_source(source: str, name: str) -> str | None:
             return textwrap.dedent("\n".join(lines[start : node.end_lineno])).rstrip()
     return None
 
-import scipy.stats as _scipy_stats
-
-from bluesky_sandbox.sim.bounds import (
-    AnnularSectorFootprint,
-    BooleanFootprint,
-    Bounds,
-    BoxFootprint,
-    ConstantAltitudeBand,
-    DiskFootprint,
-    Footprint,
-    LatLon,
-    LinearAltitudeBand,
-    PolygonFootprint,
-    RadialAltitudeBand,
-    RegionBounds,
-    SectorFootprint,
-    VertexAltitudeBand,
-)
-from bluesky_sandbox.sim.bounds.altitude import AltitudeBand
-from bluesky_sandbox.sim.bounds.footprints import ShapelyFootprint
-from bluesky_sandbox.sim.performance.envelope import EnvelopeSample
-from bluesky_sandbox.sim.queryables import Queryable, QueryRegion, Waypoint
-from bluesky_sandbox.sim.sampling.distributions import Bounded, Categorical
-from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
 
 
 class SpecError(ValueError):
@@ -568,8 +571,6 @@ def _bounds_load(d: dict[str, Any]) -> Bounds:
         # footprint + `rotation_deg` so the shape stays parametric to edit.
         rotation = d.get("rotation_deg")
         if rotation:
-            from .transforms import bbox_center, rotate_bounds
-
             bounds = rotate_bounds(bounds, bbox_center(bounds), float(rotation))
         return bounds
     raise SpecError(f"unknown bounds type {t!r}")

@@ -16,6 +16,8 @@ from bluesky_sandbox.interface.fields.base import (
     PairObsField,
 )
 from bluesky_sandbox.interface.task import TaskInfoProvider
+from bluesky_sandbox.sim.performance.bada import bada_install_hint
+from bluesky_sandbox.sim.performance.models import available_types
 from bluesky_sandbox.sim.sampling.distributions import Categorical
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
@@ -101,15 +103,11 @@ def apply_performance_model(model: str | None) -> str:
 
 def _available_aircraft(model: str | None = None) -> frozenset[str]:
     """ICAO types the configured performance model carries, lowercased."""
-    from bluesky_sandbox.sim.performance.models import available_types
-
     resolved = (model or requested_performance_model()).lower()
     try:
         return available_types(resolved)
     except Exception as e:
         if resolved == "bada":
-            from bluesky_sandbox.sim.performance.bada import bada_install_hint
-
             hint = "" if bada_install_hint() in str(e) else f" {bada_install_hint()}"
             raise RuntimeError(
                 f"Could not load BADA aircraft database: {e}.{hint}"

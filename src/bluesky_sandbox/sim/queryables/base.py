@@ -20,9 +20,13 @@ def _ensure_navdb_loaded() -> None:
     """
     if bs.navdb is not None and hasattr(bs.navdb, "wpid"):
         return
-    from bluesky import pathfinder, refdata, settings
-    from bluesky import tools as _bs_tools
-    from bluesky.navdatabase import Navdatabase
+    # Deferred deliberately: importing bluesky.navdatabase registers the
+    # ``cache_path`` / ``navdata_path`` settings defaults on ``bs.settings`` as
+    # an import side effect. Hoisting these would apply them merely by importing
+    # bluesky_sandbox, ahead of the bs.init ordering this function replicates.
+    from bluesky import pathfinder, refdata, settings  # noqa: PLC0415
+    from bluesky import tools as _bs_tools  # noqa: PLC0415
+    from bluesky.navdatabase import Navdatabase  # noqa: PLC0415
 
     pathfinder.init()
     settings.init()

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal, NoReturn, NotRequired, Protocol, TypedDict
 
+import bluesky as bs
 import numpy as np
 
 from bluesky_sandbox.sim.geometry.conflict import ConflictView
@@ -310,8 +311,6 @@ class AgentStepContext:
         cached = self._obs_value_cache.get(key)
         if cached is not None:
             return cached
-        import bluesky as bs  # lazy: keep this module import-light
-
         others = tuple(i for i in range(bs.traf.ntraf) if i != self.acidx)
         values = (
             np.empty(0, dtype=np.float64)

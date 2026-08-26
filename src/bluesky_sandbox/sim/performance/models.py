@@ -23,16 +23,20 @@ from functools import cache
 
 from bluesky.tools.aero import ft
 
+from .bada import bada_aircraft_types, bada_coefficients
+
 
 def _openap_types() -> frozenset[str]:
-    import openap
+    # expensive: openap costs ~1.8s to import
+    import openap  # noqa: PLC0415
 
     return frozenset(openap.prop.available_aircraft(use_synonym=True))
 
 
 def _openap_limits(actype: str) -> dict | None:
     try:
-        import openap
+        # expensive: openap costs ~1.8s to import
+        import openap  # noqa: PLC0415
 
         raw = dict(openap.prop.aircraft(actype)["limits"])  # copy: openap caches its own
     except Exception:  # noqa: BLE001 - unknown type or unusable database
@@ -50,14 +54,10 @@ def _openap_limits(actype: str) -> dict | None:
 
 
 def _bada_types() -> frozenset[str]:
-    from .bada import bada_aircraft_types
-
     return bada_aircraft_types()
 
 
 def _bada_limits(actype: str) -> dict | None:
-    from .bada import bada_coefficients
-
     data = bada_coefficients(actype)
     if data is None:
         return None
