@@ -6,6 +6,20 @@ from dataclasses import dataclass
 import numpy as np
 
 
+def _boolean(op: str, left: Footprint, right: Footprint) -> Footprint:
+    """Compose two footprints into a ``BooleanFootprint``.
+
+    Late import: ``.derived`` subclasses :class:`Footprint`, so it imports this
+    module at load time - naming it at module scope here would close the cycle
+    and leave ``derived`` inheriting from a half-built ``base``. By the time any
+    of these run, both modules are loaded. Kept in one helper so the three
+    operators below share a single deferral rather than repeating it.
+    """
+    from .derived import BooleanFootprint  # noqa: PLC0415
+
+    return BooleanFootprint(op, left, right)
+
+
 class Footprint(ABC):
     """Horizontal region primitive in lat/lon space."""
 
@@ -33,22 +47,13 @@ class Footprint(ABC):
         """Draw a random ``(lat_deg, lon_deg)`` point inside this footprint."""
 
     def union(self, other: Footprint) -> Footprint:
-        # cycle: .derived/.altitude import .base
-        from .derived import BooleanFootprint  # noqa: PLC0415
-
-        return BooleanFootprint("union", self, other)
+        return _boolean("union", self, other)
 
     def intersection(self, other: Footprint) -> Footprint:
-        # cycle: .derived/.altitude import .base
-        from .derived import BooleanFootprint  # noqa: PLC0415
-
-        return BooleanFootprint("intersection", self, other)
+        return _boolean("intersection", self, other)
 
     def difference(self, other: Footprint) -> Footprint:
-        # cycle: .derived/.altitude import .base
-        from .derived import BooleanFootprint  # noqa: PLC0415
-
-        return BooleanFootprint("difference", self, other)
+        return _boolean("difference", self, other)
 
     def __or__(self, other: Footprint) -> Footprint:
         return self.union(other)
@@ -133,7 +138,7 @@ class RegionBounds(Bounds):
 
     def __post_init__(self) -> None:
         if self.altitude is None:
-            # cycle: .derived/.altitude import .base
+            # Late import: .altitude imports this module for AltitudeBand.
             from .altitude import ConstantAltitudeBand  # noqa: PLC0415
 
             self.altitude = ConstantAltitudeBand()
