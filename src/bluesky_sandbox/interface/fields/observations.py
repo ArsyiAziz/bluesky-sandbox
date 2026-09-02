@@ -3655,6 +3655,83 @@ class ConflictTlosS(_WindowedConflictPairField):
 
 
 @dataclass(frozen=True)
+class InConf(_WindowedConflictPairField):
+    """1.0 when the intruder is *currently flagged in conflict* with the ownship.
+
+    The detection predicate itself, BlueSky ``StateBased.detect`` reproduced over
+    the shared :class:`~bluesky_sandbox.sim.geometry.conflict.ConflictView`: the
+    pair enters the 3-D protected zone within the lookahead horizon
+    (``tinconf <= lookahead``, from
+    :func:`~bluesky_sandbox.sim.geometry.conflict.predicted_tlos_s` - the same
+    ``tinconf`` the cost's imminence term reads). Non-conflict pairs score ``0``,
+    a pair already inside the zone (``tinconf <= 0``) scores ``1`` until it exits.
+
+    Computed from the shared geometry rather than read from ``bs.traf.cd``
+    (:class:`ConflictRisk`, :class:`TcpaS`, :class:`TlosS` do the latter), so it
+    agrees with a ``ConflictView``-derived cost by construction and carries no
+    detector-cache gap: every intruder is scored every step, not only the rows CD
+    happened to cache. It is the binary companion of :class:`ConflictTlosS` -
+    same window, same zone - stated where a network can read it.
+
+    **Why a dedicated flag** rather than thresholding ``conflict_tlos_s``: that
+    field clips ``+inf`` (no conflict at all) to its high bound, which is also
+    where a conflict entering *exactly* at the horizon sits, so the two are
+    indistinguishable at the top of the normalized range. This field separates
+    them. The same argument :class:`InLosNow` makes for the LoS predicate.
+
+    Pair the two: this one is the approach CD would alert on, :class:`InLosNow`
+    is the breach. The implication runs one way only - a pair inside the zone is
+    by construction inside its own conflict window and stays flagged until it
+    exits, so ``in_los_now = 1`` always comes with ``in_conf = 1``, while the
+    reverse is false for every conflict still minutes from entry. That gap is
+    the point: it is the warning time a resolution has to act in, and only this
+    field marks its opening.
+
+    ``rpz_nm`` / ``vpz_ft`` / ``lookahead_s`` default to the live CD values and
+    override together with the cost's zone - see
+    :class:`_WindowedConflictPairField` for why a buffered zone belongs here and
+    not in ``config.pz_radius_nm``.
+
+    Use :class:`~bluesky_sandbox.interface.wrappers.observations.normalizer.RawNormalizer`
+    (or any normalizer with matching bounds) - the value is already 0/1.
+
+    Metadata:
+        name: in_conf
+        unit: unitless
+        quantity: indicator
+        is_pair: True
+    """
+
+    meta = ObsMeta("in_conf", Unit.UNITLESS, ObsQuantity.INDICATOR, is_pair=True)
+    lookahead_s: Annotated[
+        float | None, "detection horizon s; None = CD lookahead at runtime"
+    ] = None
+    low: Annotated[float, "indicator lower bound"] = 0.0
+    high: Annotated[float, "indicator upper bound"] = 1.0
+
+    def _horizon_s(self) -> float:
+        look = (
+            _cd_lookahead_s() if self.lookahead_s is None else float(self.lookahead_s)
+        )
+        if look <= 0.0:
+            raise ValueError(
+                f"{self.__class__.__name__} lookahead_s must be positive, got {look}."
+            )
+        return look
+
+    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
+        others = _indices_array(other_indices)
+        view = ConflictView(int(own_idx), others=others)
+        # ``+inf`` (no valid conflict window) compares False against any finite
+        # horizon, so the horizon test alone is the full detection predicate.
+        tinconf = predicted_tlos_s(view, *self._window_zone())
+        return (tinconf <= self._horizon_s()).astype(np.float32)
+
+    def bounds(self, own_idx: int) -> tuple[float, float]:
+        return self._configured_bounds()
+
+
+@dataclass(frozen=True)
 class InLosNow(PairObsField):
     """1.0 when the intruder is *currently* inside the ownship's protected zone.
 
@@ -3675,8 +3752,9 @@ class InLosNow(PairObsField):
     entered - encode it at a single endpoint of the normalized range, where it is
     indistinguishable from saturation. This field states it directly.
 
-    Pair it with :class:`ConflictTlosS` for the approach and this for the entry;
-    the two carry different information and neither substitutes for the other.
+    Pair it with :class:`ConflictTlosS` for the approach and this for the entry
+    (or with :class:`InConf`, the binary form of the same approach); the two
+    carry different information and neither substitutes for the other.
     For a *graded* conflict signal see :class:`ConflictRisk` - but note that one
     reads BlueSky's ASAS ``confpairs`` cache, so it does not necessarily agree
     with a cost computed from ``ConflictView``, whereas this field does by
@@ -4128,58 +4206,6 @@ class BrgFromOwnRelTrkDeg(PairObsField):
 # --------------------------------------------------------------------------- #
 # BlueSky CD parameters (lookahead, protected zone) and per-intruder risk      #
 # --------------------------------------------------------------------------- #
-def _cd_lookahead_s() -> float:
-    """Conflict-detection lookahead horizon, in seconds.
-
-    Prefers the CD's applied default ``bs.traf.cd.dtlookahead_def`` - a scalar
-    set at init from ``asas_dtlookahead`` and updated by the ``DTLOOK`` command
-    (how the sandbox applies ``config.lookahead_s``), so the horizon tracks the
-    scenario's actual setting rather than the config-file default. Falls back to
-    ``bs.settings.asas_dtlookahead`` before CD/traffic exist. Uses the scalar
-    default, not the per-aircraft ``cd.dtlookahead`` array (empty pre-traffic).
-    """
-    cd = getattr(bs.traf, "cd", None) if bs.traf is not None else None
-    look = getattr(cd, "dtlookahead_def", None)
-    if look is None:
-        look = getattr(bs.settings, "asas_dtlookahead", 300.0)
-    look = float(look)
-    return look if look > 0.0 else 300.0
-
-
-def _cd_rpz_m() -> float:
-    """Horizontal protected-zone radius, in metres (BlueSky CD ``rpz``).
-
-    Prefers the CD's applied default ``bs.traf.cd.rpz_def`` (metres) - set from
-    ``asas_pzr`` and updated by ``ZONER`` (how the sandbox applies
-    ``config.pz_radius_nm``) - falling back to ``bs.settings.asas_pzr`` before CD
-    exists. A detected conflict has ``dcpa < rpz``, so this is the natural cap on
-    horizontal distance at CPA.
-    """
-    cd = getattr(bs.traf, "cd", None) if bs.traf is not None else None
-    rpz = getattr(cd, "rpz_def", None)
-    if rpz is None:
-        rpz = float(getattr(bs.settings, "asas_pzr", 5.0)) * nm
-    rpz = float(rpz)
-    return rpz if rpz > 0.0 else 5.0 * nm
-
-
-def _cd_hpz_m() -> float:
-    """Vertical protected-zone height, in metres (BlueSky CD ``hpz``).
-
-    Prefers the CD's applied default ``bs.traf.cd.hpz_def`` (metres) - set from
-    ``asas_pzh`` and updated by ``ZONEDH`` (how the sandbox applies
-    ``config.pz_height_ft``) - falling back to ``bs.settings.asas_pzh`` before CD
-    exists. It is the minimum vertical separation (a vertical loss of separation
-    is ``|dalt| < hpz``).
-    """
-    cd = getattr(bs.traf, "cd", None) if bs.traf is not None else None
-    hpz = getattr(cd, "hpz_def", None)
-    if hpz is None:
-        hpz = float(getattr(bs.settings, "asas_pzh", 1000.0)) * ft
-    hpz = float(hpz)
-    return hpz if hpz > 0.0 else 1000.0 * ft
-
-
 @dataclass(frozen=True)
 class ConflictRisk(PairObsField):
     """Per-intruder graded conflict risk, ``1 - tcpa/lookahead`` in ``[0, 1]``.
