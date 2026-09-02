@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import math
 import string
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -21,7 +22,7 @@ from typing import (
 
 import bluesky as bs
 import numpy as np
-from bluesky.tools.aero import ft, kts, vcas2tas
+from bluesky.tools.aero import ft, kts, nm, vcas2tas
 from bluesky.tools.geo import kwikqdrdist
 from pettingzoo import ParallelEnv
 
@@ -39,6 +40,7 @@ from bluesky_sandbox.interface.task import (
     BaseAgentInfo,
     BaseObs,
 )
+from bluesky_sandbox.sim.geometry.conflict import cd_hpz_m, cd_rpz_m
 from bluesky_sandbox.sim.performance.envelope import (
     feasible_alt_cas,
     feasible_cas_at_alt,
@@ -111,10 +113,16 @@ def overridable(func: F) -> F:
 
 
 # Steady-state (``SpawnRegion.maintain``) respawn guard: a topped-up aircraft
-# must be at least this far from all live traffic (avoiding an instant loss of
-# separation), retried up to this many times before deferring to a later step.
-_MAINTAIN_SPAWN_MIN_SEP_NM = 8.0
+# must clear all live traffic (avoiding an instant loss of separation), retried
+# up to this many times before deferring to a later step. The distance itself is
+# The zone itself is the live CD protected zone plus the region's
+# ``spawn_sep_*``, so it tracks whatever the scenario actually detects
+# conflicts against.
 _MAINTAIN_SPAWN_MAX_TRIES = 20
+# Consecutive fully-failed spawns for one region before warning once. A single
+# failure is normal; a sustained failure means
+# the guard is unsatisfiable and the region is silently under-populated.
+_MAINTAIN_SPAWN_WARN_AFTER = 5
 
 
 @dataclass(frozen=True)
@@ -325,6 +333,10 @@ class BlueskyBaseEnvironment(ParallelEnv):
         # Sorted ascending by spawn_time; drained at the top of each step()
         # when ``bs.sim.simt`` has caught up.
         self._spawn_queue: list[SpawnQueueItem] = []
+        # Consecutive fully-failed resets per region index. A
+        # persistently unsatisfiable spawn guard warns once instead of silently
+        # holding the region below its target. Cleared on a successful spawn.
+        self._maintain_spawn_failures: dict[int, int] = {}
         # Total spawns sampled at the most recent reset (live + queued +
         # already-dead). Used by HUD to render ``spawned X/N``.
         self._episode_scheduled_aircraft_count: int = 0
@@ -747,6 +759,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         Sampled items are sorted ascending by ``spawn_time`` so the drain
         path can stop as soon as it hits an entry that isn't due yet.
         """
+        self._maintain_spawn_failures.clear()
         self._spawn_queue = sorted(
             (
                 SpawnQueueItem(
@@ -813,18 +826,30 @@ class BlueskyBaseEnvironment(ParallelEnv):
         hdg_deg: float,
         conflict_free: bool,
         *,
-        margin_nm: float = 0.0,
-        margin_ft: float = 0.0,
-        margin_s: float = 0.0,
+        sep_nm: float | None = None,
+        sep_ft: float | None = None,
+        lookahead_s: float | None = None,
     ) -> bool:
         """Whether a candidate spawn state is acceptable against live traffic.
 
-        When ``conflict_free`` this is a full predicted-conflict check (no PZ
-        breach within lookahead, against all live traffic); otherwise it is the
-        coarser ``_MAINTAIN_SPAWN_MIN_SEP_NM`` distance guard used to avoid
-        respawning on top of existing traffic. ``conflict_free`` is resolved
-        per region by ``SpawnConfig.region_conflict_free``; the ``margin_*``
-        spawn buffer by ``SpawnConfig.region_conflict_margins``.
+        Both branches clear the same separation - the region's ``spawn_sep_nm`` /
+        ``spawn_sep_ft``, each defaulting to CD's own zone - and differ only in
+        *when* they look:
+
+        * ``conflict_free``: the predicted closest approach over
+          ``lookahead_s``, so the aircraft is not on course to conflict either.
+        * otherwise: the spawn's present position only, which is what a
+          steady-state ``maintain`` top-up needs - materialising on top of live
+          traffic is an instant loss of separation the policy could not avoid,
+          while a conflict that *develops* later is the task.
+
+        A present-position breach needs both dimensions, so a candidate laterally
+        close to traffic but well above it is clear. ``lookahead_s`` is unused
+        here: nothing is predicted.
+
+        ``conflict_free`` is resolved per region by
+        ``SpawnConfig.region_conflict_free`` and the margins by
+        ``SpawnConfig.region_spawn_separation``.
         """
         if conflict_free:
             return not self._runtime.predicted_conflict(
@@ -833,13 +858,16 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 pos.alt_ft,
                 hdg_deg,
                 pos.spd_kts,
-                margin_nm=margin_nm,
-                margin_ft=margin_ft,
-                margin_s=margin_s,
+                sep_nm=sep_nm,
+                sep_ft=sep_ft,
+                lookahead_s=lookahead_s,
             )
-        return (
-            self._runtime.nearest_distance_nm(pos.lat_deg, pos.lon_deg)
-            >= _MAINTAIN_SPAWN_MIN_SEP_NM
+        return not self._runtime.inside_separation_zone(
+            pos.lat_deg,
+            pos.lon_deg,
+            pos.alt_ft,
+            min_sep_nm=cd_rpz_m() / nm if sep_nm is None else float(sep_nm),
+            min_sep_ft=cd_hpz_m() / ft if sep_ft is None else float(sep_ft),
         )
 
     def _resolve_spawn_speed(
@@ -889,7 +917,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         ``_MAINTAIN_SPAWN_MAX_TRIES`` - the caller defers the spawn instead of
         creating an aircraft in (predicted) conflict.
         """
-        margin_nm, margin_ft, margin_s = self.episode_spawn.region_conflict_margins(
+        sep_nm, sep_ft, look_s = self.episode_spawn.region_spawn_separation(
             item.region_index
         )
         for _ in range(_MAINTAIN_SPAWN_MAX_TRIES):
@@ -899,9 +927,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 pos,
                 hdg,
                 conflict_free=True,
-                margin_nm=margin_nm,
-                margin_ft=margin_ft,
-                margin_s=margin_s,
+                sep_nm=sep_nm,
+                sep_ft=sep_ft,
+                lookahead_s=look_s,
             ):
                 return replace(item, position=replace(pos, hdg_deg=hdg))
             _t, actype, position, prefix, route = (
@@ -925,10 +953,12 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
         Retries up to ``_MAINTAIN_SPAWN_MAX_TRIES`` (respecting
         ``conflict_free_spawn``), returning ``None`` if none is clear so the
-        top-up defers to a later step.
+        top-up defers to a later step. Repeated failure warns once per region:
+        an unsatisfiable guard would otherwise quietly hold the region below the
+        aircraft count ``maintain`` asks for.
         """
         conflict_free = self.episode_spawn.region_conflict_free(region_index)
-        margin_nm, margin_ft, margin_s = self.episode_spawn.region_conflict_margins(
+        sep_nm, sep_ft, look_s = self.episode_spawn.region_spawn_separation(
             region_index
         )
         for _ in range(_MAINTAIN_SPAWN_MAX_TRIES):
@@ -945,10 +975,11 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 pos,
                 hdg,
                 conflict_free,
-                margin_nm=margin_nm,
-                margin_ft=margin_ft,
-                margin_s=margin_s,
+                sep_nm=sep_nm,
+                sep_ft=sep_ft,
+                lookahead_s=look_s,
             ):
+                self._maintain_spawn_failures.pop(region_index, None)
                 return SpawnQueueItem(
                     spawn_time=self._runtime.sim_time,
                     actype=actype,
@@ -957,6 +988,26 @@ class BlueskyBaseEnvironment(ParallelEnv):
                     route=route,
                     region_index=region_index,
                 )
+        n = self._maintain_spawn_failures.get(region_index, 0) + 1
+        self._maintain_spawn_failures[region_index] = n
+        if n == _MAINTAIN_SPAWN_WARN_AFTER:
+            zone_nm = cd_rpz_m() / nm if sep_nm is None else sep_nm
+            zone_ft = cd_hpz_m() / ft if sep_ft is None else sep_ft
+            what = (
+                "conflict-free spawn state"
+                if conflict_free
+                else f"spawn position {zone_nm:.1f} nm / {zone_ft:.0f} ft "
+                "clear of live traffic"
+            )
+            warnings.warn(
+                f"[spawn] maintain region {region_index} has failed to find a "
+                f"{what} on {n} consecutive resets "
+                f"({_MAINTAIN_SPAWN_MAX_TRIES} tries each); it is running below "
+                "its requested aircraft count. Widen the region, lower the "
+                "count, or lower SpawnConfig.spawn_sep_nm / _ft.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         return None
 
     def _publish_turn_rates(self) -> None:

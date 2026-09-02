@@ -6,8 +6,9 @@ exception, no shape error, just a slightly worse value function that nobody
 notices for a week.  So the tests pin the widths on both sides, and pin that a
 misaligned merge raises instead of quietly dropping the privileged half.
 
-Imports live inside the tests, as in the rest of this suite - the repo root
-only reaches ``sys.path`` when pytest runs a test, not while it collects one.
+Imports sit at module scope: ``bluesky_sandbox`` lives under ``src/``, so it is
+the editable install that puts it on ``sys.path`` - and that is in effect during
+collection too, not just while a test runs.
 """
 
 from __future__ import annotations

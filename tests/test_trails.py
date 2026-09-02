@@ -1,13 +1,6 @@
 """Trail-store and renderer-cache behaviour.
 
-Both renderer caches are incremental, which makes them the kind of thing that
-looks right on the frame you inspect and goes subtly wrong three minutes into
-an episode.  These tests pin the two properties that matter: the geometry
-drawn is identical to a from-scratch pass at EVERY step, and the per-step cost
-is bounded rather than proportional to trail length.
 
-Imports live inside the tests, as in the rest of this suite - the repo root
-only reaches ``sys.path`` when pytest runs a test, not while it collects one.
 """
 
 from __future__ import annotations

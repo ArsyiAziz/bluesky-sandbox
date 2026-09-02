@@ -6,7 +6,7 @@
 // onChange (which App also re-serialises into the code editor).
 import { Hint } from "./Hint";
 import { useEffect, useState } from "react";
-import type { SpecDict } from "../../api";
+import { api, type SpecDict } from "../../api";
 import BoundsEditor from "../BoundsEditor";
 import {
   boundsRefLabels,
@@ -87,6 +87,19 @@ export default function GeometryTab({
       setRoutesView(false);
     }
   }, [selectedKey]);
+
+  // The zone conflict-free spawns are cleared against, from BlueSky's CD.
+  const [sep, setSep] = useState<Record<string, number>>({});
+  useEffect(() => {
+    api
+      .catalogOnce()
+      .then((c) => setSep(c?.separation ?? {}))
+      .catch(() => setSep({}));
+  }, []);
+  const sepZone =
+    sep.pz_radius_nm === undefined
+      ? "the protected zone"
+      : `${sep.pz_radius_nm} nm / ${sep.pz_height_ft} ft / ${sep.lookahead_s} s`;
 
   const has = (n: string) => !filter || n.toLowerCase().includes(filter.toLowerCase());
 
@@ -337,12 +350,23 @@ export default function GeometryTab({
                   <span className="vf-spacer" />
                   <NumInput
                     className="vf-input"
-                    step={0.5}
-                    value={spec.spawn?.conflict_free_margin_nm ?? 0}
+                    step="any"
+                    placeholder="none"
+                    value={
+                      (spec.spawn?.conflict_free_margin_nm as
+                        | number
+                        | undefined) ?? Number.NaN
+                    }
                     onChange={(n) =>
                       edit((s) => {
                         s.spawn = s.spawn ?? emptySpawn();
                         s.spawn.conflict_free_margin_nm = n;
+                      })
+                    }
+                    onClear={() =>
+                      edit((s) => {
+                        s.spawn = s.spawn ?? emptySpawn();
+                        delete s.spawn.conflict_free_margin_nm;
                       })
                     }
                   />
@@ -354,12 +378,23 @@ export default function GeometryTab({
                   <span className="vf-spacer" />
                   <NumInput
                     className="vf-input"
-                    step={100}
-                    value={spec.spawn?.conflict_free_margin_ft ?? 0}
+                    step="any"
+                    placeholder="none"
+                    value={
+                      (spec.spawn?.conflict_free_margin_ft as
+                        | number
+                        | undefined) ?? Number.NaN
+                    }
                     onChange={(n) =>
                       edit((s) => {
                         s.spawn = s.spawn ?? emptySpawn();
                         s.spawn.conflict_free_margin_ft = n;
+                      })
+                    }
+                    onClear={() =>
+                      edit((s) => {
+                        s.spawn = s.spawn ?? emptySpawn();
+                        delete s.spawn.conflict_free_margin_ft;
                       })
                     }
                   />
@@ -371,21 +406,77 @@ export default function GeometryTab({
                   <span className="vf-spacer" />
                   <NumInput
                     className="vf-input"
-                    step={30}
-                    value={spec.spawn?.conflict_free_margin_s ?? 0}
+                    step="any"
+                    placeholder="none"
+                    value={
+                      (spec.spawn?.conflict_free_margin_s as
+                        | number
+                        | undefined) ?? Number.NaN
+                    }
                     onChange={(n) =>
                       edit((s) => {
                         s.spawn = s.spawn ?? emptySpawn();
                         s.spawn.conflict_free_margin_s = n;
                       })
                     }
+                    onClear={() =>
+                      edit((s) => {
+                        s.spawn = s.spawn ?? emptySpawn();
+                        delete s.spawn.conflict_free_margin_s;
+                      })
+                    }
                   />
                 </div>
               </div>
               <div className="muted small">
-                reject spawns whose predicted CPA comes within PZ + buffer (space)
-                or lookahead + buffer (time), so clearance holds as aircraft
-                maneuver ↑
+                reject spawns whose predicted CPA comes within zone + buffer
+                ({sepZone}), so clearance holds as aircraft maneuver; blank adds
+                none ↑
+              </div>
+            </div>
+          )}
+          {/* Only meaningful while some maintain area actually uses the
+              distance guard - i.e. is not (effectively) conflict-free. */}
+          {spawnRegions.some(
+            (r) =>
+              r.maintain === true &&
+              (r.conflict_free_spawn === undefined ||
+              r.conflict_free_spawn === null
+                ? spec.spawn?.conflict_free_spawn !== true
+                : r.conflict_free_spawn !== true),
+          ) && (
+            <div style={{ padding: "0 8px 4px 8px" }}>
+              <div className="value-field">
+                <div className="vf-head">
+                  <span className="vf-label">respawn min sep nm</span>
+                  <span className="vf-spacer" />
+                  <NumInput
+                    className="vf-input"
+                    step="any"
+                    placeholder="protected zone"
+                    value={
+                      (spec.spawn?.maintain_min_sep_nm as number | undefined) ??
+                      Number.NaN
+                    }
+                    onChange={(n) =>
+                      edit((s) => {
+                        s.spawn = s.spawn ?? emptySpawn();
+                        s.spawn.maintain_min_sep_nm = n;
+                      })
+                    }
+                    onClear={() =>
+                      edit((s) => {
+                        s.spawn = s.spawn ?? emptySpawn();
+                        delete s.spawn.maintain_min_sep_nm;
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="muted small">
+                steady-density top-ups must be this far from live traffic; empty
+                uses the protected zone, 0 disables. Areas spawning
+                conflict-free use the predicted-conflict check instead ↑
               </div>
             </div>
           )}
@@ -572,6 +663,10 @@ export default function GeometryTab({
             <LockableBody locked={lockedElements.has(`spawn:${sel.index}`)}>
               <SpawnBody
                 region={spawnRegions[sel.index]}
+                globalConflictFree={spec.spawn?.conflict_free_spawn === true}
+                globalMaintainMinSepNm={
+                  spec.spawn?.maintain_min_sep_nm as number | null | undefined
+                }
                 routeNames={routeNames}
                 waypointNames={waypointNames}
                 regionNames={namedRegionNames}

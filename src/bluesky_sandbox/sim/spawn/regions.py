@@ -9,10 +9,18 @@ the whole spawn queue. Route sampling for those aircraft lives in
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 import numpy as np
+from bluesky.tools.aero import ft, nm
+
+from bluesky_sandbox.sim.geometry.conflict import (
+    cd_hpz_m,
+    cd_lookahead_s,
+    cd_rpz_m,
+)
 
 from bluesky_sandbox.sim.bounds import Bounds
 from bluesky_sandbox.sim.performance.envelope import (
@@ -192,15 +200,12 @@ class SpawnRegion:
     # fall back to their config-level globals); ``True``/``False`` force it for
     # this region's aircraft regardless of the global.
     conflict_free_spawn: bool | None = None
-    # Per-region conflict-free spawn buffer, added on top of the protected zone
-    # for the spawn-clear check: a candidate is rejected if its predicted CPA
-    # comes within ``PZ + margin`` in space (horizontal nm / vertical ft) or
-    # within ``lookahead + margin`` in time (s), giving the episode headroom that
-    # survives the first steps as aircraft begin to maneuver. Each ``None``
-    # inherits the ``SpawnConfig`` default.
-    conflict_free_margin_nm: float | None = None
-    conflict_free_margin_ft: float | None = None
-    conflict_free_margin_s: float | None = None
+    # Per-region spawn separation requirement for whichever spawn-clear check
+    # this region uses. Each ``None`` inherits the ``SpawnConfig`` default; see
+    # there for the full semantics.
+    spawn_sep_nm: float | None = None
+    spawn_sep_ft: float | None = None
+    spawn_lookahead_s: float | None = None
 
     def __post_init__(self) -> None:
         invalid = [k for k in self.params if k not in _SPAWN_PARAM_KEYS]
@@ -449,17 +454,32 @@ class SpawnConfig:
     route:         RouteSpec | str | TypeDistribution | None = None
     routes:        dict[str, RouteSpec] = field(default_factory=dict)
     conflict_free_spawn: bool = False
-    # Conflict-free spawn buffer added on top of the protected zone: horizontal
-    # (nm) and vertical (ft) separation plus time (s) on the prediction horizon
-    # (``lookahead + margin_s``). A positive margin makes the "conflict-free"
-    # guarantee hold with headroom, so it does not decay the instant aircraft
-    # start turning toward their routes; ``0`` on all three reproduces the
-    # bare-PZ check. Applied to any region leaving its own override unset.
-    conflict_free_margin_nm: float = 0.0
-    conflict_free_margin_ft: float = 0.0
-    conflict_free_margin_s: float = 0.0
+    # What a spawn must actually clear, as absolute values - not a buffer over
+    # something else, so the number you write is the number enforced:
+    #
+    #   conflict-free : predicted CPA must clear ``spawn_sep_nm`` horizontally
+    #                   and ``spawn_sep_ft`` vertically within
+    #                   ``spawn_lookahead_s``,
+    #   otherwise     : the spawn's *present* position must clear
+    #                   ``spawn_sep_nm`` and ``spawn_sep_ft``
+    #                   (``spawn_lookahead_s`` unused - nothing is predicted).
+    #
+    # ``None`` (the default) means "whatever CD uses", read live so it follows
+    # ``EnvConfig.pz_radius_nm`` / ``pz_height_ft`` / ``lookahead_s``. Set a
+    # value larger than CD's zone to spawn with headroom that survives the first
+    # steps as aircraft turn toward their routes; smaller is legal (a
+    # conflict-seeded scenario wants it) but warns, because it clears spawns the
+    # detector already scores as conflicts. Applied to any region leaving its
+    # own override unset.
+    spawn_sep_nm: float | None = None
+    spawn_sep_ft: float | None = None
+    spawn_lookahead_s: float | None = None
+
     def __post_init__(self) -> None:
         self.regions = list(self.regions)
+        # Region indices already warned about a below-CD separation, so a
+        # per-step top-up does not repeat itself every spawn.
+        self._warned_below_cd: set[int] = set()
 
     def region_conflict_free(self, index: int) -> bool:
         """Effective conflict-free-spawn flag for region ``index``.
@@ -471,31 +491,73 @@ class SpawnConfig:
         override = self.regions[index].conflict_free_spawn
         return self.conflict_free_spawn if override is None else bool(override)
 
-    def region_conflict_margins(self, index: int) -> tuple[float, float, float]:
-        """Effective conflict-free spawn buffer for region ``index``.
+    def region_spawn_separation(
+        self, index: int
+    ) -> tuple[float | None, float | None, float | None]:
+        """Effective spawn separation requirement for region ``index``.
 
-        Returns ``(margin_nm, margin_ft, margin_s)`` - spatial (nm/ft) and
-        temporal (s) buffers over the protected zone. Each region field wins when
-        set, else the config-level default applies (mirroring
-        ``region_conflict_free``).
+        Returns ``(sep_nm, sep_ft, lookahead_s)`` as *absolute* requirements, or
+        ``None`` in any slot left unset at both levels - meaning "use whatever
+        CD uses", resolved live at spawn time so it follows
+        ``EnvConfig.pz_radius_nm`` / ``pz_height_ft`` / ``lookahead_s`` rather
+        than a value frozen into the spec. The region's own field wins when set,
+        else the config-level default applies (mirroring
+        :meth:`region_conflict_free`).
+
+        Warns when a configured value is *below* the live CD zone: that clears
+        spawns the detector already counts as conflicts. Legitimate for a
+        conflict-seeded scenario, almost never otherwise, and invisible without
+        the warning because the number itself looks perfectly reasonable.
         """
         r = self.regions[index]
-        margin_nm = (
-            self.conflict_free_margin_nm
-            if r.conflict_free_margin_nm is None
-            else r.conflict_free_margin_nm
+
+        def pick(region_value: float | None, config_value: float | None) -> float | None:
+            return config_value if region_value is None else region_value
+
+        sep_nm = pick(r.spawn_sep_nm, self.spawn_sep_nm)
+        sep_ft = pick(r.spawn_sep_ft, self.spawn_sep_ft)
+        look_s = pick(r.spawn_lookahead_s, self.spawn_lookahead_s)
+        self._warn_if_below_cd(index, sep_nm, sep_ft, look_s)
+        return (
+            None if sep_nm is None else float(sep_nm),
+            None if sep_ft is None else float(sep_ft),
+            None if look_s is None else float(look_s),
         )
-        margin_ft = (
-            self.conflict_free_margin_ft
-            if r.conflict_free_margin_ft is None
-            else r.conflict_free_margin_ft
+
+    def _warn_if_below_cd(
+        self,
+        index: int,
+        sep_nm: float | None,
+        sep_ft: float | None,
+        look_s: float | None,
+    ) -> None:
+        """Warn once per region for any requirement tighter than CD's own zone."""
+        if index in self._warned_below_cd:
+            return
+        try:
+            live = (cd_rpz_m() / nm, cd_hpz_m() / ft, cd_lookahead_s())
+        except Exception:  # noqa: BLE001 - diagnostics must never break a spawn
+            return
+        names = ("spawn_sep_nm", "spawn_sep_ft", "spawn_lookahead_s")
+        units = ("nm", "ft", "s")
+        low = [
+            f"{name}={value:g} {unit} < {actual:g} {unit}"
+            for name, unit, value, actual in zip(
+                names, units, (sep_nm, sep_ft, look_s), live, strict=True
+            )
+            if value is not None and float(value) < actual
+        ]
+        if not low:
+            return
+        self._warned_below_cd.add(index)
+        warnings.warn(
+            f"spawn region {index} requires less separation than conflict "
+            f"detection uses ({'; '.join(low)}), so it can spawn aircraft that "
+            "are already in conflict. Intended for conflict-seeded scenarios; "
+            "otherwise leave the field unset to track CD.",
+            RuntimeWarning,
+            stacklevel=3,
         )
-        margin_s = (
-            self.conflict_free_margin_s
-            if r.conflict_free_margin_s is None
-            else r.conflict_free_margin_s
-        )
-        return float(margin_nm), float(margin_ft), float(margin_s)
 
     @property
     def resolved_bounds(self) -> dict[str, tuple[float, float]]:

@@ -1,7 +1,9 @@
 // Editor for one spawn region. The body is exposed as `SpawnBody` (used by the
 // geometry inspector) grouped into Shape · Traffic · Route · Appearance;
 // `SpawnCard` wraps it in a collapsible card for any legacy list view.
-import type { SpecDict } from "../../api";
+import { useEffect, useState } from "react";
+
+import { api, type SpecDict } from "../../api";
 import BoundsEditor from "../BoundsEditor";
 import { NumInput, OptValueField, ValueField } from "./ValueField";
 import { Picker } from "./Picker";
@@ -21,6 +23,10 @@ type SpawnBodyProps = {
   boundsRefCount: (name: string) => number;
   onChange: (r: SpecDict) => void;
   onFocus: () => void;
+  // The effective config-level values these per-region fields fall back to when
+  // left unset, so "follow global" can say what it actually resolves to.
+  globalConflictFree?: boolean;
+  globalMaintainMinSepNm?: number | null;
 };
 
 // The grouped field editor for one spawn region (no card chrome). Spawn altitude
@@ -36,8 +42,39 @@ export function SpawnBody({
   boundsRefCount,
   onChange,
   onFocus,
+  globalConflictFree,
+  globalMaintainMinSepNm,
 }: SpawnBodyProps) {
+  // The zone a conflict-free spawn is actually cleared against, from BlueSky's
+  // CD rather than hardcoded here, so the buffers say what they are added to.
+  const [sep, setSep] = useState<Record<string, number>>({});
+  useEffect(() => {
+    api
+      .catalogOnce()
+      .then((c) => setSep(c?.separation ?? {}))
+      .catch(() => setSep({}));
+  }, []);
+  const zone =
+    sep.pz_radius_nm === undefined
+      ? "the protected zone"
+      : `${sep.pz_radius_nm} nm / ${sep.pz_height_ft} ft / ${sep.lookahead_s} s`;
+
   const setBounds = (b: SpecDict) => onChange({ ...region, bounds: b });
+  const globalCfLabel = globalConflictFree ? "conflict-free" : "as sampled";
+  // What this area actually does, resolved the way
+  // ``SpawnConfig.region_conflict_free`` resolves it: the region's own setting
+  // wins when set, else the global. Drives which of the two mutually exclusive
+  // clearance controls below is worth showing.
+  const effectiveConflictFree =
+    region.conflict_free_spawn === undefined || region.conflict_free_spawn === null
+      ? globalConflictFree === true
+      : region.conflict_free_spawn === true;
+  const globalSepLabel =
+    globalMaintainMinSepNm === undefined || globalMaintainMinSepNm === null
+      ? "protected zone"
+      : globalMaintainMinSepNm === 0
+        ? "disabled"
+        : `${globalMaintainMinSepNm} nm`;
   return (
     <div className="spawn-body">
       <FieldGroup title="Shape" defaultOpen>
@@ -72,6 +109,37 @@ export function SpawnBody({
         <div className="muted small">
           continuously respawn (clear of traffic) to hold the count live ↑
         </div>
+        {region.maintain === true && !effectiveConflictFree && (
+          <>
+            <div className="value-field">
+              <div className="vf-head">
+                <span className="vf-label">respawn min sep nm</span>
+                <span className="vf-spacer" />
+                <NumInput
+                  className="vf-input"
+                  step="any"
+                  placeholder="global"
+                  value={
+                    (region.maintain_min_sep_nm as number | undefined) ??
+                    Number.NaN
+                  }
+                  onChange={(n) =>
+                    onChange({ ...region, maintain_min_sep_nm: n })
+                  }
+                  onClear={() => {
+                    const next = { ...region };
+                    delete next.maintain_min_sep_nm;
+                    onChange(next);
+                  }}
+                />
+              </div>
+            </div>
+            <div className="muted small">
+              how far a top-up must be from live traffic; blank uses the global
+              ({globalSepLabel}), 0 turns the check off ↑
+            </div>
+          </>
+        )}
         <label className="checkbox-row">
           <input
             type="checkbox"
@@ -90,7 +158,7 @@ export function SpawnBody({
             <Picker
               className="vf-mode"
               searchable={false}
-              placeholder="inherit"
+              placeholder="global"
               value={
                 region.conflict_free_spawn === true
                   ? "on"
@@ -108,42 +176,44 @@ export function SpawnBody({
               options={[
                 {
                   value: "inherit",
-                  label: "inherit (global)",
-                  description: "use the global conflict-free-spawn default",
+                  label: `follow global · ${globalCfLabel}`,
+                  description: `whatever the global is set to - currently ${globalCfLabel}. Changes with it.`,
                 },
                 {
                   value: "on",
-                  label: "conflict-free",
+                  label: "always conflict-free",
                   description:
-                    "spawn this area's aircraft clear of predicted conflicts",
+                    "spawn this area clear of predicted conflicts, even if the global is off",
                 },
                 {
                   value: "off",
-                  label: "as sampled",
-                  description: "spawn as sampled, even when the global is on",
+                  label: "always as sampled",
+                  description:
+                    "spawn this area exactly where sampled, even if the global is on",
                 },
               ]}
             />
           </div>
         </div>
         <div className="muted small">
-          override the global conflict-free-spawn default for this area ↑
+          whether this area's aircraft start clear of predicted conflicts ↑
         </div>
-        {(
+        {effectiveConflictFree &&
+          (
           [
-            ["conflict_free_margin_nm", "buffer horiz nm", 0.5],
-            ["conflict_free_margin_ft", "buffer vert ft", 100],
-            ["conflict_free_margin_s", "buffer time s", 30],
+            ["conflict_free_margin_nm", "buffer horiz nm"],
+            ["conflict_free_margin_ft", "buffer vert ft"],
+            ["conflict_free_margin_s", "buffer time s"],
           ] as const
-        ).map(([key, label, step]) => (
+        ).map(([key, label]) => (
           <div className="value-field" key={key}>
             <div className="vf-head">
               <span className="vf-label">{label}</span>
               <span className="vf-spacer" />
               <NumInput
                 className="vf-input"
-                step={step}
-                placeholder="inherit"
+                step="any"
+                placeholder="none"
                 value={(region[key] as number | undefined) ?? Number.NaN}
                 onChange={(n) => onChange({ ...region, [key]: n })}
                 onClear={() => {
@@ -155,9 +225,11 @@ export function SpawnBody({
             </div>
           </div>
         ))}
-        <div className="muted small">
-          spawn buffer over the protected zone; empty inherits the global ↑
-        </div>
+        {effectiveConflictFree && (
+          <div className="muted small">
+            headroom added to the protected zone ({zone}); blank adds none ↑
+          </div>
+        )}
         <OptValueField
           label="alt ft"
           step={500}

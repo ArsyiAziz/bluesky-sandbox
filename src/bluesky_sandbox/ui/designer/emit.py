@@ -296,17 +296,17 @@ class _Emitter:
             lines.append(
                 f"        conflict_free_spawn={bool(d['conflict_free_spawn'])!r},"
             )
-        if d.get("conflict_free_margin_nm") is not None:
+        if d.get("spawn_sep_nm") is not None:
             lines.append(
-                f"        conflict_free_margin_nm={float(d['conflict_free_margin_nm'])!r},"
+                f"        spawn_sep_nm={float(d['spawn_sep_nm'])!r},"
             )
-        if d.get("conflict_free_margin_ft") is not None:
+        if d.get("spawn_sep_ft") is not None:
             lines.append(
-                f"        conflict_free_margin_ft={float(d['conflict_free_margin_ft'])!r},"
+                f"        spawn_sep_ft={float(d['spawn_sep_ft'])!r},"
             )
-        if d.get("conflict_free_margin_s") is not None:
+        if d.get("spawn_lookahead_s") is not None:
             lines.append(
-                f"        conflict_free_margin_s={float(d['conflict_free_margin_s'])!r},"
+                f"        spawn_lookahead_s={float(d['spawn_lookahead_s'])!r},"
             )
         body = "\n".join(lines)
         return f"SpawnRegion(\n{body}\n    )"
@@ -334,12 +334,12 @@ class _Emitter:
             extra += f", routes={{{routes_body}}}"
         if d.get("conflict_free_spawn"):
             extra += ", conflict_free_spawn=True"
-        if d.get("conflict_free_margin_nm"):
-            extra += f", conflict_free_margin_nm={float(d['conflict_free_margin_nm'])!r}"
-        if d.get("conflict_free_margin_ft"):
-            extra += f", conflict_free_margin_ft={float(d['conflict_free_margin_ft'])!r}"
-        if d.get("conflict_free_margin_s"):
-            extra += f", conflict_free_margin_s={float(d['conflict_free_margin_s'])!r}"
+        if d.get("spawn_sep_nm"):
+            extra += f", spawn_sep_nm={float(d['spawn_sep_nm'])!r}"
+        if d.get("spawn_sep_ft"):
+            extra += f", spawn_sep_ft={float(d['spawn_sep_ft'])!r}"
+        if d.get("spawn_lookahead_s"):
+            extra += f", spawn_lookahead_s={float(d['spawn_lookahead_s'])!r}"
         return f"SpawnConfig(regions={regions}{extra})"
 
     # ---- fields ---------------------------------------------------------- #

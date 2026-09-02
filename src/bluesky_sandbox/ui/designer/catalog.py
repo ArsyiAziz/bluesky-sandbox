@@ -18,6 +18,7 @@ import textwrap
 import types
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
+from bluesky.tools.aero import ft, nm
 from scipy import stats as ss
 
 from bluesky_sandbox.config import _available_aircraft
@@ -28,6 +29,11 @@ from bluesky_sandbox.interface.fields import queryables as _queryable_fields
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
 from bluesky_sandbox.interface.wrappers.observations import normalizer as _normalizers
 from bluesky_sandbox.sim import bounds as _bounds
+from bluesky_sandbox.sim.geometry.conflict import (
+    cd_hpz_m,
+    cd_lookahead_s,
+    cd_rpz_m,
+)
 from bluesky_sandbox.sim.performance.models import spawnable_types
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 
@@ -391,6 +397,12 @@ from typing import Any
 import bluesky as bs
 from bluesky.tools.aero import ft, kts
 
+from bluesky.tools.aero import ft, nm
+from bluesky_sandbox.sim.geometry.conflict import (
+    cd_hpz_m,
+    cd_lookahead_s,
+    cd_rpz_m,
+)
 from bluesky_sandbox.interface.fields.base import (
     ActionField, ActionMeta, ActionMode, ControlAxis,
     ObsField, ObsMeta, ObsQuantity, PairObsField,
@@ -753,6 +765,21 @@ def scenario_hooks() -> list[dict[str, Any]]:
     ]
 
 
+def separation_defaults() -> dict[str, float]:
+    """The protected zone and lookahead a conflict-free spawn check resolves to.
+
+    Sourced from BlueSky's conflict detection rather than hardcoded in the GUI,
+    so the designer shows the values a spawn is actually cleared against. These
+    are what a design's ``spawn_sep_nm`` / ``spawn_sep_ft`` /
+    ``spawn_lookahead_s`` fall back to when left unset.
+    """
+    return {
+        "pz_radius_nm": cd_rpz_m() / nm,
+        "pz_height_ft": cd_hpz_m() / ft,
+        "lookahead_s": cd_lookahead_s(),
+    }
+
+
 def catalog(model: str | None = None) -> dict[str, Any]:
     """Full palette payload for the GUI in one call."""
     return {
@@ -771,5 +798,6 @@ def catalog(model: str | None = None) -> dict[str, Any]:
         "colors": colors(),
         "distributions": distributions(),
         "conflict": conflict_methods(),
+        "separation": separation_defaults(),
         "scaffolds": scaffolds(),
     }

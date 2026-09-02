@@ -696,9 +696,9 @@ def _spawn_region_dump(r: SpawnRegion) -> dict[str, Any]:
         "maintain": r.maintain,
         "controlled": r.controlled,
         "conflict_free_spawn": r.conflict_free_spawn,
-        "conflict_free_margin_nm": r.conflict_free_margin_nm,
-        "conflict_free_margin_ft": r.conflict_free_margin_ft,
-        "conflict_free_margin_s": r.conflict_free_margin_s,
+        "spawn_sep_nm": r.spawn_sep_nm,
+        "spawn_sep_ft": r.spawn_sep_ft,
+        "spawn_lookahead_s": r.spawn_lookahead_s,
     }
 
 
@@ -717,9 +717,9 @@ def _spawn_region_load(d: dict[str, Any]) -> SpawnRegion:
         maintain=d.get("maintain", False),
         controlled=d.get("controlled", True),
         conflict_free_spawn=d.get("conflict_free_spawn"),
-        conflict_free_margin_nm=d.get("conflict_free_margin_nm"),
-        conflict_free_margin_ft=d.get("conflict_free_margin_ft"),
-        conflict_free_margin_s=d.get("conflict_free_margin_s"),
+        spawn_sep_nm=d.get("spawn_sep_nm"),
+        spawn_sep_ft=d.get("spawn_sep_ft"),
+        spawn_lookahead_s=d.get("spawn_lookahead_s"),
     )
 
 
@@ -731,9 +731,9 @@ def _spawn_config_dump(c: SpawnConfig) -> dict[str, Any]:
         "route": dump_value(c.route),
         "routes": {k: list(v) for k, v in c.routes.items()},
         "conflict_free_spawn": c.conflict_free_spawn,
-        "conflict_free_margin_nm": c.conflict_free_margin_nm,
-        "conflict_free_margin_ft": c.conflict_free_margin_ft,
-        "conflict_free_margin_s": c.conflict_free_margin_s,
+        "spawn_sep_nm": c.spawn_sep_nm,
+        "spawn_sep_ft": c.spawn_sep_ft,
+        "spawn_lookahead_s": c.spawn_lookahead_s,
     }
 
 
@@ -744,9 +744,9 @@ def _spawn_config_load(d: dict[str, Any]) -> SpawnConfig:
         route=load_value(d.get("route")),
         routes={k: list(v) for k, v in d.get("routes", {}).items()},
         conflict_free_spawn=d.get("conflict_free_spawn", False),
-        conflict_free_margin_nm=d.get("conflict_free_margin_nm", 0.0),
-        conflict_free_margin_ft=d.get("conflict_free_margin_ft", 0.0),
-        conflict_free_margin_s=d.get("conflict_free_margin_s", 0.0),
+        spawn_sep_nm=d.get("spawn_sep_nm"),
+        spawn_sep_ft=d.get("spawn_sep_ft"),
+        spawn_lookahead_s=d.get("spawn_lookahead_s"),
     )
 
 

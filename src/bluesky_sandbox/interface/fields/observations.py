@@ -17,6 +17,15 @@ from bluesky_sandbox.sim.geometry.conflict import (
     windowed_min_vsep_ft,
     windowed_signed_vsep_at_entry_ft,
 )
+from bluesky_sandbox.sim.geometry.conflict import (
+    cd_hpz_m as _cd_hpz_m,
+)
+from bluesky_sandbox.sim.geometry.conflict import (
+    cd_lookahead_s as _cd_lookahead_s,
+)
+from bluesky_sandbox.sim.geometry.conflict import (
+    cd_rpz_m as _cd_rpz_m,
+)
 from bluesky_sandbox.sim.performance.envelope import (
     _warn_type_data_mismatch,
     active_performance_model,

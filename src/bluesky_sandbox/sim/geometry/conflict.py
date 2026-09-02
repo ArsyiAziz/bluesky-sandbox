@@ -53,6 +53,65 @@ _RE = 6371000.0  # earth radius, metres (matches BlueSky ``kwikqdrdist``)
 _CACHE: dict = {"geom": None, "key": None}
 
 
+# ---- BlueSky CD settings ------------------------------------------ #
+# The live protected zone and lookahead, as CD actually applies them.
+# ``bs.settings.asas_*`` is only the config-file default: the sandbox
+# publishes ``EnvConfig.pz_radius_nm`` / ``pz_height_ft`` / ``lookahead_s``
+# through ZONER / ZONEDH / DTLOOK, which update CD but not settings. Read
+# these, not settings, or spawn clearance disagrees with detection.
+
+def cd_lookahead_s() -> float:
+    """Conflict-detection lookahead horizon, in seconds.
+
+    Prefers the CD's applied default ``bs.traf.cd.dtlookahead_def`` - a scalar
+    set at init from ``asas_dtlookahead`` and updated by the ``DTLOOK`` command
+    (how the sandbox applies ``config.lookahead_s``), so the horizon tracks the
+    scenario's actual setting rather than the config-file default. Falls back to
+    ``bs.settings.asas_dtlookahead`` before CD/traffic exist. Uses the scalar
+    default, not the per-aircraft ``cd.dtlookahead`` array (empty pre-traffic).
+    """
+    cd = getattr(bs.traf, "cd", None) if bs.traf is not None else None
+    look = getattr(cd, "dtlookahead_def", None)
+    if look is None:
+        look = getattr(bs.settings, "asas_dtlookahead", 300.0)
+    look = float(look)
+    return look if look > 0.0 else 300.0
+
+
+def cd_rpz_m() -> float:
+    """Horizontal protected-zone radius, in metres (BlueSky CD ``rpz``).
+
+    Prefers the CD's applied default ``bs.traf.cd.rpz_def`` (metres) - set from
+    ``asas_pzr`` and updated by ``ZONER`` (how the sandbox applies
+    ``config.pz_radius_nm``) - falling back to ``bs.settings.asas_pzr`` before CD
+    exists. A detected conflict has ``dcpa < rpz``, so this is the natural cap on
+    horizontal distance at CPA.
+    """
+    cd = getattr(bs.traf, "cd", None) if bs.traf is not None else None
+    rpz = getattr(cd, "rpz_def", None)
+    if rpz is None:
+        rpz = float(getattr(bs.settings, "asas_pzr", 5.0)) * _NM
+    rpz = float(rpz)
+    return rpz if rpz > 0.0 else 5.0 * _NM
+
+
+def cd_hpz_m() -> float:
+    """Vertical protected-zone height, in metres (BlueSky CD ``hpz``).
+
+    Prefers the CD's applied default ``bs.traf.cd.hpz_def`` (metres) - set from
+    ``asas_pzh`` and updated by ``ZONEDH`` (how the sandbox applies
+    ``config.pz_height_ft``) - falling back to ``bs.settings.asas_pzh`` before CD
+    exists. It is the minimum vertical separation (a vertical loss of separation
+    is ``|dalt| < hpz``).
+    """
+    cd = getattr(bs.traf, "cd", None) if bs.traf is not None else None
+    hpz = getattr(cd, "hpz_def", None)
+    if hpz is None:
+        hpz = float(getattr(bs.settings, "asas_pzh", 1000.0)) * _FT
+    hpz = float(hpz)
+    return hpz if hpz > 0.0 else 1000.0 * _FT
+
+
 class ConflictGeometry:
     """Immutable per-step pairwise CPA arrays (``N x N``, ``bs.traf`` order)."""
 

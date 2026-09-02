@@ -11,6 +11,11 @@ from bluesky.tools.aero import ft, kts, nm, vcas2tas
 from bluesky.tools.geo import kwikqdrdist
 from wurlitzer import pipes
 
+from bluesky_sandbox.sim.geometry.conflict import (
+    cd_hpz_m,
+    cd_lookahead_s,
+    cd_rpz_m,
+)
 from bluesky_sandbox.sim.queryables import WaypointTarget
 
 # BlueSky is a process-global singleton: ``bs.init`` re-imports the plugins and
@@ -50,16 +55,11 @@ class BlueSkyRuntime:
     def index(self, acid: str) -> int:
         return bs.traf.id.index(acid)
 
-    def nearest_distance_nm(self, lat_deg: float, lon_deg: float) -> float:
-        """Great-circle distance (nm) from a point to the nearest live aircraft.
-
-        Returns ``inf`` when no traffic exists. Used by the steady-state spawn
-        top-up to reject positions that would place a new aircraft on top of
-        existing traffic (an instant loss of separation).
-        """
+    def _horizontal_distances_nm(self, lat_deg: float, lon_deg: float) -> np.ndarray:
+        """Great-circle distance (nm) from a point to every live aircraft."""
         n = int(bs.traf.ntraf)
         if n == 0:
-            return float("inf")
+            return np.empty(0, dtype=np.float64)
         lat = np.radians(np.asarray(bs.traf.lat[:n], dtype=np.float64))
         lon = np.radians(np.asarray(bs.traf.lon[:n], dtype=np.float64))
         la = np.radians(float(lat_deg))
@@ -69,8 +69,49 @@ class BlueSkyRuntime:
             + np.cos(la) * np.cos(lat) * np.sin((lon - lo) / 2.0) ** 2
         )
         # Earth radius in nautical miles.
-        dist_nm = 2.0 * 3440.065 * np.arcsin(np.sqrt(np.clip(hav, 0.0, 1.0)))
-        return float(dist_nm.min())
+        return 2.0 * 3440.065 * np.arcsin(np.sqrt(np.clip(hav, 0.0, 1.0)))
+
+    def nearest_distance_nm(self, lat_deg: float, lon_deg: float) -> float:
+        """Great-circle distance (nm) from a point to the nearest live aircraft.
+
+        Returns ``inf`` when no traffic exists. Horizontal only - for a spawn
+        clearance test use :meth:`inside_separation_zone`, which also needs the
+        vertical dimension to call something a loss of separation.
+        """
+        d = self._horizontal_distances_nm(lat_deg, lon_deg)
+        return float("inf") if d.size == 0 else float(d.min())
+
+    def inside_separation_zone(
+        self,
+        lat_deg: float,
+        lon_deg: float,
+        alt_ft: float,
+        *,
+        min_sep_nm: float,
+        min_sep_ft: float | None = None,
+    ) -> bool:
+        """Whether any live aircraft shares this point's separation zone.
+
+        A loss of separation needs *both* dimensions - inside the horizontal
+        radius **and** inside the vertical band - so a candidate laterally close
+        to traffic but thousands of feet above it is clear, exactly as BlueSky's
+        CD would score it. Checking horizontal distance alone would reject
+        stacked traffic that is properly separated in altitude.
+
+        ``min_sep_ft`` defaults to the live CD protected-zone height, which is
+        the same zone :meth:`predicted_conflict` uses.
+        """
+        if min_sep_nm <= 0.0:
+            return False
+        d_nm = self._horizontal_distances_nm(lat_deg, lon_deg)
+        if d_nm.size == 0:
+            return False
+        n = d_nm.size
+        vert_ft = cd_hpz_m() / ft if min_sep_ft is None else float(min_sep_ft)
+        d_ft = np.abs(
+            np.asarray(bs.traf.alt[:n], dtype=np.float64) / ft - float(alt_ft)
+        )
+        return bool(np.any((d_nm < float(min_sep_nm)) & (d_ft < vert_ft)))
 
     def predicted_conflict(
         self,
@@ -80,27 +121,34 @@ class BlueSkyRuntime:
         hdg_deg: float,
         cas_kts: float,
         *,
-        margin_nm: float = 0.0,
-        margin_ft: float = 0.0,
-        margin_s: float = 0.0,
+        sep_nm: float | None = None,
+        sep_ft: float | None = None,
+        lookahead_s: float | None = None,
     ) -> bool:
         """True if a candidate spawn state is in a predicted conflict.
 
         Mirrors BlueSky's state-based CD: for the candidate's straight-line
-        motion against every existing aircraft, a conflict is a protected-zone
-        breach (horizontal ``asas_pzr`` and vertical ``asas_pzh``) at closest
-        point of approach within ``asas_dtlookahead``. 
+        motion against every existing aircraft, a conflict is a separation
+        breach (horizontal ``sep_nm`` and vertical ``sep_ft``) at closest point
+        of approach within ``lookahead_s``.
+
+        Each argument defaults to the live CD value, so an unset spawn
+        requirement is exactly what the detector will score once the episode
+        runs. Passing a value smaller than CD's own zone clears spawns that CD
+        already counts as conflicts - deliberate for a conflict-seeded scenario,
+        a mistake otherwise; :meth:`SpawnConfig.region_spawn_separation` warns
+        about it rather than silently obliging.
         """
         n = int(bs.traf.ntraf)
         if n == 0:
             return False
-        s = bs.settings
-        rpz = (float(getattr(s, "asas_pzr", 5.0)) + max(0.0, float(margin_nm))) * nm  # m
-        hpz = (float(getattr(s, "asas_pzh", 1000.0)) + max(0.0, float(margin_ft))) * ft  # m
-        look = float(getattr(s, "asas_dtlookahead", 300.0))
-        if look <= 0.0:
-            look = 300.0
-        look += max(0.0, float(margin_s))
+        # The live CD values, not ``bs.settings``: ``EnvConfig.pz_radius_nm`` /
+        # ``pz_height_ft`` / ``lookahead_s`` reach CD via ZONER / ZONEDH /
+        # DTLOOK and never write back to settings, so reading settings would
+        # clear spawns against a zone the detector does not use.
+        rpz = cd_rpz_m() if sep_nm is None else float(sep_nm) * nm  # m
+        hpz = cd_hpz_m() if sep_ft is None else float(sep_ft) * ft  # m
+        look = cd_lookahead_s() if lookahead_s is None else float(lookahead_s)
 
         alt_m = float(alt_ft) * ft
         tas = float(vcas2tas(float(cas_kts) * kts, alt_m))
