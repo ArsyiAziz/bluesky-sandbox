@@ -24,7 +24,8 @@ from bluesky.tools.aero import ft as FT
 from bluesky.tools.aero import nm as NM
 
 import bluesky_sandbox.core.base_environment as be
-from bluesky_sandbox.core.base_environment import BlueskyBaseEnvironment, SpawnPosition
+import bluesky_sandbox.core.spawning as spawning
+from bluesky_sandbox.core.state import SpawnPosition
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
 from bluesky_sandbox.sim.geometry.conflict import cd_hpz_m, cd_rpz_m
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
@@ -94,11 +95,11 @@ def _no_predict(*a, **kw):  # pragma: no cover
 
 
 def _clear(monkeypatch, zone: _StubZone, **sep) -> bool:
-    monkeypatch.setattr(be, "inside_separation_zone", zone)
-    monkeypatch.setattr(be, "predicted_conflict", _no_predict)
-    env = object.__new__(BlueskyBaseEnvironment)
+    monkeypatch.setattr(spawning, "inside_separation_zone", zone)
+    monkeypatch.setattr(spawning, "predicted_conflict", _no_predict)
+    gen = object.__new__(spawning.SpawnGenerator)
     pos = SpawnPosition(lat_deg=52.5, lon_deg=4.5, alt_ft=10_000.0, spd_kts=250.0)
-    return BlueskyBaseEnvironment._spawn_position_clear(env, pos, 90.0, False, **sep)
+    return spawning.SpawnGenerator._spawn_position_clear(gen, pos, 90.0, False, **sep)
 
 
 @pytest.mark.parametrize(
