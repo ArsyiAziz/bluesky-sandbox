@@ -269,7 +269,8 @@ class _BoundedField:
     # A field that reads state the simulator does not keep (a rate, an
     # accumulator, a history) declares here how that state is maintained.
     # Overriding any of these marks the field as stateful, and the environment
-    # drives it: ``on_substep`` each physics substep, ``on_aircraft_removed``
+    # drives it: ``on_step`` once per env step (after the substep loop),
+    # ``on_action_applied`` when an action is dispatched, ``on_aircraft_removed``
     # when an aircraft despawns, ``on_episode_reset`` at reset.
     #
     # The point of putting them on the field rather than in a registry the
@@ -278,13 +279,13 @@ class _BoundedField:
     # and forgetting its ``forget_x`` leaked one aircraft's state onto the next
     # one to reuse its callsign.
     #
-    # Cost note: overriding also opts the field INTO per-substep work. Nothing
-    # is recorded for a field no config uses, and dt/simdt is commonly 100
-    # substeps per env step, so this is the difference between paying for a
-    # tracker and not.
+    # Cost note: overriding opts the field INTO per-step bookkeeping. Nothing
+    # is recorded for a field no config uses - ``_stateful_fields`` collects
+    # only what the config lists - so this is the difference between paying for
+    # a tracker and not.
 
-    def on_substep(self, ctx: SubstepContext) -> None:
-        """Update this field's state for one physics substep."""
+    def on_step(self, ctx: StepContext) -> None:
+        """Update this field's state for one env step."""
 
     def on_action_applied(self, acid: str, action) -> None:
         """Record the action just applied to ``acid`` (once per env step)."""
@@ -301,7 +302,7 @@ class _BoundedField:
         return any(
             getattr(cls, name) is not getattr(_BoundedField, name)
             for name in (
-                "on_substep",
+                "on_step",
                 "on_action_applied",
                 "on_aircraft_removed",
                 "on_episode_reset",
@@ -388,12 +389,13 @@ class _BoundedField:
 
 
 @dataclass(frozen=True)
-class SubstepContext:
-    """What a stateful field needs to update itself for one physics substep.
+class StepContext:
+    """What a stateful field needs to update itself for one env step.
 
     Deliberately thin: fields already read ``bs.traf`` directly in ``get`` /
     ``get_many``, so this carries only what traffic arrays cannot supply - the
-    callsigns in index order, the substep length, and the sim clock.
+    callsigns in index order, the step length (``EnvConfig.dt``, the whole
+    multi-substep step) and the sim clock.
     """
 
     ids: tuple[str, ...]

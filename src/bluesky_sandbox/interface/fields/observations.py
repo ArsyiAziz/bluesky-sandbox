@@ -1206,10 +1206,7 @@ def reset_all_field_state(seed: int | None = None) -> None:
     _LAG_HISTORY.clear()
     _LAG_LAST_SIMT.clear()
     _TIME_IN_ENV.clear()
-    _TURN_RATE.clear()
-    _REALIZED_ACCEL.clear()
     _COMM_MESSAGE.clear()
-    _KINEMATICS.clear()
     _COMM_NOISE_RNG = np.random.default_rng(seed)
 
 
@@ -1232,7 +1229,7 @@ class _LagHistoryBacked:
     """State hooks for lag/stack wrappers.
 
     History is pushed lazily on read (see ``get_many``), so there is no
-    ``on_substep`` here - only the per-aircraft drop. Keys are
+    ``on_step`` here - only the per-aircraft drop. Keys are
     ``(field_key, acid)`` or ``(field_key, own_acid, other_acid)``, so losing
     one aircraft means losing every key that mentions it.
     """
@@ -1249,7 +1246,7 @@ class _TimeInEnvBacked:
     context; recording and the per-aircraft drop are here.
     """
 
-    def on_substep(self, ctx) -> None:
+    def on_step(self, ctx) -> None:
         _TIME_IN_ENV.update(ctx.age_s)
 
     def on_aircraft_removed(self, acid: str) -> None:
@@ -1261,116 +1258,6 @@ class _CommBacked:
 
     def on_aircraft_removed(self, acid: str) -> None:
         _COMM_MESSAGE.pop(acid, None)
-
-
-class _KinematicsTracker:
-    """Per-aircraft turn rate and realized accelerations, differenced per substep.
-
-    One tracker behind four fields: ``TurnRateDegPerSec`` and the three
-    ``RealizedAccel*`` fields all need the same previous (track, ground speed,
-    vertical speed), so they share this rather than each keeping its own copy
-    and differencing the same numbers three times over.
-
-    ``update`` is idempotent within a substep - the fields all call it, the
-    first call does the work and the rest see the same ``sim_time`` and return.
-    """
-
-    def __init__(self) -> None:
-        self._prev: dict[str, tuple[float, float, float]] = {}
-        self._last_time: float | None = None
-
-    def update(self, ctx) -> None:
-        if self._last_time == ctx.sim_time:
-            return  # a sibling field already advanced us this substep
-        self._last_time = ctx.sim_time
-        dt = ctx.dt
-        if dt <= 0.0:
-            return
-        trk, gs, vs = bs.traf.trk, bs.traf.gs, bs.traf.vs
-        nxt: dict[str, tuple[float, float, float]] = {}
-        for i, acid in enumerate(ctx.ids):
-            cur = (float(trk[i]), float(gs[i]), float(vs[i]))
-            last = self._prev.get(acid)
-            if last is None:
-                _TURN_RATE[acid] = 0.0
-                _REALIZED_ACCEL[acid] = (0.0, 0.0, 0.0)
-            else:
-                delta = (cur[0] - last[0] + 180.0) % 360.0 - 180.0  # (-180, 180]
-                _TURN_RATE[acid] = delta / dt
-                _REALIZED_ACCEL[acid] = (
-                    (cur[1] - last[1]) / dt,
-                    0.5 * (cur[1] + last[1]) * np.radians(delta) / dt,
-                    (cur[2] - last[2]) / dt,
-                )
-            nxt[acid] = cur
-        self._prev = nxt
-
-    def forget(self, acid: str) -> None:
-        self._prev.pop(acid, None)
-        _TURN_RATE.pop(acid, None)
-        _REALIZED_ACCEL.pop(acid, None)
-
-    def clear(self) -> None:
-        self._prev.clear()
-        _TURN_RATE.clear()
-        _REALIZED_ACCEL.clear()
-
-
-_KINEMATICS = _KinematicsTracker()
-
-
-class _KinematicsBacked:
-    """Mixin: wire a field's state hooks to the shared kinematics tracker."""
-
-    def on_substep(self, ctx) -> None:
-        _KINEMATICS.update(ctx)
-
-    def on_aircraft_removed(self, acid: str) -> None:
-        _KINEMATICS.forget(acid)
-
-    def on_episode_reset(self, seed: int | None = None) -> None:
-        _KINEMATICS.clear()
-
-
-@dataclass(frozen=True)
-class TurnRateDegPerSec(_KinematicsBacked, ObsField):
-    """Ownship turn rate in deg/s - the *signed* change in track over the last
-    env step, wrapped to (-180, 180] (a small left turn near north reads as a
-    small negative rate, never +350). It is a rate, so it is symmetric and
-    orientation-invariant - not an absolute heading, so there is no 0..360 range
-    (using absolute heading would break the rotation invariance).
-
-    Published by the environment each step (it needs the previous track, which an
-    ObsField can't retain); reads 0 before the first step / on spawn.
-
-    ``low``/``high`` are a **normalization scale**, not a physical cap: with a
-    non-clipping normalizer, values beyond them pass through as ``|x|>1``. The
-    default fixed span covers the typical few-deg/s range and keeps the obs a
-    stable "how fast am I turning" (a speed-dependent physical max would entangle
-    turn rate with speed); override for a different scale.
-
-    Metadata:
-        name: turn_rate_deg_per_sec
-        unit: deg/s
-        quantity: heading
-    """
-
-    meta = ObsMeta("turn_rate_deg_per_sec", Unit.DEG_PER_SEC, ObsQuantity.HEADING)
-    low: Annotated[float, "turn rate deg/s normalization scale (low)"] = -5.0
-    high: Annotated[float, "turn rate deg/s normalization scale (high)"] = 5.0
-
-    def get(self, idx: Any) -> Any:
-        return get_turn_rate(bs.traf.id[idx])
-
-    def get_many(self, indices: Any) -> Any:
-        indices = _indices_array(indices)
-        ids = bs.traf.id
-        return np.asarray(
-            [get_turn_rate(ids[int(i)]) for i in indices], dtype=np.float32
-        )
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._configured_bounds()
 
 
 @dataclass(frozen=True)
@@ -1417,132 +1304,6 @@ class TimeInEnvS(_TimeInEnvBacked, ObsField):
         ids = bs.traf.id
         return np.asarray(
             [get_time_in_env(ids[int(i)]) for i in indices], dtype=np.float32
-        )
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._configured_bounds()
-
-
-@dataclass(frozen=True)
-class RealizedAccelAlongTrackMs2(_KinematicsBacked, ObsField):
-    """Along-track (tangential) acceleration *realized over the last env step*,
-    m/s^2 = ``(ground_speed_now - ground_speed_prev_step) / dt``.
-
-    Unlike the instantaneous :class:`AxMs2` - a single end-of-step snapshot of
-    ``bs.traf.ax`` that reads ~0 exactly when a speed change is *completing*
-    (the multi-substep level-off / capture aliasing) - this is the average
-    speed-axis accel the agent actually produced across its whole decision
-    interval. The tangential half of the velocity-frame (Frenet) realized-accel
-    pair; :class:`RealizedAccelCrossTrackMs2` is the turning half. Frame-free (a
-    pure speed change, zero on a constant-speed turn) and orientation-invariant.
-    Published by the environment each step (needs the previous step's velocity);
-    reads 0 before the first step / on spawn.
-
-    ``low``/``high`` are a normalization scale, not a physical cap.
-
-    Metadata:
-        name: realized_accel_along_track_ms2
-        unit: m/s
-        quantity: speed
-    """
-
-    meta = ObsMeta("realized_accel_along_track_ms2", Unit.M_PER_S, ObsQuantity.SPEED)
-    low: Annotated[float, "accel m/s^2 normalization scale (low)"] = -3.0
-    high: Annotated[float, "accel m/s^2 normalization scale (high)"] = 3.0
-
-    def get(self, idx: Any) -> Any:
-        return get_realized_accel(bs.traf.id[idx])[0]
-
-    def get_many(self, indices: Any) -> Any:
-        indices = _indices_array(indices)
-        ids = bs.traf.id
-        return np.asarray(
-            [get_realized_accel(ids[int(i)])[0] for i in indices], dtype=np.float32
-        )
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._configured_bounds()
-
-
-@dataclass(frozen=True)
-class RealizedAccelCrossTrackMs2(_KinematicsBacked, ObsField):
-    """Cross-track (normal / centripetal) acceleration *realized over the last
-    env step*, m/s^2 = ``mean_ground_speed * turn_rate_rad_per_s``, signed by
-    turn direction (right positive).
-
-    The turning half of the velocity-frame (Frenet) realized-accel pair - the
-    lateral accel the trajectory actually bent by. Decomposed in the mid-step
-    velocity frame, so a constant-speed turn reads as pure cross-track and a
-    straight speed change as pure along-track (turn and accel stay orthogonal,
-    unlike a fixed start/current-heading decomposition). Built from the same
-    wrapped track change over the step as :class:`TurnRateDegPerSec` times ground
-    speed, so it is alias-free through a roll-out and carries no heading-wrap
-    discontinuity. Published by the environment each step; reads 0 on spawn.
-
-    ``low``/``high`` are a normalization scale, not a physical cap.
-
-    Metadata:
-        name: realized_accel_cross_track_ms2
-        unit: m/s
-        quantity: speed
-    """
-
-    meta = ObsMeta("realized_accel_cross_track_ms2", Unit.M_PER_S, ObsQuantity.SPEED)
-    low: Annotated[float, "accel m/s^2 normalization scale (low)"] = -6.0
-    high: Annotated[float, "accel m/s^2 normalization scale (high)"] = 6.0
-
-    def get(self, idx: Any) -> Any:
-        return get_realized_accel(bs.traf.id[idx])[1]
-
-    def get_many(self, indices: Any) -> Any:
-        indices = _indices_array(indices)
-        ids = bs.traf.id
-        return np.asarray(
-            [get_realized_accel(ids[int(i)])[1] for i in indices], dtype=np.float32
-        )
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._configured_bounds()
-
-
-@dataclass(frozen=True)
-class RealizedAccelVerticalMs2(_KinematicsBacked, ObsField):
-    """Vertical acceleration *realized over the last env step*, m/s^2 =
-    ``(vertical_speed_now - vertical_speed_prev_step) / dt`` - the rate of change
-    of climb rate.
-
-    The vertical companion of :class:`RealizedAccelAlongTrackMs2` /
-    :class:`RealizedAccelCrossTrackMs2`: an *absolute* per-aircraft signal (not
-    relative), so it composes with the block's existing ``AltFt.relative_to_own``
-    and ``RelVsFtMin`` rather than duplicating them. Its value is anticipating a
-    *level-off* on an intruder whose vertical intent is otherwise unobservable:
-    ``VsFtMin`` alone can't tell a steady climb (accel ~0, VS>0 -> keeps climbing)
-    from one about to stop (accel<0, VS>0 -> leveling), whereas this rate can.
-    Measured across the whole multi-substep step, so it does not alias to ~0 when
-    the level-off completes at the step boundary. Published each step; 0 on spawn.
-
-    ``low``/``high`` are a normalization scale, not a physical cap.
-
-    Metadata:
-        name: realized_accel_vertical_ms2
-        unit: m/s
-        quantity: vertical_speed
-    """
-
-    meta = ObsMeta(
-        "realized_accel_vertical_ms2", Unit.M_PER_S, ObsQuantity.VERTICAL_SPEED
-    )
-    low: Annotated[float, "accel m/s^2 normalization scale (low)"] = -5.0
-    high: Annotated[float, "accel m/s^2 normalization scale (high)"] = 5.0
-
-    def get(self, idx: Any) -> Any:
-        return get_realized_accel(bs.traf.id[idx])[2]
-
-    def get_many(self, indices: Any) -> Any:
-        indices = _indices_array(indices)
-        ids = bs.traf.id
-        return np.asarray(
-            [get_realized_accel(ids[int(i)])[2] for i in indices], dtype=np.float32
         )
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -2158,24 +1919,6 @@ def clear_action_space_bounds() -> None:
     _ACTION_SPACE_BOUNDS = None
 
 
-# Per-process store of each aircraft's turn rate (deg/s), published by the
-# environment each step (from the change in track over the step, which needs
-# history an ObsField can't keep). Read by TurnRateDegPerSec. Per process - one
-# env per process. A rate/magnitude, so it is orientation-invariant.
-_TURN_RATE: dict[str, float] = {}
-
-
-
-
-def get_turn_rate(acid: str) -> float:
-    """Return the stored turn rate (deg/s) for ``acid``, or 0.0 if unknown."""
-    return _TURN_RATE.get(acid, 0.0)
-
-
-
-
-
-
 # Per-process store of each aircraft's seconds since it entered the environment.
 # Published by the environment each step from its own spawn-time bookkeeping
 # (``BaseEnvironment.aircraft_spawn_time``), which an ObsField cannot reach: it
@@ -2195,22 +1938,12 @@ def get_time_in_env(acid: str) -> float:
 
 
 
-# Per-process store of each aircraft's realized acceleration over the last env
-# step: ``(tangential, normal, vertical)`` in m/s^2 - the first two in the
-# horizontal velocity (Frenet) frame, the third the vertical-speed rate.
-# Published by the environment each step from the change in its velocity across
-# the whole (multi-substep) step - not an end-of-step snapshot, so it does not
-# alias to ~0 when a maneuver is *completing* (level-off / roll-out). Needs the
-# previous step's velocity, which an ObsField can't retain. Read by
-# RealizedAccel{AlongTrack,CrossTrack,Vertical}Ms2. (0, 0, 0) if unknown.
-_REALIZED_ACCEL: dict[str, tuple[float, float, float]] = {}
 
 
 
 
-def get_realized_accel(acid: str) -> tuple[float, float, float]:
-    """Return stored ``(tangential, normal, vertical)`` accel m/s^2 (else (0, 0, 0))."""
-    return _REALIZED_ACCEL.get(acid, (0.0, 0.0, 0.0))
+
+
 
 
 

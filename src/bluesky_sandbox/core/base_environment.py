@@ -29,7 +29,7 @@ from bluesky_sandbox.config import (
     EnvConfig,
     normalize_spawn_aircraft_types,
 )
-from bluesky_sandbox.interface.fields.base import SubstepContext
+from bluesky_sandbox.interface.fields.base import StepContext
 from bluesky_sandbox.interface.fields.observations import (
     reset_all_field_state,
     set_action_space_bounds,
@@ -551,7 +551,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
             self._hooks.on_sim_step()
 
         self._purge_missing_aircraft_state()
-        self._publish_turn_rates()
+        self._update_stateful_fields()
         controlled_agents = self._controlled_live_agents
         observations = self._assemble_observations(controlled_agents)
         infos = self._build_infos(controlled_agents)
@@ -1019,46 +1019,32 @@ class BlueskyBaseEnvironment(ParallelEnv):
             )
         return None
 
-    def _publish_turn_rates(self) -> None:
-        """Store each live aircraft's realized kinematics over this step for the
-        obs fields (and physical-smoothness rewards) that an ObsField can't
-        compute alone because they need the step's *starting* velocity.
+    def _update_stateful_fields(self) -> None:
+        """Drive the per-step hook for observation fields that keep state.
 
-        Two things are published, both keyed off the change in the ground-velocity
-        vector since the previous step (0 on an aircraft's first step):
+        A field sees only ``bs.traf`` in ``get``/``get_many``, which holds the
+        *current* state - so anything needing history (the previous step's
+        value) or env bookkeeping (spawn times, the last action) cannot be
+        computed there. The environment is the only thing that knows where the
+        step boundary falls, so it pumps ``on_step`` once per env step, after
+        the substep loop, and each field updates its own store.
 
-        * turn rate (deg/s) = wrapped change in track over ``dt``, read by
-          ``TurnRateDegPerSec``. A rate, so orientation-invariant.
-        * realized acceleration read by ``RealizedAccel{AlongTrack,CrossTrack,
-          Vertical}Ms2``: tangential = change in ground speed over ``dt``; normal
-          (centripetal) = mean ground speed times the track-change rate (rad/s),
-          signed by turn direction; vertical = change in vertical speed over
-          ``dt``. Measured across the whole multi-substep step, so it does not
-          alias to ~0 when a maneuver is *completing* at the step boundary (the
-          level-off / roll-out case that a single end-of-step snapshot misses).
-
-        Also publishes each aircraft's seconds-since-spawn for ``TimeInEnvS``.
-        It needs no velocity history, but it shares this method's contract -
-        per-aircraft per-step state that only the environment can supply - and
-        this pass is already walking every live aircraft.
+        Only fields the config actually lists are in ``_stateful_fields``, so a
+        task using none of them pays nothing here.
         """
         dt = float(self.config.dt) or 1.0
         ids = bs.traf.id
         now = float(self._runtime.sim_time)
-        # Stateful fields maintain their own per-aircraft state. Only fields the
-        # config actually uses are in ``_stateful_fields``, so a task reading no
-        # rates or ages pays nothing here - and this runs once per substep, of
-        # which there are dt/simdt (commonly 100) per env step.
         if self._stateful_fields:
             spawn = self._aircraft_spawn_time
-            ctx = SubstepContext(
+            ctx = StepContext(
                 ids=tuple(ids),
                 dt=dt,
                 sim_time=now,
                 age_s={a: max(0.0, now - spawn.get(a, now)) for a in ids},
             )
             for obs_field in self._stateful_fields:
-                obs_field.on_substep(ctx)
+                obs_field.on_step(ctx)
 
     def _resolve_route_target_for_aircraft(
         self,
