@@ -40,6 +40,10 @@ from bluesky_sandbox.interface.task import (
     BaseAgentInfo,
     BaseObs,
 )
+from bluesky_sandbox.sim.geometry.clearance import (
+    inside_separation_zone,
+    predicted_conflict,
+)
 from bluesky_sandbox.sim.geometry.conflict import cd_hpz_m, cd_rpz_m
 from bluesky_sandbox.sim.performance.envelope import (
     feasible_alt_cas,
@@ -852,7 +856,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         ``SpawnConfig.region_spawn_separation``.
         """
         if conflict_free:
-            return not self._runtime.predicted_conflict(
+            return not predicted_conflict(
                 pos.lat_deg,
                 pos.lon_deg,
                 pos.alt_ft,
@@ -861,13 +865,18 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 sep_nm=sep_nm,
                 sep_ft=sep_ft,
                 lookahead_s=lookahead_s,
+                # Steady wind only: existing traffic's ``gs`` carries the field,
+                # so both sides of the relative velocity must be ground-
+                # referenced. Gusts are zero-mean and per-step.
+                wind_kts=float(getattr(self.config, "wind_kts", 0.0)),
+                wind_dir_deg=float(getattr(self.config, "wind_dir_deg", 0.0)),
             )
-        return not self._runtime.inside_separation_zone(
+        return not inside_separation_zone(
             pos.lat_deg,
             pos.lon_deg,
             pos.alt_ft,
-            min_sep_nm=cd_rpz_m() / nm if sep_nm is None else float(sep_nm),
-            min_sep_ft=cd_hpz_m() / ft if sep_ft is None else float(sep_ft),
+            sep_nm=sep_nm,
+            sep_ft=sep_ft,
         )
 
     def _resolve_spawn_speed(

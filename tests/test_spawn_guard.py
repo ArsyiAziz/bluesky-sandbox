@@ -26,6 +26,7 @@ from bluesky.tools.aero import nm as NM
 import bluesky_sandbox.core.base_environment as be
 from bluesky_sandbox.core.base_environment import BlueskyBaseEnvironment, SpawnPosition
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
+from bluesky_sandbox.sim.geometry.conflict import cd_hpz_m, cd_rpz_m
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
 
 _PARAMS = {"spd_kts": (240.0, 260.0), "alt_ft": (9_000.0, 11_000.0)}
@@ -68,25 +69,34 @@ def test_zero_is_a_real_value_not_an_unset():
 # ---- the present-position check ---------------------------------------- #
 
 
-class _StubRuntime:
-    """Records the zone it was asked about; answers from one fake aircraft."""
+class _StubZone:
+    """Records the zone it was asked about; answers from one fake aircraft.
+
+    Stands in for :func:`~bluesky_sandbox.sim.geometry.clearance.inside_separation_zone`,
+    resolving an unset argument exactly as the real one does, so ``seen`` records
+    the *effective* zone rather than whatever the caller happened to pass through.
+    """
 
     def __init__(self, horiz_nm: float = 1e9, vert_ft: float = 1e9) -> None:
         self.horiz_nm = horiz_nm
         self.vert_ft = vert_ft
         self.seen: tuple[float, float] | None = None
 
-    def inside_separation_zone(self, lat, lon, alt_ft, *, min_sep_nm, min_sep_ft=None):
-        self.seen = (min_sep_nm, min_sep_ft)
-        return self.horiz_nm < min_sep_nm and self.vert_ft < min_sep_ft
+    def __call__(self, lat, lon, alt_ft, *, sep_nm=None, sep_ft=None):
+        rpz_nm = cd_rpz_m() / NM if sep_nm is None else float(sep_nm)
+        vert_ft = cd_hpz_m() / FT if sep_ft is None else float(sep_ft)
+        self.seen = (rpz_nm, vert_ft)
+        return self.horiz_nm < rpz_nm and self.vert_ft < vert_ft
 
-    def predicted_conflict(self, *a, **kw):  # pragma: no cover
-        raise AssertionError("present-position path must not predict")
+
+def _no_predict(*a, **kw):  # pragma: no cover
+    raise AssertionError("present-position path must not predict")
 
 
-def _clear(rt: _StubRuntime, **sep) -> bool:
+def _clear(monkeypatch, zone: _StubZone, **sep) -> bool:
+    monkeypatch.setattr(be, "inside_separation_zone", zone)
+    monkeypatch.setattr(be, "predicted_conflict", _no_predict)
     env = object.__new__(BlueskyBaseEnvironment)
-    env._runtime = rt
     pos = SpawnPosition(lat_deg=52.5, lon_deg=4.5, alt_ft=10_000.0, spd_kts=250.0)
     return BlueskyBaseEnvironment._spawn_position_clear(env, pos, 90.0, False, **sep)
 
@@ -99,10 +109,10 @@ def _clear(rt: _StubRuntime, **sep) -> bool:
         (4.0, 5_000.0, True),   # stacked well above: not a loss of separation
     ],
 )
-def test_breach_needs_both_dimensions(horiz_nm, vert_ft, expected):
+def test_breach_needs_both_dimensions(monkeypatch, horiz_nm, vert_ft, expected):
     """Lateral distance alone would starve a stacked maintain region of top-ups."""
     bs.init("sim")
-    assert _clear(_StubRuntime(horiz_nm, vert_ft)) is expected
+    assert _clear(monkeypatch, _StubZone(horiz_nm, vert_ft)) is expected
 
 
 def test_unset_resolves_to_cds_own_zone(monkeypatch):
@@ -114,13 +124,13 @@ def test_unset_resolves_to_cds_own_zone(monkeypatch):
 
     monkeypatch.setattr(be.bs.traf, "cd", _CD(), raising=False)
 
-    rt = _StubRuntime()
-    _clear(rt)
-    assert rt.seen == pytest.approx((5.0, 1000.0))  # unset -> CD's zone
+    zone = _StubZone()
+    _clear(monkeypatch, zone)
+    assert zone.seen == pytest.approx((5.0, 1000.0))  # unset -> CD's zone
 
-    rt = _StubRuntime()
-    _clear(rt, sep_nm=7.0, sep_ft=1_500.0)
-    assert rt.seen == pytest.approx((7.0, 1500.0))  # absolute, as written
+    zone = _StubZone()
+    _clear(monkeypatch, zone, sep_nm=7.0, sep_ft=1_500.0)
+    assert zone.seen == pytest.approx((7.0, 1500.0))  # absolute, as written
 
 
 def test_zone_tracks_a_resized_protected_zone(monkeypatch):
@@ -132,9 +142,9 @@ def test_zone_tracks_a_resized_protected_zone(monkeypatch):
         hpz_def = 500.0 * FT
 
     monkeypatch.setattr(be.bs.traf, "cd", _CD(), raising=False)
-    rt = _StubRuntime()
-    _clear(rt)
-    assert rt.seen == pytest.approx((3.0, 500.0))
+    zone = _StubZone()
+    _clear(monkeypatch, zone)
+    assert zone.seen == pytest.approx((3.0, 500.0))
 
 
 def test_lookahead_is_not_used_by_the_present_position_check(monkeypatch):
@@ -146,9 +156,9 @@ def test_lookahead_is_not_used_by_the_present_position_check(monkeypatch):
         hpz_def = 1000.0 * FT
 
     monkeypatch.setattr(be.bs.traf, "cd", _CD(), raising=False)
-    rt = _StubRuntime()
-    _clear(rt, lookahead_s=600.0)
-    assert rt.seen == pytest.approx((5.0, 1000.0))
+    zone = _StubZone()
+    _clear(monkeypatch, zone, lookahead_s=600.0)
+    assert zone.seen == pytest.approx((5.0, 1000.0))
 
 
 # ---- the drift guard ---------------------------------------------------- #

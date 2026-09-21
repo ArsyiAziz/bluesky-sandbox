@@ -127,6 +127,30 @@ def test_realtime_driver_step_uses_fixed_simdt_despite_wall_clock_lag():
     assert runtime.sim_time == pytest.approx(start + 0.01)
 
 
+def _record_sleeps(monkeypatch) -> list[float]:
+    """Capture the driver's pacing sleeps without touching the real ``time``.
+
+    ``monkeypatch.setattr(sim_driver.time, "sleep", ...)`` would mutate the
+    shared stdlib module, and BlueSky's ``network.receiver`` threads poll with
+    ``while True: ... time.sleep(1.0)``. Replacing that sleep with a no-op turns
+    every receiver thread into a busy-loop that starves the GIL and grows this
+    list without bound - the whole suite crawls once any earlier test has run
+    ``bs.init``. Swapping the module *reference* inside ``sim_driver`` instead
+    leaves those threads on the real clock.
+    """
+    sleeps: list[float] = []
+
+    class _Clock:
+        monotonic = staticmethod(time.monotonic)
+
+        @staticmethod
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+    monkeypatch.setattr(sim_driver, "time", _Clock)
+    return sleeps
+
+
 def test_realtime_driver_fastforward_skips_pacing_sleep(monkeypatch):
     class _Env:
         class config:
@@ -141,8 +165,7 @@ def test_realtime_driver_fastforward_skips_pacing_sleep(monkeypatch):
             wind_kts = 0.0
             turbulence_kts = 0.0
 
-    sleeps: list[float] = []
-    monkeypatch.setattr(sim_driver.time, "sleep", lambda seconds: sleeps.append(seconds))
+    sleeps = _record_sleeps(monkeypatch)
 
     runtime = BlueSkyRuntime(_Env())
     runtime.configure()
@@ -175,8 +198,7 @@ def test_realtime_driver_finite_fastforward_stops_at_ffstop(monkeypatch):
             wind_kts = 0.0
             turbulence_kts = 0.0
 
-    sleeps: list[float] = []
-    monkeypatch.setattr(sim_driver.time, "sleep", lambda seconds: sleeps.append(seconds))
+    sleeps = _record_sleeps(monkeypatch)
 
     runtime = BlueSkyRuntime(_Env())
     runtime.configure()
