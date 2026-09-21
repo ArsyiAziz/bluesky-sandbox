@@ -44,6 +44,14 @@ from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
 from bluesky_sandbox.ui.drivers import RenderMode, get_driver_class
 
 from .runtime import BlueSkyRuntime
+from .services import (
+    ActionDispatcher,
+    AgentInfoBuilder,
+    ObservationAssembler,
+    QueryStateMonitor,
+    RenderableBuilder,
+    TrafficMonitor,
+)
 from .spawning import SpawnGenerator
 from .state import (
     AircraftControlState,
@@ -72,14 +80,6 @@ __all__ = [
     "ViewSpec",
     "overridable",
 ]
-from .services import (
-    ActionDispatcher,
-    AgentInfoBuilder,
-    ObservationAssembler,
-    QueryStateMonitor,
-    RenderableBuilder,
-    TrafficMonitor,
-)
 
 if TYPE_CHECKING:
     from bluesky_sandbox.ui.drivers.panda3d.views.base import Panda3DView
@@ -121,8 +121,6 @@ def overridable(func: F) -> F:
     """
     func.__overridable__ = True  # type: ignore[attr-defined]
     return func
-
-
 
 
 class TaskHooks(Protocol):
@@ -665,7 +663,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
         commit: bool = True,
     ) -> None:
         """Replace one aircraft route through the bound BlueSky runtime."""
-        resolved_route = self._resolve_route_for_aircraft(callsign, route, self._rng)
+        resolved_route = self._spawn_generator.resolve_route(
+            callsign, route, self._rng
+        )
         self._runtime.replace_aircraft_route(
             callsign,
             None if resolved_route is None else resolved_route.targets,

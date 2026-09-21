@@ -113,6 +113,22 @@ class SpawnGenerator:
         """Top up each steady-state region to its target live count."""
         self._maintain_spawns(rng)
 
+    def resolve_route(
+        self,
+        callsign: str,
+        route: Sequence[Any] | None,
+        rng: np.random.Generator,
+    ) -> ResolvedRoute | None:
+        """Resolve a route spec into concrete waypoint targets.
+
+        Public because route resolution is not only a spawn-time concern: the
+        environment's ``replace_aircraft_route`` re-resolves an existing
+        aircraft's route mid-episode through this same path, so the sampling
+        rules (envelope draws, reachable-altitude windows, leg chaining) stay
+        in one place.
+        """
+        return self._resolve_route_for_aircraft(callsign, route, rng)
+
     # ---- progress queries ------------------------------------------------ #
 
     @property

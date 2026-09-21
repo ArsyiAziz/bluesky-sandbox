@@ -19,11 +19,13 @@ from __future__ import annotations
 import warnings
 
 import bluesky as bs
+import numpy as np
 import pytest
 from bluesky.tools.aero import ft as FT
 from bluesky.tools.aero import nm as NM
 
 import bluesky_sandbox.core.base_environment as be
+from bluesky_sandbox.core.base_environment import BlueskyBaseEnvironment
 import bluesky_sandbox.core.spawning as spawning
 from bluesky_sandbox.core.state import SpawnPosition
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
@@ -217,3 +219,43 @@ def test_below_cd_warns_once_per_region(monkeypatch):
         for _ in range(5):
             cfg.region_spawn_separation(0)
     assert len([w for w in caught if w.category is RuntimeWarning]) == 1
+
+
+# ---- route resolution is shared, not spawn-only ------------------------- #
+
+
+def test_replace_aircraft_route_resolves_through_the_generator():
+    """Regression: route resolution moved to ``SpawnGenerator``.
+
+    ``replace_aircraft_route`` re-resolves an existing aircraft's route
+    mid-episode and was left calling ``self._resolve_route_for_aircraft`` on the
+    environment after that method moved, which no test exercised. Attribute
+    access on ``self`` is invisible to the linter, so this pins the call path.
+    """
+    calls: list[tuple] = []
+
+    class _Gen:
+        def resolve_route(self, callsign, route, rng):
+            calls.append((callsign, route))
+            return None
+
+    class _Runtime:
+        def replace_aircraft_route(self, *a, **kw):
+            pass
+
+    class _Monitor:
+        def set_aircraft_route(self, *a, **kw):
+            pass
+
+        def clear_aircraft_route(self, *a, **kw):
+            pass
+
+    env = object.__new__(BlueskyBaseEnvironment)
+    env._spawn_generator = _Gen()
+    env._runtime = _Runtime()
+    env._query_state_monitor = _Monitor()
+    env._rng = np.random.default_rng(0)
+
+    BlueskyBaseEnvironment.replace_aircraft_route(env, "AC1", None, ["WP1"])
+
+    assert calls == [("AC1", ["WP1"])]
