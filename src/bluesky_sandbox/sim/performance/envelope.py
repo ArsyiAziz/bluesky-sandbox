@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from functools import cache, lru_cache
 
 import bluesky as bs
-from bluesky.tools.aero import ft, kts, vmach2cas
+from bluesky.tools.aero import ft, kts, vcas2tas, vmach2cas
+from bluesky.tools.geo import kwikqdrdist
 
 from bluesky_sandbox.sim.performance.models import type_limits
 
@@ -364,3 +365,58 @@ def feasible_alt_cas(
     vmin_kt, vmax_kt = _speed_band_kt(acidx, alt_ft)
     cas_kt = float(rng.uniform(vmin_kt, vmax_kt))
     return alt_ft, cas_kt
+
+
+def reachable_alt_window(
+    acidx: int,
+    wp_lat: float,
+    wp_lon: float,
+    vs_fraction: float = 1.0,
+    from_lat: float | None = None,
+    from_lon: float | None = None,
+    from_alt_ft: float | None = None,
+) -> tuple[float | None, float | None]:
+    """Altitude band (ft) the aircraft can reach by the time it flies to the
+    waypoint, from the performance model's max vertical rate.
+
+    The aircraft covers the *leg-start*->waypoint distance ``d`` (nm) before
+    the fix. ``from_lat``/``from_lon``/``from_alt_ft`` give that leg start;
+    they default to the aircraft's live (spawn) state for the first leg, but
+    a chained leg must pass the **previous waypoint's** position/altitude, so
+    the window is computed from where the leg actually begins (wp1) rather
+    than the spawn. Ground speed is taken at the aircraft's *max true
+    airspeed* (the shortest possible transit ``t = 60*d/GS`` minutes), so the
+    bound stays valid no matter how fast the policy chooses to fly. At up to
+    ``vsmax`` (ft/min) it can then change altitude by ``reach = f * vsmax *
+    t``, where ``f`` (``vs_fraction``, <=1) reserves margin for the turn-to-fix
+    and simultaneous speed matching. Returns ``(alt0 - reach, alt0 + reach)``
+    for the caller to intersect with the envelope, or ``(None, None)`` when no
+    meaningful speed / rate is available (leaving the window unbounded).
+    """
+    vsmax = getattr(bs.traf.perf, "vsmax", None)
+    if vsmax is None:
+        return None, None
+    vs_max_fpm = abs(float(vsmax[acidx])) / ft * 60.0  # m/s -> ft/min
+    # Ground speed = the aircraft's *maximum true airspeed* (shortest possible
+    # transit, so the bound holds however fast the policy flies). ``perf.vmax``
+    # is a *CAS* limit whose TAS grows with altitude, so evaluate it at the
+    # ceiling for the true max GS (no wind assumed). Using perf.vmax as knots
+    # directly understates GS and would over-promise the reachable band.
+    vmax_cas_ms = float(bs.traf.perf.vmax[acidx])  # m/s CAS limit
+    hmax_m = float(bs.traf.perf.hmax[acidx])  # ceiling, m
+    gs_kt = float(vcas2tas(vmax_cas_ms, hmax_m)) / kts  # max TAS -> max GS
+    f = float(vs_fraction)
+    if not math.isfinite(gs_kt) or gs_kt <= 1.0 or vs_max_fpm <= 0.0 or f <= 0.0:
+        return None, None
+
+    lat0 = float(bs.traf.lat[acidx]) if from_lat is None else float(from_lat)
+    lon0 = float(bs.traf.lon[acidx]) if from_lon is None else float(from_lon)
+    _qdr, d_nm = kwikqdrdist(lat0, lon0, float(wp_lat), float(wp_lon))
+    alt0_ft = (
+        float(bs.traf.alt[acidx]) / ft
+        if from_alt_ft is None
+        else float(from_alt_ft)
+    )
+
+    reach_ft = f * vs_max_fpm * (60.0 * float(d_nm) / gs_kt)  # f * vsmax * t_min
+    return alt0_ft - reach_ft, alt0_ft + reach_ft

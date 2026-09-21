@@ -5,6 +5,7 @@ from .altitude import (
     VertexAltitudeBand,
 )
 from .base import AltitudeBand, Bounds, Footprint, RegionBounds
+from .containment import contains_many
 from .coordinates import LatLon, LocalFrame
 from .derived import (
     AnnularSectorFootprint,
@@ -27,6 +28,7 @@ __all__ = [
     "Bounds",
     "BoxFootprint",
     "ConstantAltitudeBand",
+    "contains_many",
     "CorridorFootprint",
     "DiskFootprint",
     "Footprint",

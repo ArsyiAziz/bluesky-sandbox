@@ -22,12 +22,7 @@ from bluesky_sandbox.interface.task import (
     StepTime,
 )
 from bluesky_sandbox.interface.wrappers.observations.normalizer import Normalizer
-from bluesky_sandbox.sim.bounds import (
-    BoxFootprint,
-    ConstantAltitudeBand,
-    DiskFootprint,
-    RegionBounds,
-)
+from bluesky_sandbox.sim.bounds import contains_many
 from bluesky_sandbox.sim.performance.speeds import within_speed_tolerance_many
 from bluesky_sandbox.sim.queryables import (
     QueryRegion,
@@ -38,6 +33,7 @@ from bluesky_sandbox.sim.queryables import (
     WaypointResult,
     WaypointStep,
 )
+from bluesky_sandbox.sim.spawn import param_alt_range
 from bluesky_sandbox.ui.display.overlays import BoundsResource, Renderable
 
 
@@ -119,59 +115,6 @@ def _normalize_field_values_batch(field, values, idx: int) -> np.ndarray:
     return normalizer.normalize_many(field, values, idx)
 
 
-def _region_contains_many(
-    region: QueryRegion,
-    lat_deg: np.ndarray,
-    lon_deg: np.ndarray,
-    alt_ft: np.ndarray,
-) -> np.ndarray | None:
-    """Vectorized containment for common region shapes.
-
-    Returns ``None`` for uncommon bounds so callers can fall back to the
-    polymorphic scalar API without complicating every footprint class.
-    """
-    bounds = region.bounds
-    if not isinstance(bounds, RegionBounds):
-        return None
-
-    footprint = bounds.footprint
-    altitude = bounds.altitude
-    if isinstance(footprint, BoxFootprint):
-        mask = (
-            (footprint.lat_min_deg < lat_deg)
-            & (lat_deg < footprint.lat_max_deg)
-            & (footprint.lon_min_deg < lon_deg)
-            & (lon_deg < footprint.lon_max_deg)
-        )
-    elif isinstance(footprint, DiskFootprint):
-        (lat_min, lat_max), (lon_min, lon_max) = footprint.bounding_box
-        mask = (
-            (lat_min <= lat_deg)
-            & (lat_deg <= lat_max)
-            & (lon_min <= lon_deg)
-            & (lon_deg <= lon_max)
-        )
-        x_nm = (lon_deg - footprint.center.lon_deg) * 60.0 * footprint._frame._cos_lat
-        y_nm = (lat_deg - footprint.center.lat_deg) * 60.0
-        mask &= (x_nm * x_nm + y_nm * y_nm) <= footprint.radius_nm * footprint.radius_nm
-    else:
-        return None
-
-    mask &= (bounds.alt_min_ft <= alt_ft) & (alt_ft <= bounds.alt_max_ft)
-    if isinstance(altitude, ConstantAltitudeBand):
-        return mask
-
-    candidate_rows = np.flatnonzero(mask)
-    for row in candidate_rows:
-        if not altitude.contains(
-            float(lat_deg[row]),
-            float(lon_deg[row]),
-            float(alt_ft[row]),
-        ):
-            mask[row] = False
-    return mask
-
-
 def _denormalize_action_value(field, values, idx: int):
     values = np.asarray(values, dtype=np.float32).reshape(-1)
     normalizer = _field_normalizer(field)
@@ -193,23 +136,6 @@ def _denormalize_action_value(field, values, idx: int):
             f"values, got {values.size}."
         )
     return normalizer.denormalize(field, values.tolist(), idx)
-
-
-def _param_alt_range(alt_p) -> tuple[float, float] | None:
-    """Extract a finite ``(lo, hi)`` from a spawn ``params['alt_ft']`` value."""
-    if alt_p is None:
-        return None
-    if isinstance(alt_p, (int, float)):
-        lo = hi = float(alt_p)
-    elif isinstance(alt_p, tuple):
-        lo, hi = alt_p
-    else:
-        try:
-            lo, hi = alt_p.support()
-        except Exception:
-            return None
-    lo, hi = float(lo), float(hi)
-    return (lo, hi) if math.isfinite(lo) and math.isfinite(hi) else None
 
 
 class ActionDispatcher:
@@ -531,7 +457,7 @@ class RenderableBuilder:
                 color="green",
                 label=default_name if region.render_name else "",
                 kind="spawn",
-                alt_range_override=_param_alt_range(region.params.get("alt_ft")),
+                alt_range_override=param_alt_range(region.params.get("alt_ft")),
                 extra_meta={"spawn_alt": region.params.get("alt_ft")},
             )
 
@@ -816,7 +742,7 @@ class QueryStateMonitor:
 
         for col in self._tracked_region_cols:
             queryable = self._tracked_queryables[col]
-            inside = _region_contains_many(queryable, lat_deg, lon_deg, alt_ft)
+            inside = contains_many(queryable.bounds, lat_deg, lon_deg, alt_ft)
             if inside is None:
                 inside = np.fromiter(
                     (queryable.contains_aircraft(acidx) for acidx in range(n)),

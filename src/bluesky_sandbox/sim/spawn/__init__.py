@@ -11,6 +11,7 @@ from __future__ import annotations
 from .regions import (
     SpawnConfig,
     SpawnRegion,
+    param_alt_range,
 )
 from .routes import (
     RouteSpec,
@@ -28,6 +29,7 @@ __all__ = [
     "SpawnConfig",
     "SpawnRegion",
     "expand_route_paths",
+    "param_alt_range",
     "resolve_route",
     "route_step_name",
     "route_step_names",

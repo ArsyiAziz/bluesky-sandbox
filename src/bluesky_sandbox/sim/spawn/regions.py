@@ -84,6 +84,29 @@ def _distribution_support(value, *, label: str) -> tuple[float, float]:
     return lo, hi
 
 
+def param_alt_range(alt_p) -> tuple[float, float] | None:
+    """Extract a finite ``(lo, hi)`` from a spawn ``params['alt_ft']`` value.
+
+    Best-effort and non-raising, unlike :func:`_validate_range` /
+    :func:`_distribution_support` above: the caller only wants a display
+    range for a render overlay, so an unreadable or unbounded value is
+    ``None`` (no override) rather than an error.
+    """
+    if alt_p is None:
+        return None
+    if isinstance(alt_p, (int, float)):
+        lo = hi = float(alt_p)
+    elif isinstance(alt_p, tuple):
+        lo, hi = alt_p
+    else:
+        try:
+            lo, hi = alt_p.support()
+        except Exception:
+            return None
+    lo, hi = float(lo), float(hi)
+    return (lo, hi) if math.isfinite(lo) and math.isfinite(hi) else None
+
+
 @dataclass
 class SpawnRegion:
     """A spatial region with its own aircraft count and scalar spawn distributions.
