@@ -24,6 +24,7 @@ from bluesky_sandbox.sim.spawn import SpawnConfig
 DEFAULT_ALLOWED_AIRCRAFT = ("B744",)
 DEFAULT_DT = 1.0
 DEFAULT_SIMDT = 0.05
+DEFAULT_ASAS_DT = None
 DEFAULT_CD_METHOD = "CSTATEBASED"
 DEFAULT_RESO_METHOD = None
 DEFAULT_PZ_RADIUS_NM = None
@@ -147,6 +148,13 @@ class EnvConfig:
         Simulation time (seconds) advanced per ``step()`` call.
     simdt:
         BlueSky physics time step in seconds (default 0.05 s = 20 Hz).
+    asas_dt:
+        Interval in seconds between BlueSky conflict-detection updates.
+        ``None`` keeps BlueSky's own ``bs.settings.asas_dt``. Must be a whole
+        number of ``simdt``, and ``dt`` a whole number of it: detection runs on
+        a fixed sim-time grid, so any other value gives each step's
+        observation separation data of a different age, or none at all.
+        Conflict and LoS durations only change at this interval.
     cd_method:
         BlueSky conflict-detection method name passed to ``CDMETHOD``
         (default ``"cstatebased"``).
@@ -193,6 +201,10 @@ class EnvConfig:
     )
     dt: float = DEFAULT_DT
     simdt: float = DEFAULT_SIMDT
+    # Conflict-detection interval, applied to BlueSky's ``asas`` timer at
+    # construction and after every reset. ``None`` keeps ``bs.settings.asas_dt``,
+    # which only exists once ``bs.init`` has run, so the runtime checks it there.
+    asas_dt: float | None = DEFAULT_ASAS_DT
     cd_method: str = DEFAULT_CD_METHOD
     # Conflict resolution method applied via BlueSky's ``RESO`` command at each
     # reset. ``None`` (or ``"OFF"``) leaves auto-resolution off - the usual
@@ -266,6 +278,8 @@ class EnvConfig:
                 f"dt ({self.dt}) must be an integer multiple of simdt "
                 f"({self.simdt}); got dt/simdt={ratio!r}."
             )
+        if self.asas_dt is not None:
+            validate_asas_dt(self.asas_dt, dt=self.dt, simdt=self.simdt)
         for provider in self.task_info_providers:
             if not callable(provider):
                 raise ValueError("each task info provider must be callable.")
@@ -359,6 +373,62 @@ class EnvConfig:
             )
 
         self.allowed_aircraft = [ac.upper() for ac in self.allowed_aircraft]
+
+def validate_asas_dt(
+    asas_dt: float,
+    *,
+    dt: float,
+    simdt: float,
+    from_bluesky_default: bool = False,
+) -> None:
+    """Refuse a conflict-detection interval that does not line up with the steps.
+
+    BlueSky knows nothing of the agent step: it runs detection on a fixed
+    sim-time grid from the start of the episode, every ``asas_dt // simdt``
+    physics ticks. So ``asas_dt`` must be a whole number of ``simdt``, or BlueSky
+    silently rounds it down, and ``dt`` a whole number of ``asas_dt``, or each
+    step's observation reads separation data of a different age - and an
+    interval longer than ``dt`` leaves some steps with no detection at all.
+
+    ``from_bluesky_default`` marks a value read from ``bs.settings.asas_dt``
+    because the config left it unset, so the error says where it came from.
+    """
+    origin = (
+        " EnvConfig.asas_dt is unset, so BlueSky's own default "
+        "(bs.settings.asas_dt, from settings.cfg) applies; set asas_dt explicitly."
+        if from_bluesky_default
+        else ""
+    )
+    if not (
+        isinstance(asas_dt, (int, float)) and asas_dt > 0 and np.isfinite(asas_dt)
+    ):
+        raise ValueError(
+            f"asas_dt must be a positive finite number, got {asas_dt!r}.{origin}"
+        )
+    ticks = asas_dt / simdt
+    if round(ticks) < 1 or not np.isclose(ticks, round(ticks), rtol=0.0, atol=1e-9):
+        raise ValueError(
+            f"asas_dt ({asas_dt}) must be an integer multiple of simdt ({simdt}); "
+            f"got asas_dt/simdt={ticks!r}. BlueSky would otherwise round it to "
+            f"{max(1, int(ticks + 1e-9)) * simdt!r} s without saying so.{origin}"
+        )
+    per_step = dt / asas_dt
+    if not np.isclose(per_step, round(per_step), rtol=0.0, atol=1e-9) or (
+        round(per_step) < 1
+    ):
+        consequence = (
+            "some steps would get no conflict detection at all"
+            if asas_dt > dt
+            else "the separation data behind each step's observation would be "
+            "a different age from step to step"
+        )
+        raise ValueError(
+            f"dt ({dt}) must be an integer multiple of asas_dt ({asas_dt}); got "
+            f"dt/asas_dt={per_step!r}. BlueSky runs conflict detection on a fixed "
+            f"sim-time grid, so {consequence}. Use a divisor of dt, e.g. "
+            f"asas_dt={dt!r} for one detection per step.{origin}"
+        )
+
 
 def resolve_spawn_aircraft_types(config: EnvConfig, spawn: SpawnConfig) -> None:
     """Resolve a sampled spawn config's aircraft types against ``allowed_aircraft``."""

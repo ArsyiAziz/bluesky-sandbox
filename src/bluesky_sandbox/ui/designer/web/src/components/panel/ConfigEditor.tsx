@@ -15,15 +15,20 @@ function DefaultedNumField({
   placeholder,
   step,
   onChange,
+  stacked = false,
+  title,
 }: {
   label: string;
   value: number | null | undefined;
   placeholder: string;
   step?: number;
   onChange: (v: number | null) => void;
+  // Label above the input, to sit in a grid row beside plain NumFields.
+  stacked?: boolean;
+  title?: string;
 }) {
   return (
-    <label className="numfield inline">
+    <label className={stacked ? "numfield" : "numfield inline"} title={title}>
       <span>{label}</span>
       <input
         type="number"
@@ -237,9 +242,13 @@ export function ConfigEditor({
         </>
       )}
 
-      <div className="grid2">
+      <div className="grid3">
         <NumField label="dt (s)" step={0.1} value={env.dt} onChange={(v) => set({ dt: v })} />
         <NumField label="simdt (s)" step={0.01} value={env.simdt} onChange={(v) => set({ simdt: v })} />
+        <DefaultedNumField stacked label="asas dt (s)" step={env.simdt ?? 0.05}
+          placeholder={`${catalog?.conflict_detection?.asas_dt ?? "BlueSky"} (default)`}
+          title="How often conflicts are detected. Must divide dt and be a multiple of simdt."
+          value={env.asas_dt} onChange={(v) => set({ asas_dt: v })} />
       </div>
       <label className="numfield inline">
         <span>perf model</span>

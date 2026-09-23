@@ -112,6 +112,20 @@ def cd_hpz_m() -> float:
     return hpz if hpz > 0.0 else 1000.0 * _FT
 
 
+
+def bluesky_asas_dt_s() -> float | None:
+    """BlueSky's default conflict-detection interval, ``bs.settings.asas_dt`` (s).
+
+    Unlike the zone and lookahead above there is no live CD attribute to prefer:
+    detection runs on BlueSky's ``asas`` timer, and ``bs.sim.reset()`` returns
+    that timer to this setting every episode. BlueSky registers the setting when
+    ``bs.init`` imports its traffic module, and ``settings.cfg`` may override it,
+    so before either has happened there is nothing to read. That returns
+    ``None`` rather than a guess at BlueSky's value.
+    """
+    value = getattr(bs.settings, "asas_dt", None)
+    return None if value is None else float(value)
+
 class ConflictGeometry:
     """Immutable per-step pairwise CPA arrays (``N x N``, ``bs.traf`` order)."""
 

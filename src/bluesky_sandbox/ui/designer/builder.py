@@ -928,6 +928,7 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
             allowed_aircraft=list(env.allowed_aircraft),
             dt=env.dt,
             simdt=env.simdt,
+            asas_dt=env.asas_dt,
             cd_method=env.cd_method,
             reso_method=env.reso_method,
             pz_radius_nm=env.pz_radius_nm,

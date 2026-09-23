@@ -484,6 +484,7 @@ from bluesky_sandbox.interface.fields import queryables as qobs
         "allowed_aircraft": repr(env.allowed_aircraft),
         "dt": repr(env.dt),
         "simdt": repr(env.simdt),
+        "asas_dt": repr(env.asas_dt),
         "cd_method": repr(env.cd_method),
         "reso_method": repr(env.reso_method),
         "pz_radius_nm": repr(env.pz_radius_nm),

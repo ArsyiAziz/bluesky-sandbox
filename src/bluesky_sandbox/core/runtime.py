@@ -9,6 +9,8 @@ from bluesky.stack import simstack
 from bluesky.tools.aero import ft, kts
 from wurlitzer import pipes
 
+from bluesky_sandbox.config import validate_asas_dt
+from bluesky_sandbox.sim.geometry.conflict import bluesky_asas_dt_s
 from bluesky_sandbox.sim.queryables import WaypointTarget
 from bluesky_sandbox.sim.weather import WindField
 
@@ -74,6 +76,33 @@ class BlueSkyRuntime:
         config = self._config()
         bs.settings.simdt = config.simdt
         simtime.setdt(config.simdt)
+        self.configure_asas_dt()
+
+    def configure_asas_dt(self) -> None:
+        # Conflict detection runs on BlueSky's ``asas`` timer, which every
+        # ``bs.sim.reset()`` returns to ``bs.settings.asas_dt`` - so apply the
+        # interval after init and after each reset, like the simdt above. An
+        # unset config keeps BlueSky's default, which only exists once
+        # ``bs.init`` has registered it and read settings.cfg: EnvConfig cannot
+        # see it, so it is checked here, at construction.
+        config = self._config()
+        asas_dt = config.asas_dt
+        if asas_dt is None:
+            asas_dt = bluesky_asas_dt_s()
+            if asas_dt is None:
+                raise RuntimeError(
+                    "bs.settings.asas_dt is not registered; BlueSky has not been "
+                    "initialised."
+                )
+            validate_asas_dt(
+                asas_dt,
+                dt=config.dt,
+                simdt=config.simdt,
+                from_bluesky_default=True,
+            )
+        ok, message = simtime.setdt(asas_dt, "asas")
+        if not ok:
+            raise RuntimeError(f"Could not set BlueSky's asas timer: {message}")
 
     def reset(self, *, seed: int | None) -> None:
         with pipes():

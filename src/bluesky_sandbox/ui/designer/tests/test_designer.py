@@ -22,6 +22,7 @@ import tempfile
 import traceback
 from pathlib import Path
 
+import bluesky as bs
 import numpy as np
 from scipy.stats import poisson, randint, truncnorm
 
@@ -1141,6 +1142,26 @@ def test_nav_search():
 # --------------------------------------------------------------------------- #
 # codegen                                                                      #
 # --------------------------------------------------------------------------- #
+def test_asas_dt_reaches_the_config_and_the_generated_code():
+    spec = _example_design_spec()
+    assert spec.env.asas_dt is None
+    assert build_design_config(spec).asas_dt is None
+
+    spec.env.asas_dt = 0.5
+    assert S.DesignSpec.from_json(spec.to_json()).env.asas_dt == 0.5
+    assert build_design_config(spec).asas_dt == 0.5
+    config_py = next(
+        text for path, text in codegen.generate_task(spec, "asas").items()
+        if path.endswith("/config.py")
+    )
+    assert "asas_dt=0.5," in config_py
+
+
+def test_the_catalog_shows_blueskys_asas_dt_not_a_written_in_default():
+    shown = catalog.catalog()["conflict_detection"]["asas_dt"]
+    assert shown == float(bs.settings.asas_dt)
+
+
 def test_codegen_generates_importable_package():
     spec = _example_design_spec()
     spec.env.hook_setup = "import math\nimport math\nHOOK_SCALE = math.sqrt(4.0)"

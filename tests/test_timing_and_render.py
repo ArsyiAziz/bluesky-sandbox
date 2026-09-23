@@ -60,6 +60,7 @@ def test_env_step_advances_exact_config_dt(monkeypatch):
             action_fields=[],
             dt=0.2,
             simdt=0.1,
+            asas_dt=0.2,
         ),
     )
     try:
@@ -84,6 +85,7 @@ def test_operate_does_not_advance_clock_without_step():
             pz_radius_nm = None
             pz_height_ft = None
             lookahead_s = None
+            asas_dt = 1.0
             wind_dir_deg = 270.0
             wind_kts = 0.0
             turbulence_kts = 0.0
@@ -111,6 +113,7 @@ def test_realtime_driver_step_uses_fixed_simdt_despite_wall_clock_lag():
             pz_radius_nm = None
             pz_height_ft = None
             lookahead_s = None
+            asas_dt = 1.0
             wind_dir_deg = 270.0
             wind_kts = 0.0
             turbulence_kts = 0.0
@@ -166,6 +169,7 @@ def test_realtime_driver_fastforward_skips_pacing_sleep(monkeypatch):
             pz_radius_nm = None
             pz_height_ft = None
             lookahead_s = None
+            asas_dt = 1.0
             wind_dir_deg = 270.0
             wind_kts = 0.0
             turbulence_kts = 0.0
@@ -199,6 +203,7 @@ def test_realtime_driver_finite_fastforward_stops_at_ffstop(monkeypatch):
             pz_radius_nm = None
             pz_height_ft = None
             lookahead_s = None
+            asas_dt = 1.0
             wind_dir_deg = 270.0
             wind_kts = 0.0
             turbulence_kts = 0.0
@@ -285,7 +290,8 @@ def test_requested_performance_model_survives_bs_init():
 
 def _empty_config():
     return config_module.EnvConfig(
-        obs_fields=[], intruder_obs_fields=None, action_fields=[], dt=0.2, simdt=0.1
+        obs_fields=[], intruder_obs_fields=None, action_fields=[], dt=0.2, simdt=0.1,
+        asas_dt=0.2,
     )
 
 

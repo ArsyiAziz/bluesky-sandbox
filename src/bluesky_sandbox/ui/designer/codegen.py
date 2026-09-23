@@ -399,6 +399,7 @@ CONFIG = EnvConfig(
     allowed_aircraft=list({env_sources["allowed_aircraft"]}),
     dt={env_sources["dt"]},
     simdt={env_sources["simdt"]},
+    asas_dt={env_sources["asas_dt"]},
     cd_method={env_sources["cd_method"]},
     reso_method={env_sources["reso_method"]},
     pz_radius_nm={env_sources["pz_radius_nm"]},

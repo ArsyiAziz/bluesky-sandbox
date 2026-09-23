@@ -822,6 +822,13 @@ button:disabled {
   margin-top: 6px;
 }
 
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 8px;
+  margin-top: 6px;
+}
+
 .numfield {
   display: flex;
   flex-direction: column;

@@ -909,6 +909,7 @@ class EnvSpec:
     allowed_aircraft: list[str] = field(default_factory=lambda: ["B744"])
     dt: float = 1.0
     simdt: float = 0.05
+    asas_dt: float | None = None
     cd_method: str = "CSTATEBASED"
     reso_method: str | None = None
     pz_radius_nm: float | None = None
@@ -951,6 +952,7 @@ class EnvSpec:
             "allowed_aircraft": list(self.allowed_aircraft),
             "dt": self.dt,
             "simdt": self.simdt,
+            "asas_dt": self.asas_dt,
             "cd_method": self.cd_method,
             "reso_method": self.reso_method,
             "pz_radius_nm": self.pz_radius_nm,
@@ -992,6 +994,7 @@ class EnvSpec:
             allowed_aircraft=list(d.get("allowed_aircraft", ["B744"])),
             dt=d.get("dt", 1.0),
             simdt=d.get("simdt", 0.05),
+            asas_dt=d.get("asas_dt"),
             cd_method=d.get("cd_method", "CSTATEBASED"),
             reso_method=d.get("reso_method"),
             pz_radius_nm=d.get("pz_radius_nm"),
