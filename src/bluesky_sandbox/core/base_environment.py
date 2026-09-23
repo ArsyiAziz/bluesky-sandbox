@@ -3,11 +3,10 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
-from functools import cached_property
+from functools import cache, cached_property
 from typing import (
     TYPE_CHECKING,
     Any,
-    Protocol,
     TypeAlias,
     TypeVar,
     cast,
@@ -75,12 +74,15 @@ __all__ = [
     "SpawnPosition",
     "SpawnProgress",
     "SpawnQueueItem",
-    "TaskHooks",
     "ViewSpec",
     "overridable",
 ]
 
 if TYPE_CHECKING:
+    # Only for the ``_hooks`` cast below. ``env`` imports this module, so a real
+    # import would be circular - but a type checker resolves cycles fine, and at
+    # runtime this block never executes.
+    from bluesky_sandbox.env import BlueskyEnv
     from bluesky_sandbox.ui.drivers.panda3d.views.base import Panda3DView
     from bluesky_sandbox.ui.drivers.pygame.layout import _SpecTag
     from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView
@@ -122,86 +124,22 @@ def overridable(func: F) -> F:
     return func
 
 
-class TaskHooks(Protocol):
-    """Task-author hook contract consumed by the runtime base.
+@cache
+def _task_hook_names() -> frozenset[str]:
+    """The hooks ``BlueskyEnv`` declares, as the runtime's required surface.
 
-    ``BlueskyEnv`` provides the default implementations and is the public class
-    task authors subclass. This protocol lets the runtime know the methods it
-    calls without making ``BlueskyBaseEnvironment`` itself the hook surface.
+    Read from the authoring class rather than a protocol restating its
+    signatures. ``env`` imports this module, so this import has to be deferred
+    to call time - by which point ``env`` is importable, whether or not it has
+    been loaded yet. Cached: the answer is fixed once both modules exist.
     """
+    from bluesky_sandbox.env import BlueskyEnv  # noqa: PLC0415 - env imports us
 
-    def on_episode_loaded(self, episode_spec: EpisodeSpec) -> None: ...
-
-    def on_episode_reset(
-        self,
-        *,
-        seed: int | None,
-        options: EnvOptions | None,
-    ) -> None: ...
-
-    def on_before_spawn(self) -> None: ...
-
-    def on_after_spawn(self, *, rng: np.random.Generator) -> None: ...
-
-    def on_before_step(self) -> None: ...
-
-    def on_sim_step(self) -> None: ...
-
-    def on_agent_action(self, idx: int, action: Any) -> bool: ...
-
-    def on_aircraft_spawned(
-        self,
-        callsign: Callsign,
-        route: list[str] | None,
-    ) -> None: ...
-
-    def define_initial_aircraft_control_state(
-        self,
-        callsign: Callsign,
-        route: list[str] | None,
-    ) -> AircraftControlState: ...
-
-    def on_agent_done(
-        self,
-        acid: Callsign,
-        info: BaseAgentInfo,
-        *,
-        terminated: bool,
-        truncated: bool,
-    ) -> AircraftControlState: ...
-
-    def on_before_agent_contexts(self) -> None: ...
-
-    def define_agent_context(self, acid: Callsign, acidx: int) -> object: ...
-
-    def reward(
-        self,
-        obs,
-        action,
-        terminated,
-        truncated,
-        context,
-        info,
-        rng,
-    ) -> float: ...
-
-    def terminated(self, obs, action, context, info, rng) -> bool: ...
-
-    def truncated(self, obs, action, context, info, rng) -> bool: ...
-
-
-# The hook names ``TaskHooks`` declares, checked once per construction so a
-# class that is missing them fails where it is built rather than part-way
-# through ``reset``. ``__protocol_attrs__`` is a typing implementation detail,
-# so derive the same set from the Protocol's own namespace if it disappears.
-_TASK_HOOK_NAMES: frozenset[str] = frozenset(
-    getattr(TaskHooks, "__protocol_attrs__", None)
-    or {
+    return frozenset(
         name
-        for name in vars(TaskHooks)
-        if not name.startswith("_") and callable(getattr(TaskHooks, name, None))
-    }
-)
+        for name in dir(BlueskyEnv)
+        if getattr(getattr(BlueskyEnv, name, None), "__overridable__", False)
+    )
 
 
 class BlueskyBaseEnvironment(ParallelEnv):
@@ -283,14 +221,14 @@ class BlueskyBaseEnvironment(ParallelEnv):
             raise TypeError(f"config must be EnvConfig, got {type(config)!r}")
         self.config = copy.deepcopy(config)
 
-        missing = sorted(name for name in _TASK_HOOK_NAMES if not hasattr(self, name))
+        missing = sorted(n for n in _task_hook_names() if not hasattr(self, n))
         if missing:
             raise TypeError(
                 f"{type(self).__name__} does not implement the task hooks "
                 f"{missing}. Subclass BlueskyEnv, which supplies defaults for "
                 "all of them, rather than BlueskyBaseEnvironment directly."
             )
-        self._hooks = cast(TaskHooks, self)
+        self._hooks = cast("BlueskyEnv", self)
 
         self._aircraft_spawn_time: dict[str, float] = {}
         self._agent_context_cache: dict[str, AgentStepContext] = {}

@@ -303,13 +303,13 @@ class _EmptyScenario:
 
 
 def test_base_env_rejects_a_class_with_no_task_hooks(monkeypatch):
-    """``self._hooks = cast(TaskHooks, self)`` is an unverified claim.
+    """``self._hooks = cast("BlueskyEnv", self)`` is an unverified claim.
 
     ``BlueskyBaseEnvironment`` deliberately defines none of the hooks - they
     live on ``BlueskyEnv`` - so constructing the base directly used to succeed
     and then die part-way through ``reset`` with a bare AttributeError. The
-    cast suppresses exactly the warning that would have caught it, and the
-    project runs no type checker, so the check has to be at runtime.
+    cast is resolved under ``TYPE_CHECKING`` and the project runs no type
+    checker, so the check has to be at runtime.
     """
     monkeypatch.setattr(
         config_module, "_available_aircraft", lambda _model: frozenset({"b744"})
@@ -326,7 +326,7 @@ def test_blueskyenv_satisfies_every_declared_hook(monkeypatch):
     env = BlueskyEnv(scenario=_EmptyScenario(), config=_empty_config())
     try:
         assert env._hooks is env  # the cast is an alias, not an indirection
-        assert not [n for n in base_env._TASK_HOOK_NAMES if not hasattr(env, n)]
+        assert not [n for n in base_env._task_hook_names() if not hasattr(env, n)]
     finally:
         env.close()
 
