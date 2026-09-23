@@ -613,9 +613,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         commit: bool = True,
     ) -> None:
         """Replace one aircraft route through the bound BlueSky runtime."""
-        resolved_route = self._spawn_generator.resolve_route(
-            callsign, route, self._rng
-        )
+        resolved_route = self._spawn_generator.resolve_route(callsign, route, self._rng)
         self._runtime.replace_aircraft_route(
             callsign,
             None if resolved_route is None else resolved_route.targets,

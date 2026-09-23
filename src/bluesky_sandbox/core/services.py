@@ -318,7 +318,9 @@ class ObservationAssembler:
         critic_own_fields = config.critic_obs_fields or []
         critic_intr_fields = config.critic_intruder_obs_fields or []
         intr_specs, intruder_dim, intr_raw = _intruder_pack(intr_fields)
-        critic_own_specs, critic_own_dim, critic_own_raw = _ownship_pack(critic_own_fields)
+        critic_own_specs, critic_own_dim, critic_own_raw = _ownship_pack(
+            critic_own_fields
+        )
         critic_intr_specs, critic_intr_dim, critic_intr_raw = _intruder_pack(
             critic_intr_fields
         )
@@ -813,9 +815,7 @@ class QueryStateMonitor:
                 np.where(finite_alt, abs_alt_diff, math.inf),
                 out=self._waypoint_min_abs_alt_diff_ft[:, col],
             )
-            self._waypoint_satisfied_step_substeps[:, col] += satisfied.astype(
-                np.int32
-            )
+            self._waypoint_satisfied_step_substeps[:, col] += satisfied.astype(np.int32)
             self._waypoint_satisfied_total_s[:, col] += (
                 satisfied.astype(np.float64) * simdt
             )
@@ -898,7 +898,6 @@ class QueryStateMonitor:
         ) = self._waypoint_target_arrays(col, queryable, route_indices, n)
 
         qdr_deg, distance_nm = qdrdist(lat_deg, lon_deg, target_lat, target_lon)
-        del qdr_deg, trk_deg, cas_kts
         alt_diff_ft = alt_ft - target_alt_ft
         within_lateral = (
             np.ones(n, dtype=bool)
@@ -908,13 +907,17 @@ class QueryStateMonitor:
         within_altitude = (
             np.ones(n, dtype=bool)
             if target.alt_tolerance_ft is None
-            else np.isnan(target_alt_ft) | (np.abs(alt_diff_ft) <= target.alt_tolerance_ft)
+            else np.isnan(target_alt_ft)
+            | (np.abs(alt_diff_ft) <= target.alt_tolerance_ft)
         )
         # Speed constraint per aircraft, regime-aware (Mach above the CAS/Mach
         # crossover, CAS below) via the shared helper, so the dwell-tracking mask
         # agrees with current_state and stays well-defined for any sampled target.
         within_speed = np.ones(n, dtype=bool)
-        if target.speed_tolerance_kts is not None or target.speed_tolerance_mach is not None:
+        if (
+            target.speed_tolerance_kts is not None
+            or target.speed_tolerance_mach is not None
+        ):
             within_speed = within_speed_tolerance_many(
                 n,
                 target_speed_kts * kts,
@@ -1199,9 +1202,7 @@ class TrafficMonitor:
         current_ids = tuple(str(acid) for acid in bs.traf.id)
         if current_ids == self._aircraft_ids:
             if reset_step:
-                self._conflict_step_partners = [
-                    None for _acid in self._aircraft_ids
-                ]
+                self._conflict_step_partners = [None for _acid in self._aircraft_ids]
                 self._los_step_partners = [None for _acid in self._aircraft_ids]
             return
 
@@ -1248,7 +1249,10 @@ class TrafficMonitor:
     def _current_partner_lists(
         self,
     ) -> tuple[tuple[tuple[str, ...], ...], tuple[tuple[str, ...], ...]]:
-        if self._current_conflict_partners is None or self._current_los_partners is None:
+        if (
+            self._current_conflict_partners is None
+            or self._current_los_partners is None
+        ):
             conf_partners, los_partners = self._build_current_partner_sets()
             self._current_conflict_partners = tuple(
                 () if partners is None else tuple(sorted(partners))
@@ -1264,9 +1268,7 @@ class TrafficMonitor:
         self,
     ) -> tuple[list[set[str] | None], list[set[str] | None]]:
         self._sync_aircraft_rows(reset_step=False)
-        conf_partners: list[set[str] | None] = [
-            None for _acid in self._aircraft_ids
-        ]
+        conf_partners: list[set[str] | None] = [None for _acid in self._aircraft_ids]
         los_partners: list[set[str] | None] = [None for _acid in self._aircraft_ids]
         for a, b in bs.traf.cd.confpairs:
             row = self._aircraft_index.get(str(a))
@@ -1329,7 +1331,8 @@ class AgentInfoBuilder:
                 "type": traf.type[acidx],
                 "performance_model": config.performance_model,
                 "phase": traf.perf.phase[acidx],
-                "time_in_env": sim_time - aircraft_spawn_time.get(
+                "time_in_env": sim_time
+                - aircraft_spawn_time.get(
                     acid,
                     sim_time,
                 ),
@@ -1338,8 +1341,7 @@ class AgentInfoBuilder:
                 "autopilot": {
                     "lnav": bool(traf.swlnav[acidx]),
                     "vnav": bool(traf.swvnav[acidx]),
-                    "lnav_vnav": bool(traf.swlnav[acidx])
-                    and bool(traf.swvnav[acidx]),
+                    "lnav_vnav": bool(traf.swlnav[acidx]) and bool(traf.swvnav[acidx]),
                 },
                 "substeps": traffic_monitor.substep_count,
                 "separation": traffic_monitor.build_separation_info(acid, acidx),

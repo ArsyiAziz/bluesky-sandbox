@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import TypeAlias
 
 import numpy as np
@@ -379,40 +379,9 @@ class CircularNormalizer(Normalizer):
         return 2
 
 
-class PerFieldNormalizer(Normalizer):
-    """Apply a different normalizer per field, with an optional default."""
-
-    def __init__(
-        self,
-        field_map: Mapping[str | FieldLike, Normalizer],
-        default: Normalizer | None = None,
-    ) -> None:
-        self._map = {_field_key(k): v for k, v in field_map.items()}
-        self._default = default or RawNormalizer()
-
-    def _strategy(self, field: str | FieldLike) -> Normalizer:
-        return self._map.get(_field_key(field), self._default)
-
-    def normalize(self, field, value, idx):
-        return self._strategy(field).normalize(field, value, idx)
-
-    def denormalize(self, field, value, idx):
-        return self._strategy(field).denormalize(field, value, idx)
-
-    def output_size(self, field):
-        return self._strategy(field).output_size(field)
-
-    def output_bounds(self, field):
-        return self._strategy(field).output_bounds(field)
-
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _field_key(field: str | FieldLike) -> str:
-    return field.meta.name if hasattr(field, "meta") else str(field)
-
 
 def _static_or_custom_bounds(field: FieldLike) -> tuple[float, float] | None:
     if field.bounds_overridden:

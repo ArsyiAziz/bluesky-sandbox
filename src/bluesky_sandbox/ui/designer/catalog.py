@@ -286,9 +286,8 @@ def normalizers() -> list[dict[str, Any]]:
     """Normalizer strategies constructible from a spec.
 
     Derived by introspection like the field catalogs: every concrete
-    ``Normalizer`` subclass whose constructor has no required parameters.
-    (``PerFieldNormalizer`` needs a field map, so it is code-composition only
-    and drops out of the palette naturally.)
+    ``Normalizer`` subclass whose constructor has no required parameters, so a
+    strategy needing hand-built arguments drops out of the palette naturally.
     """
     out = []
     for cls in _concrete_subclasses(_normalizers, _normalizers.Normalizer):

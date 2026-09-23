@@ -432,58 +432,6 @@ def test_scalar_denormalize_rejects_a_multi_value_action(normalizer):
         normalizer.denormalize(field, [0.1, 0.2], 0)
 
 
-# ---- PerFieldNormalizer --------------------------------------------------- #
-
-
-def test_per_field_dispatches_on_the_field_meta_name_not_the_class_name():
-    """Keying by class name silently falls through to the default, which is the
-    easy mistake to make - ``HdgDeg`` is ``'hdg_deg'``."""
-    field = observations.HdgDeg(low=0.0, high=360.0)
-    assert field.meta.name == "hdg_deg"
-
-    by_meta = nz.PerFieldNormalizer({field.meta.name: nz.CircularNormalizer()})
-    assert by_meta.output_size(field) == 2
-
-    by_class = nz.PerFieldNormalizer({"HdgDeg": nz.CircularNormalizer()})
-    assert by_class.output_size(field) == 1  # fell through to RawNormalizer
-
-
-def test_per_field_falls_back_to_raw_for_unmapped_fields():
-    mapped = observations.HdgDeg(low=0.0, high=360.0)
-    unmapped = observations.LatDeg(low=-10.0, high=10.0)
-    per_field = nz.PerFieldNormalizer({mapped.meta.name: nz.MinMaxNormalizer()})
-    assert per_field.normalize(mapped, 90.0, 0) == pytest.approx([0.25])
-    assert per_field.normalize(unmapped, 7.0, 0) == pytest.approx([7.0])
-
-
-def test_per_field_normalize_many_agrees_with_its_delegate():
-    """``PerFieldNormalizer`` inherits the base fallback rather than overriding
-    it; the fallback still has to route through the mapped strategy."""
-    field = observations.LatDeg(low=-10.0, high=10.0)
-    per_field = nz.PerFieldNormalizer({field.meta.name: nz.MinMaxNormalizer()})
-    values = [-10.0, -5.0, 0.0, 5.0, 10.0]
-    np.testing.assert_allclose(
-        np.asarray(per_field.normalize_many(field, values, 0)).reshape(-1),
-        [0.0, 0.25, 0.5, 0.75, 1.0],
-        atol=1e-6,
-    )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="is_circular is a class attribute, so PerFieldNormalizer cannot "
-    "answer it per field; the predicate needs a field argument",
-)
-def test_per_field_reports_circular_for_a_circularly_mapped_field():
-    """``is_circular`` tells a trainer to put a von Mises on the action slot
-    instead of a Beta over the square. Reporting False for a field that really
-    is circular parks the radius near zero, where angular sensitivity explodes.
-    """
-    field = observations.HdgDeg(low=0.0, high=360.0)
-    per_field = nz.PerFieldNormalizer({field.meta.name: nz.CircularNormalizer()})
-    assert per_field.is_circular
-
-
 # ---- the services layer that calls all of this ---------------------------- #
 
 

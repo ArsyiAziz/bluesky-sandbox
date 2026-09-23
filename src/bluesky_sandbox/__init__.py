@@ -66,7 +66,6 @@ from bluesky_sandbox.interface.wrappers import (
     CircularNormalizer,
     MinMaxNormalizer,
     Normalizer,
-    PerFieldNormalizer,
     RawNormalizer,
     SymmetricNormalizer,
 )
@@ -169,7 +168,6 @@ __all__ = [
     "ObsMeta",
     "ObsQuantity",
     "PairObsField",
-    "PerFieldNormalizer",
     "PolygonFootprint",
     "QueryRegion",
     "Queryable",
