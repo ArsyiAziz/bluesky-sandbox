@@ -364,12 +364,6 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._wind.reset()
         self.episode_spec = self.scenario.sample(self._rng)
         normalize_spawn_aircraft_types(self.config, self.episode_spec.spawn)
-        # Per-aircraft sampled queryables accumulate per-callsign targets within an
-        # episode; clear them so a re-used scenario object starts fresh each reset.
-        for queryable in self.episode_queryables.values():
-            reset_episode = getattr(queryable, "reset_episode", None)
-            if callable(reset_episode):
-                reset_episode()
         self._hooks.on_episode_reset(seed=seed, options=options)
         self._hooks.on_episode_loaded(self.episode_spec)
 
