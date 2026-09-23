@@ -2022,6 +2022,16 @@ class PrevActionNorm(_LastActionBacked, ObsField):
             raise ValueError("PrevActionNorm.dim must be >= 1")
         if self.offset < 0:
             raise ValueError("PrevActionNorm.offset must be >= 0")
+        if self.normalizer is not None:
+            # The stored value is the policy's own output, already in action
+            # space - scaling it a second time would measure it against bounds
+            # it was never drawn from. Bounds here are also per-component (one
+            # pair per exposed action slot), which a scalar Normalizer has no
+            # way to reduce to a single span.
+            raise ValueError(
+                "PrevActionNorm carries the policy's action, already in action "
+                "space; leave normalizer unset."
+            )
 
     def output_size(self) -> int:
         return self.dim

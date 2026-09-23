@@ -64,8 +64,22 @@ class Normalizer(ABC):
     output_interval: tuple[float, float] | None = None
 
     def _bounds(self, field: FieldLike, idx: int) -> tuple[float, float]:
-        """Resolve ``(low, high)`` for a configured field object."""
-        return field.bounds(idx)
+        """Resolve ``(low, high)`` for a configured field object.
+
+        A field with per-component bounds has no single span to scale against.
+        Letting one through produces a value as wide as the bounds array while
+        ``output_size`` still reports 1, and that only surfaces later, as a
+        ragged row when the observation is concatenated - far from the field
+        that caused it. Fail here, naming it.
+        """
+        low, high = field.bounds(idx)
+        if np.ndim(low) or np.ndim(high):
+            raise TypeError(
+                f"{field.meta.name!r} has per-component bounds, so "
+                f"{self.__class__.__name__} has no single span to scale "
+                "against. Attach the normalizer to a scalar field, or none."
+            )
+        return low, high
 
     def _clip(self, value):
         """Hold a normalized value to :attr:`output_interval`.

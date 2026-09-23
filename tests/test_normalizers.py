@@ -96,11 +96,11 @@ _EXTRA_KWARGS = {
     },
 }
 
-# Multi-output fields: ``bounds()`` returns arrays, one entry per component, so
-# the scalar ``Normalizer`` contract does not apply. ``services`` rejects the
-# pairing for a genuinely multi-component field - see
-# ``test_scalar_normalizer_on_a_multi_output_field_is_rejected`` for the case
-# where it does not.
+# Multi-output fields: ``bounds()`` returns one pair per component, so the
+# scalar ``Normalizer`` contract does not apply and the sweep cannot measure
+# them. That the pairing is *refused* is pinned separately, by
+# ``test_per_component_bounds_are_refused_by_name`` and
+# ``test_prev_action_norm_refuses_a_normalizer``.
 _MULTI_OUTPUT = frozenset({"FlightPhaseOneHot", "PrevActionNorm"})
 
 
@@ -499,19 +499,28 @@ def test_services_rejects_an_action_of_the_wrong_width():
         services._denormalize_action_value(field, [0.1, 0.2], 0)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="PrevActionNorm.bounds() returns arrays, so normalize() emits a "
-    "nested [array([x])] and the assembled row is ragged",
+def test_prev_action_norm_refuses_a_normalizer():
+    """It stores the policy's own output, already in action space. Scaling it
+    again measures it against bounds it was never drawn from - and its bounds
+    are per-component, so the result used to be a nested ``[array([x])]``
+    against a declared width of 1."""
+    with pytest.raises(ValueError, match="already in action space"):
+        observations.PrevActionNorm(normalizer=nz.MinMaxNormalizer())
+
+
+@pytest.mark.parametrize("sample", SAMPLES, ids=SAMPLE_IDS)
+@pytest.mark.parametrize(
+    "cls", [observations.FlightPhaseOneHot], ids=["FlightPhaseOneHot"]
 )
-def test_scalar_normalizer_on_a_multi_output_field_is_rejected():
-    """Either the pairing raises, or it produces a flat value of the declared
-    width. Today it does neither: ``services`` returns ``[array([0.65])]``
-    while ``_field_output_size`` reports 1.
-    """
-    field = observations.PrevActionNorm(normalizer=nz.MinMaxNormalizer())
-    out = services._normalize_field_value(field, 0.3, 0)
-    assert np.asarray(out).shape == (services._field_output_size(field),)
+def test_per_component_bounds_are_refused_by_name(cls, sample):
+    """The general guard behind the specific one: any field whose bounds are
+    per-component fails in the normalizer that cannot scale it, naming the
+    field, rather than producing a row that goes ragged at concatenation."""
+    if isinstance(sample.normalizer, (nz.RawNormalizer, nz.CircularNormalizer)):
+        pytest.skip(f"{sample.name} is range-independent and never reads bounds")
+    field = cls(normalizer=sample.normalizer)
+    with pytest.raises(TypeError, match="per-component bounds"):
+        sample.normalizer.normalize(field, 0.5, 0)
 
 
 @pytest.mark.parametrize("sample", SAMPLES, ids=SAMPLE_IDS)
