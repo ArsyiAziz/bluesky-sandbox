@@ -9,11 +9,14 @@ that does the work unconditionally, every substep - the algorithm as it was.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import bluesky as bs
 import numpy as np
 import pytest
 
 from bluesky_sandbox.config import EnvConfig
+from bluesky_sandbox.core import services
 from bluesky_sandbox.core.services import TrafficMonitor
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
@@ -32,7 +35,7 @@ class _RecomputeEverySubstep(TrafficMonitor):
     def record_substep(self) -> None:
         self.substep_count += 1
         simdt = float(self.env.config.simdt)
-        self._sync_aircraft_rows(reset_step=False)
+        self._sync_rows()
         conf_partners, los_partners = self._build_current_partner_sets()
         self._current_conflict_partners = tuple(
             () if p is None else tuple(sorted(p)) for p in conf_partners
@@ -40,15 +43,15 @@ class _RecomputeEverySubstep(TrafficMonitor):
         self._current_los_partners = tuple(
             () if p is None else tuple(sorted(p)) for p in los_partners
         )
-        n = len(self._aircraft_ids)
+        n = len(self._table)
         inconf = np.asarray(bs.traf.cd.inconf, dtype=bool)[:n]
         if inconf.size < n:
             inconf = np.pad(inconf, (0, n - inconf.size), constant_values=False)
-        self._conflict_step_substeps += inconf.astype(np.int32)
-        self._conflict_total_s += inconf.astype(np.float64) * simdt
+        self._table["conflict_step_substeps"] += inconf.astype(np.int32)
+        self._table["conflict_total_s"] += inconf.astype(np.float64) * simdt
         los_mask = np.array([bool(p) for p in los_partners], dtype=bool)
-        self._los_step_substeps += los_mask.astype(np.int32)
-        self._los_total_s += los_mask.astype(np.float64) * simdt
+        self._table["los_step_substeps"] += los_mask.astype(np.int32)
+        self._table["los_total_s"] += los_mask.astype(np.float64) * simdt
         for store, current in (
             (self._conflict_step_partners, conf_partners),
             (self._los_step_partners, los_partners),
@@ -181,7 +184,8 @@ def test_a_waypoint_reach_is_still_recorded_when_the_route_walk_is_skipped():
     def record_substep():
         real_record()
         # Unconditional reference for the one column under test.
-        n = len(monitor._aircraft_ids)
+        table = monitor._table
+        n = len(table)
         reached_rows = np.zeros(n, dtype=bool)
         idx = np.asarray(tuple(bs.traf.ap.idxreached), dtype=np.int64)
         reached_rows[idx[(idx >= 0) & (idx < n)]] = True
@@ -195,9 +199,9 @@ def test_a_waypoint_reach_is_still_recorded_when_the_route_walk_is_skipped():
         )
         swlnav = np.asarray(bs.traf.swlnav, dtype=bool)[:n]
         just_reached = np.where(swlnav, active - 1, active)
-        route_indices = monitor._route_indices[:, monitor._queryable_index["merge"]]
+        route_indices = table["route_index"][:, table.col["merge"]]
         for row in np.flatnonzero(reached_rows & (route_indices == just_reached)):
-            acid = monitor._aircraft_ids[row]
+            acid = table.ids[row]
             expected[acid] = expected.get(acid, 0) + 1
 
     monitor.begin_step = begin_step
@@ -205,16 +209,36 @@ def test_a_waypoint_reach_is_still_recorded_when_the_route_walk_is_skipped():
     reaches = 0
     try:
         env.reset(seed=0)
-        col = monitor._tracked_index["merge"]
+        table = monitor._table
+        col = table.col["merge"]
         for _ in range(10):
             env.step({})
+            reached = table["reached_step_substeps"]
             got = {
-                acid: int(monitor._waypoint_reached_step_substeps[row, col])
-                for row, acid in enumerate(monitor._aircraft_ids)
-                if monitor._waypoint_reached_step_substeps[row, col]
+                acid: int(reached[row, col])
+                for row, acid in enumerate(table.ids)
+                if reached[row, col]
             }
             assert got == expected
             reaches += sum(got.values())
     finally:
         env.close()
     assert reaches > 0, "no aircraft reached the waypoint; the test proved nothing"
+
+
+def test_step_partners_follow_their_aircraft_when_another_leaves(monkeypatch):
+    # The equivalence test above cannot see this: its reference inherits the
+    # same row sync. So pin it directly - partner sets are kept beside the
+    # table and must be carried by callsign, like the table's own arrays.
+    traf = SimpleNamespace(id=["A", "B", "C"])
+    monkeypatch.setattr(services.bs, "traf", traf)
+    monitor = TrafficMonitor()
+    monitor.begin_step()
+    monitor._conflict_step_partners[0] = {"C"}
+    monitor._los_step_partners[2] = {"A"}
+
+    traf.id = ["C", "A"]  # B leaves mid-step, and the order changes
+    monitor._sync_rows()
+
+    assert monitor._conflict_step_partners == [None, {"C"}]
+    assert monitor._los_step_partners == [{"A"}, None]

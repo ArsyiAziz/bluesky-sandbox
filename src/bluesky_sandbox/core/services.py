@@ -11,6 +11,7 @@ from bluesky.tools.geo import qdrdist
 from gymnasium.spaces import Box, Dict, Sequence
 
 from bluesky_sandbox.config import EnvConfig
+from bluesky_sandbox.core.aircraft_table import AircraftTable, Column
 from bluesky_sandbox.interface.fields.base import (
     PairObsField,
     SwitchActionMixin,
@@ -479,54 +480,40 @@ class RenderableBuilder:
 
 
 class QueryStateMonitor:
-    """Track built-in queryable event state across simulator substeps."""
+    """Track built-in queryable event state across simulator substeps.
+
+    One :class:`AircraftTable` holds it: a row per aircraft, a column per
+    episode queryable. ``route_index`` is where each queryable sits on the
+    aircraft's BlueSky route. The rest is written only for queryables that
+    ``track_temporal_state``: ``held_*`` count the substeps a queryable's
+    predicate held - inside a region, a waypoint's constraints satisfied - and
+    the waypoint-only ``reached_*`` / ``min_*`` stay at their fills for regions.
+    """
 
     def __init__(self, env=None) -> None:
         self.env = env
-        self._aircraft_ids: tuple[str, ...] = ()
-        self._aircraft_index: dict[str, int] = {}
-        self._queryable_names: tuple[str, ...] = ()
-        self._queryable_index: dict[str, int] = {}
-        self._tracked_names: tuple[str, ...] = ()
-        self._tracked_queryables: tuple[object, ...] = ()
-        self._tracked_index: dict[str, int] = {}
-        self._tracked_region_cols: tuple[int, ...] = ()
-        self._tracked_waypoint_cols: tuple[int, ...] = ()
-        self._route_indices = np.full((0, 0), -1, dtype=np.int32)
-        self._region_total_s = np.zeros((0, 0), dtype=np.float64)
-        self._region_step_substeps = np.zeros((0, 0), dtype=np.int32)
-        self._waypoint_satisfied_total_s = np.zeros((0, 0), dtype=np.float64)
-        self._waypoint_satisfied_step_substeps = np.zeros((0, 0), dtype=np.int32)
-        self._waypoint_reached_step_substeps = np.zeros((0, 0), dtype=np.int32)
-        self._waypoint_min_distance_nm = np.full((0, 0), math.inf, dtype=np.float64)
-        self._waypoint_min_abs_alt_diff_ft = np.full(
-            (0, 0),
-            math.inf,
-            dtype=np.float64,
+        # (name, queryable) for each queryable that tracks temporal state.
+        self._tracked: tuple[tuple[str, object], ...] = ()
+        self._table = AircraftTable(
+            {
+                "route_index": Column(-1, np.int32),
+                "held_total_s": Column(0.0, np.float64),
+                "held_step_substeps": Column(0, np.int32, per_step=True),
+                "reached_step_substeps": Column(0, np.int32, per_step=True),
+                "min_distance_nm": Column(math.inf, np.float64, per_step=True),
+                "min_abs_alt_diff_ft": Column(math.inf, np.float64, per_step=True),
+            },
+            keyed_columns=True,
         )
         # Per-step route-target cache for substep dwell tracking:
-        # col -> ((aircraft ids, route-index bytes), target arrays).
-        self._waypoint_target_cache: dict[int, tuple[tuple, tuple]] = {}
+        # name -> ((aircraft ids, route-index bytes), target arrays).
+        self._waypoint_target_cache: dict[str, tuple[tuple, tuple]] = {}
 
     def bind_env(self, env) -> None:
         self.env = env
 
     def clear(self) -> None:
-        self._aircraft_ids = ()
-        self._aircraft_index = {}
-        self._route_indices = np.full(
-            (0, len(self._queryable_names)),
-            -1,
-            dtype=np.int32,
-        )
-        self._region_total_s = np.zeros(
-            (0, len(self._tracked_names)),
-            dtype=np.float64,
-        )
-        self._waypoint_satisfied_total_s = np.zeros(
-            (0, len(self._tracked_names)),
-            dtype=np.float64,
-        )
+        self._table.clear()
         self.begin_step()
 
     def set_aircraft_route(
@@ -535,215 +522,77 @@ class QueryStateMonitor:
         route_names: SequenceABC[str] | None,
     ) -> None:
         """Remember which BlueSky route index corresponds to each query name."""
-        self._ensure_queryable_index()
-        self._sync_aircraft_rows(reset_step=False)
-        row = self._aircraft_index.get(acid)
+        self._sync_layout()
+        row = self._table.row.get(acid)
         if row is None:
             return
-        self._route_indices[row, :] = -1
+        route_index = self._table["route_index"]
+        route_index[row, :] = -1
         if not route_names:
             return
-        for route_idx, name in enumerate(route_names):
-            col = self._queryable_index.get(name)
-            if col is not None and self._route_indices[row, col] < 0:
-                self._route_indices[row, col] = route_idx
+        for index, name in enumerate(route_names):
+            col = self._table.col.get(name)
+            if col is not None and route_index[row, col] < 0:
+                route_index[row, col] = index
 
     def clear_aircraft_route(self, acid: str) -> None:
-        row = self._aircraft_index.get(acid)
-        if row is not None and self._route_indices.size:
-            self._route_indices[row, :] = -1
+        row = self._table.row.get(acid)
+        if row is not None:
+            self._table["route_index"][row, :] = -1
 
     def _route_index(self, acid: str, name: str) -> int | None:
-        row = self._aircraft_index.get(acid)
-        col = self._queryable_index.get(name)
-        if row is None or col is None or self._route_indices.size == 0:
+        row = self._table.row.get(acid)
+        col = self._table.col.get(name)
+        if row is None or col is None:
             return None
-        route_idx = int(self._route_indices[row, col])
+        route_idx = int(self._table["route_index"][row, col])
         return route_idx if route_idx >= 0 else None
 
     def begin_step(self) -> None:
-        self._ensure_queryable_index()
-        self._ensure_tracked_queryables()
-        self._sync_aircraft_rows(reset_step=True)
+        self._sync_layout()
+        queryables = {} if self.env is None else self.env.episode_queryables
+        self._tracked = tuple(
+            (name, queryable)
+            for name, queryable in queryables.items()
+            if bool(getattr(queryable, "track_temporal_state", False))
+        )
+        self._table.reset_step()
         # Route targets may be edited by this step's actions (dispatched after
         # begin_step, before the substep loop) - rebuild lazily per step.
         self._waypoint_target_cache.clear()
 
-    def _ensure_queryable_index(self) -> None:
-        if self.env is None:
-            names: tuple[str, ...] = ()
-        else:
-            names = tuple(self.env.episode_queryables)
-        if names == self._queryable_names:
-            return
-        old_index = self._queryable_index
-        old_route_indices = self._route_indices
-        self._queryable_names = names
-        self._queryable_index = {name: col for col, name in enumerate(names)}
-        new_route_indices = np.full(
-            (len(self._aircraft_ids), len(names)),
-            -1,
-            dtype=np.int32,
-        )
-        for name, old_col in old_index.items():
-            new_col = self._queryable_index.get(name)
-            if new_col is not None and old_col < old_route_indices.shape[1]:
-                new_route_indices[:, new_col] = old_route_indices[:, old_col]
-        self._route_indices = new_route_indices
-
-    def _ensure_tracked_queryables(self) -> None:
-        if self.env is None:
-            names: tuple[str, ...] = ()
-            queryables: tuple[object, ...] = ()
-        else:
-            items = tuple(
-                (name, queryable)
-                for name, queryable in self.env.episode_queryables.items()
-                if bool(getattr(queryable, "track_temporal_state", False))
-            )
-            names = tuple(name for name, _queryable in items)
-            queryables = tuple(queryable for _name, queryable in items)
-        if names == self._tracked_names:
-            self._tracked_queryables = queryables
-            self._refresh_tracked_type_columns()
-            return
-        old_index = self._tracked_index
-        old_region_total_s = self._region_total_s
-        old_waypoint_satisfied_total_s = self._waypoint_satisfied_total_s
-        self._tracked_names = names
-        self._tracked_queryables = queryables
-        self._tracked_index = {name: col for col, name in enumerate(names)}
-        self._refresh_tracked_type_columns()
-        shape = (len(self._aircraft_ids), len(names))
-        self._region_total_s = np.zeros(shape, dtype=np.float64)
-        self._waypoint_satisfied_total_s = np.zeros(shape, dtype=np.float64)
-        for name, old_col in old_index.items():
-            new_col = self._tracked_index.get(name)
-            if new_col is None:
-                continue
-            if old_col < old_region_total_s.shape[1]:
-                self._region_total_s[:, new_col] = old_region_total_s[:, old_col]
-            if old_col < old_waypoint_satisfied_total_s.shape[1]:
-                self._waypoint_satisfied_total_s[:, new_col] = (
-                    old_waypoint_satisfied_total_s[:, old_col]
-                )
-        self._reset_step_arrays()
-
-    def _refresh_tracked_type_columns(self) -> None:
-        self._tracked_region_cols = tuple(
-            col
-            for col, queryable in enumerate(self._tracked_queryables)
-            if isinstance(queryable, QueryRegion)
-        )
-        self._tracked_waypoint_cols = tuple(
-            col
-            for col, queryable in enumerate(self._tracked_queryables)
-            if isinstance(queryable, Waypoint)
-        )
-
-    def _sync_aircraft_rows(self, *, reset_step: bool) -> None:
-        current_ids = tuple(bs.traf.id)
-        if current_ids == self._aircraft_ids:
-            if reset_step:
-                self._reset_step_arrays()
-            return
-
-        old_ids = self._aircraft_ids
-        old_index = self._aircraft_index
-        old_route_indices = self._route_indices
-        old_region_total_s = self._region_total_s
-        old_waypoint_satisfied_total_s = self._waypoint_satisfied_total_s
-        old_region_step_substeps = self._region_step_substeps
-        old_waypoint_satisfied_step_substeps = self._waypoint_satisfied_step_substeps
-        old_waypoint_reached_step_substeps = self._waypoint_reached_step_substeps
-        old_waypoint_min_distance_nm = self._waypoint_min_distance_nm
-        old_waypoint_min_abs_alt_diff_ft = self._waypoint_min_abs_alt_diff_ft
-
-        self._aircraft_ids = current_ids
-        self._aircraft_index = {acid: row for row, acid in enumerate(current_ids)}
-        route_shape = (len(current_ids), len(self._queryable_names))
-        tracked_shape = (len(current_ids), len(self._tracked_names))
-        self._route_indices = np.full(route_shape, -1, dtype=np.int32)
-        self._region_total_s = np.zeros(tracked_shape, dtype=np.float64)
-        self._waypoint_satisfied_total_s = np.zeros(tracked_shape, dtype=np.float64)
-        self._region_step_substeps = np.zeros(tracked_shape, dtype=np.int32)
-        self._waypoint_satisfied_step_substeps = np.zeros(tracked_shape, dtype=np.int32)
-        self._waypoint_reached_step_substeps = np.zeros(tracked_shape, dtype=np.int32)
-        self._waypoint_min_distance_nm = np.full(
-            tracked_shape,
-            math.inf,
-            dtype=np.float64,
-        )
-        self._waypoint_min_abs_alt_diff_ft = np.full(
-            tracked_shape,
-            math.inf,
-            dtype=np.float64,
-        )
-
-        for acid in old_ids:
-            old_row = old_index[acid]
-            new_row = self._aircraft_index.get(acid)
-            if new_row is None:
-                continue
-            if old_row < old_route_indices.shape[0]:
-                self._route_indices[new_row, :] = old_route_indices[old_row, :]
-            if old_row < old_region_total_s.shape[0]:
-                self._region_total_s[new_row, :] = old_region_total_s[old_row, :]
-            if old_row < old_waypoint_satisfied_total_s.shape[0]:
-                self._waypoint_satisfied_total_s[new_row, :] = (
-                    old_waypoint_satisfied_total_s[old_row, :]
-                )
-            if not reset_step and old_row < old_region_step_substeps.shape[0]:
-                self._region_step_substeps[new_row, :] = old_region_step_substeps[
-                    old_row,
-                    :,
-                ]
-                self._waypoint_satisfied_step_substeps[new_row, :] = (
-                    old_waypoint_satisfied_step_substeps[old_row, :]
-                )
-                self._waypoint_reached_step_substeps[new_row, :] = (
-                    old_waypoint_reached_step_substeps[old_row, :]
-                )
-                self._waypoint_min_distance_nm[new_row, :] = (
-                    old_waypoint_min_distance_nm[old_row, :]
-                )
-                self._waypoint_min_abs_alt_diff_ft[new_row, :] = (
-                    old_waypoint_min_abs_alt_diff_ft[old_row, :]
-                )
-
-    def _reset_step_arrays(self) -> None:
-        shape = (len(self._aircraft_ids), len(self._tracked_names))
-        self._region_step_substeps = np.zeros(shape, dtype=np.int32)
-        self._waypoint_satisfied_step_substeps = np.zeros(shape, dtype=np.int32)
-        self._waypoint_reached_step_substeps = np.zeros(shape, dtype=np.int32)
-        self._waypoint_min_distance_nm = np.full(
-            shape,
-            math.inf,
-            dtype=np.float64,
-        )
-        self._waypoint_min_abs_alt_diff_ft = np.full(
-            shape,
-            math.inf,
-            dtype=np.float64,
-        )
+    def _sync_layout(self) -> None:
+        """Columns to the episode's queryables, rows to BlueSky's aircraft."""
+        names = () if self.env is None else tuple(self.env.episode_queryables)
+        self._table.set_columns(names)
+        self._table.sync_rows(bs.traf.id)
 
     def record_substep(self) -> None:
         if self.env is None:
             raise RuntimeError("QueryStateMonitor env has not been set.")
-        if not self._tracked_queryables:
+        if not self._tracked:
             return
-        self._sync_aircraft_rows(reset_step=False)
+        table = self._table
+        table.sync_rows(bs.traf.id)
         simdt = float(self.env.config.simdt)
-        n = len(self._aircraft_ids)
+        n = len(table)
         if n == 0:
             return
 
         lat_deg = np.asarray(bs.traf.lat, dtype=np.float64)[:n]
         lon_deg = np.asarray(bs.traf.lon, dtype=np.float64)[:n]
         alt_ft = np.asarray(bs.traf.alt, dtype=np.float64)[:n] / ft
+        held_step = table["held_step_substeps"]
+        held_total = table["held_total_s"]
 
-        for col in self._tracked_region_cols:
-            queryable = self._tracked_queryables[col]
+        waypoints = []
+        for name, queryable in self._tracked:
+            col = table.col[name]
+            if isinstance(queryable, Waypoint):
+                waypoints.append((name, queryable, col))
+                continue
+            if not isinstance(queryable, QueryRegion):
+                continue
             inside = contains_many(queryable.bounds, lat_deg, lon_deg, alt_ft)
             if inside is None:
                 inside = np.fromiter(
@@ -751,10 +600,10 @@ class QueryStateMonitor:
                     dtype=bool,
                     count=n,
                 )
-            self._region_step_substeps[:, col] += inside.astype(np.int32)
-            self._region_total_s[:, col] += inside.astype(np.float64) * simdt
+            held_step[:, col] += inside.astype(np.int32)
+            held_total[:, col] += inside.astype(np.float64) * simdt
 
-        if not self._tracked_waypoint_cols:
+        if not waypoints:
             return
 
         cas_kts = np.asarray(bs.traf.cas, dtype=np.float64)[:n] / kts
@@ -789,21 +638,17 @@ class QueryStateMonitor:
                 swlnav, active_route_idx - 1, active_route_idx
             )
 
-        for col in self._tracked_waypoint_cols:
-            queryable = self._tracked_queryables[col]
-            name = self._tracked_names[col]
-            route_col = self._queryable_index.get(name)
-            route_indices = (
-                self._route_indices[:, route_col]
-                if route_col is not None and self._route_indices.size
-                else np.full(n, -1, dtype=np.int32)
-            )
+        min_distance = table["min_distance_nm"]
+        min_abs_alt = table["min_abs_alt_diff_ft"]
+        reached_step = table["reached_step_substeps"]
+        for name, queryable, col in waypoints:
+            route_indices = table["route_index"][:, col]
             (
                 distance_nm,
                 alt_diff_ft,
                 satisfied,
             ) = self._waypoint_tracking_arrays(
-                col,
+                name,
                 queryable,
                 route_indices,
                 lat_deg,
@@ -812,28 +657,22 @@ class QueryStateMonitor:
                 cas_kts,
                 trk_deg,
             )
-            np.minimum(
-                self._waypoint_min_distance_nm[:, col],
-                distance_nm,
-                out=self._waypoint_min_distance_nm[:, col],
-            )
+            np.minimum(min_distance[:, col], distance_nm, out=min_distance[:, col])
             abs_alt_diff = np.abs(alt_diff_ft)
             finite_alt = np.isfinite(abs_alt_diff)
             np.minimum(
-                self._waypoint_min_abs_alt_diff_ft[:, col],
+                min_abs_alt[:, col],
                 np.where(finite_alt, abs_alt_diff, math.inf),
-                out=self._waypoint_min_abs_alt_diff_ft[:, col],
+                out=min_abs_alt[:, col],
             )
-            self._waypoint_satisfied_step_substeps[:, col] += satisfied.astype(np.int32)
-            self._waypoint_satisfied_total_s[:, col] += (
-                satisfied.astype(np.float64) * simdt
-            )
+            held_step[:, col] += satisfied.astype(np.int32)
+            held_total[:, col] += satisfied.astype(np.float64) * simdt
             reached = reached_rows & (route_indices == just_reached_idx)
-            self._waypoint_reached_step_substeps[:, col] += reached.astype(np.int32)
+            reached_step[:, col] += reached.astype(np.int32)
 
     def _waypoint_target_arrays(
         self,
-        col: int,
+        name: str,
         queryable: Waypoint,
         route_indices: np.ndarray,
         n: int,
@@ -847,8 +686,8 @@ class QueryStateMonitor:
         the aircraft-id tuple and the route-index column, so mid-step spawns or
         route re-indexing rebuild it.
         """
-        key = (self._aircraft_ids, route_indices.tobytes())
-        cached = self._waypoint_target_cache.get(col)
+        key = (self._table.ids, route_indices.tobytes())
+        cached = self._waypoint_target_cache.get(name)
         if cached is not None and cached[0] == key:
             return cached[1]
 
@@ -883,12 +722,12 @@ class QueryStateMonitor:
                 math.nan if route_target.speed_kts is None else route_target.speed_kts
             )
         arrays = (target_lat, target_lon, target_alt_ft, target_speed_kts)
-        self._waypoint_target_cache[col] = (key, arrays)
+        self._waypoint_target_cache[name] = (key, arrays)
         return arrays
 
     def _waypoint_tracking_arrays(
         self,
-        col: int,
+        name: str,
         queryable: Waypoint,
         route_indices: np.ndarray,
         lat_deg: np.ndarray,
@@ -904,7 +743,7 @@ class QueryStateMonitor:
             target_lon,
             target_alt_ft,
             target_speed_kts,
-        ) = self._waypoint_target_arrays(col, queryable, route_indices, n)
+        ) = self._waypoint_target_arrays(name, queryable, route_indices, n)
 
         qdr_deg, distance_nm = qdrdist(lat_deg, lon_deg, target_lat, target_lon)
         alt_diff_ft = alt_ft - target_alt_ft
@@ -961,10 +800,10 @@ class QueryStateMonitor:
             current = queryable.contains_aircraft(acidx)
             event = self._event(
                 current,
-                self._aircraft_index.get(acid),
-                self._tracked_index.get(name),
-                self._region_step_substeps,
-                self._region_total_s,
+                self._table.row.get(acid),
+                self._table.col.get(name),
+                self._table["held_step_substeps"],
+                self._table["held_total_s"],
             )
             return RegionResult.for_aircraft(
                 queryable,
@@ -984,8 +823,9 @@ class QueryStateMonitor:
         name: str,
         queryable: Waypoint,
     ) -> WaypointResult:
-        row = self._aircraft_index.get(acid)
-        col = self._tracked_index.get(name)
+        table = self._table
+        row = table.row.get(acid)
+        col = table.col.get(name)
         route_idx = self._route_index(acid, name)
         target = (
             queryable.target_from_route(acidx, route_idx)
@@ -998,28 +838,28 @@ class QueryStateMonitor:
             current.satisfied,
             row,
             col,
-            self._waypoint_satisfied_step_substeps,
-            self._waypoint_satisfied_total_s,
+            table["held_step_substeps"],
+            table["held_total_s"],
         )
         reached = self._event(
             queryable.reached_during_substep(acidx, route_idx),
             row,
             col,
-            self._waypoint_reached_step_substeps,
+            table["reached_step_substeps"],
             None,
         )
         min_distance = (
-            float(self._waypoint_min_distance_nm[row, col])
+            float(table["min_distance_nm"][row, col])
             if row is not None
             and col is not None
-            and math.isfinite(float(self._waypoint_min_distance_nm[row, col]))
+            and math.isfinite(float(table["min_distance_nm"][row, col]))
             else current.distance_nm
         )
         min_abs_alt = (
-            float(self._waypoint_min_abs_alt_diff_ft[row, col])
+            float(table["min_abs_alt_diff_ft"][row, col])
             if row is not None
             and col is not None
-            and math.isfinite(float(self._waypoint_min_abs_alt_diff_ft[row, col]))
+            and math.isfinite(float(table["min_abs_alt_diff_ft"][row, col]))
             else abs(current.alt_diff_ft)
         )
         return WaypointResult.for_aircraft(
@@ -1077,12 +917,18 @@ class TrafficMonitor:
 
     def __init__(self, env=None) -> None:
         self.env = env
-        self._aircraft_ids: tuple[str, ...] = ()
-        self._aircraft_index: dict[str, int] = {}
-        self._conflict_step_substeps = np.zeros(0, dtype=np.int32)
-        self._los_step_substeps = np.zeros(0, dtype=np.int32)
-        self._conflict_total_s = np.zeros(0, dtype=np.float64)
-        self._los_total_s = np.zeros(0, dtype=np.float64)
+        self._table = AircraftTable(
+            {
+                "conflict_total_s": Column(0.0, np.float64),
+                "los_total_s": Column(0.0, np.float64),
+                "conflict_step_substeps": Column(0, np.int32, per_step=True),
+                "los_step_substeps": Column(0, np.int32, per_step=True),
+            }
+        )
+        # This step's partner callsigns, one entry per table row. Kept beside
+        # the table rather than in it: BlueSky reports partners as callsign
+        # strings and callers read them back as tuples, so an array would only
+        # add conversions both ways.
         self._conflict_step_partners: list[set[str] | None] = []
         self._los_step_partners: list[set[str] | None] = []
         self.substep_count = 0
@@ -1100,25 +946,17 @@ class TrafficMonitor:
         self.env = env
 
     def clear(self) -> None:
-        self._aircraft_ids = ()
-        self._aircraft_index = {}
-        self._conflict_total_s = np.zeros(0, dtype=np.float64)
-        self._los_total_s = np.zeros(0, dtype=np.float64)
-        # Substep accumulators must shrink with the ids: an episode that starts
-        # with zero live aircraft (deferred spawn_time) hits the empty==empty
-        # early-return in _sync_aircraft_rows, so stale-sized arrays from the
-        # previous episode would never be resized before use.
-        self._conflict_step_substeps = np.zeros(0, dtype=np.int32)
-        self._los_step_substeps = np.zeros(0, dtype=np.int32)
+        self._table.clear()
+        self._conflict_step_partners = []
+        self._los_step_partners = []
         self.begin_step()
 
     def begin_step(self) -> None:
         self.substep_count = 0
-        self._sync_aircraft_rows(reset_step=True)
-        self._conflict_step_substeps.fill(0)
-        self._los_step_substeps.fill(0)
-        self._conflict_step_partners = [None for _acid in self._aircraft_ids]
-        self._los_step_partners = [None for _acid in self._aircraft_ids]
+        self._sync_rows()
+        self._table.reset_step()
+        self._conflict_step_partners = [None] * len(self._table)
+        self._los_step_partners = [None] * len(self._table)
         self._current_conflict_partners = None
         self._current_los_partners = None
         # Rebuild on the first substep: the step partner sets were just wiped,
@@ -1129,20 +967,21 @@ class TrafficMonitor:
     def record_substep(self) -> None:
         self.substep_count += 1
         simdt = float(self.env.config.simdt) if self.env is not None else 0.0
-        self._sync_aircraft_rows(reset_step=False)
+        self._sync_rows()
 
         cd = bs.traf.cd
-        seen = (cd.confpairs, cd.lospairs, cd.inconf, self._aircraft_ids)
+        seen = (cd.confpairs, cd.lospairs, cd.inconf, self._table.ids)
         if self._cd_seen is None or any(
             now is not before for now, before in zip(seen, self._cd_seen)
         ):
             self._refresh_detection(simdt)
             self._cd_seen = seen
 
-        self._conflict_step_substeps += self._inc_conf
-        self._conflict_total_s += self._inc_conf_s
-        self._los_step_substeps += self._inc_los
-        self._los_total_s += self._inc_los_s
+        table = self._table
+        table["conflict_step_substeps"] += self._inc_conf
+        table["conflict_total_s"] += self._inc_conf_s
+        table["los_step_substeps"] += self._inc_los
+        table["los_total_s"] += self._inc_los_s
 
     def _refresh_detection(self, simdt: float) -> None:
         """Rebuild partners and per-substep increments from BlueSky's detector.
@@ -1161,7 +1000,7 @@ class TrafficMonitor:
             for partners in los_partners
         )
 
-        n = len(self._aircraft_ids)
+        n = len(self._table)
         inconf = np.asarray(bs.traf.cd.inconf, dtype=bool)[:n]
         if inconf.size < n:
             inconf = np.pad(inconf, (0, n - inconf.size), constant_values=False)
@@ -1196,7 +1035,8 @@ class TrafficMonitor:
         conf_partners, los_partners = self._current_partner_lists()
 
         simdt = float(self.env.config.simdt) if self.env is not None else 0.0
-        row = self._aircraft_index.get(acid)
+        table = self._table
+        row = table.row.get(acid)
         if row is None:
             conflict_substeps = 0
             los_substeps = 0
@@ -1207,10 +1047,10 @@ class TrafficMonitor:
             conflict_step_partners: tuple[str, ...] = ()
             los_step_partners: tuple[str, ...] = ()
         else:
-            conflict_substeps = int(self._conflict_step_substeps[row])
-            los_substeps = int(self._los_step_substeps[row])
-            conflict_total_s = float(self._conflict_total_s[row])
-            los_total_s = float(self._los_total_s[row])
+            conflict_substeps = int(table["conflict_step_substeps"][row])
+            los_substeps = int(table["los_step_substeps"][row])
+            conflict_total_s = float(table["conflict_total_s"][row])
+            los_total_s = float(table["los_total_s"][row])
             current_conflict_partners = conf_partners[row]
             current_los_partners = los_partners[row]
             conflict_step = self._conflict_step_partners[row]
@@ -1247,53 +1087,17 @@ class TrafficMonitor:
     def build_separation_info(self, acid: str, acidx: int) -> dict:
         return self.build_separation_context(acid, acidx).as_info()
 
-    def _sync_aircraft_rows(self, *, reset_step: bool) -> None:
-        current_ids = tuple(bs.traf.id)
-        if current_ids == self._aircraft_ids:
-            if reset_step:
-                self._conflict_step_partners = [None for _acid in self._aircraft_ids]
-                self._los_step_partners = [None for _acid in self._aircraft_ids]
+    def _sync_rows(self) -> None:
+        """Rows to BlueSky's aircraft, carrying the partner lists alongside."""
+        take = self._table.sync_rows(bs.traf.id)
+        if take is None:
             return
-
-        old_ids = self._aircraft_ids
-        old_index = self._aircraft_index
-        old_conflict_total_s = self._conflict_total_s
-        old_los_total_s = self._los_total_s
-        old_conflict_step_substeps = self._conflict_step_substeps
-        old_los_step_substeps = self._los_step_substeps
-        old_conflict_step_partners = self._conflict_step_partners
-        old_los_step_partners = self._los_step_partners
-
-        self._aircraft_ids = current_ids
-        self._aircraft_index = {acid: row for row, acid in enumerate(current_ids)}
-        n = len(current_ids)
-        self._conflict_total_s = np.zeros(n, dtype=np.float64)
-        self._los_total_s = np.zeros(n, dtype=np.float64)
-        self._conflict_step_substeps = np.zeros(n, dtype=np.int32)
-        self._los_step_substeps = np.zeros(n, dtype=np.int32)
-        self._conflict_step_partners = [None for _acid in current_ids]
-        self._los_step_partners = [None for _acid in current_ids]
-
-        for acid in old_ids:
-            old_row = old_index[acid]
-            new_row = self._aircraft_index.get(acid)
-            if new_row is None:
-                continue
-            self._conflict_total_s[new_row] = old_conflict_total_s[old_row]
-            self._los_total_s[new_row] = old_los_total_s[old_row]
-            if not reset_step:
-                self._conflict_step_substeps[new_row] = old_conflict_step_substeps[
-                    old_row
-                ]
-                self._los_step_substeps[new_row] = old_los_step_substeps[old_row]
-                old_conflict = old_conflict_step_partners[old_row]
-                old_los = old_los_step_partners[old_row]
-                self._conflict_step_partners[new_row] = (
-                    None if old_conflict is None else set(old_conflict)
-                )
-                self._los_step_partners[new_row] = (
-                    None if old_los is None else set(old_los)
-                )
+        self._conflict_step_partners = [
+            self._conflict_step_partners[i] if i >= 0 else None for i in take
+        ]
+        self._los_step_partners = [
+            self._los_step_partners[i] if i >= 0 else None for i in take
+        ]
 
     def _current_partner_lists(
         self,
@@ -1316,11 +1120,11 @@ class TrafficMonitor:
     def _build_current_partner_sets(
         self,
     ) -> tuple[list[set[str] | None], list[set[str] | None]]:
-        self._sync_aircraft_rows(reset_step=False)
-        conf_partners: list[set[str] | None] = [None for _acid in self._aircraft_ids]
-        los_partners: list[set[str] | None] = [None for _acid in self._aircraft_ids]
+        self._sync_rows()
+        conf_partners: list[set[str] | None] = [None] * len(self._table)
+        los_partners: list[set[str] | None] = [None] * len(self._table)
         for a, b in bs.traf.cd.confpairs:
-            row = self._aircraft_index.get(str(a))
+            row = self._table.row.get(str(a))
             if row is not None:
                 partners = conf_partners[row]
                 if partners is None:
@@ -1328,7 +1132,7 @@ class TrafficMonitor:
                 else:
                     partners.add(str(b))
         for a, b in bs.traf.cd.lospairs:
-            row = self._aircraft_index.get(str(a))
+            row = self._table.row.get(str(a))
             if row is not None:
                 partners = los_partners[row]
                 if partners is None:
