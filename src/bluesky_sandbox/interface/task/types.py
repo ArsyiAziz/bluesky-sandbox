@@ -336,6 +336,14 @@ class BaseAgentInfo(TypedDict):
     separation: SeparationInfo      # grouped conflict / LoS status
     task: TaskInfo                  # explicit task-owned public diagnostics
 
+    # Present only on the step an agent terminates or truncates. ``step``
+    # returns post-cleanup observations for the *next* policy step, so the
+    # agent's true terminal observation would otherwise be unrecoverable;
+    # replay buffers read it from here. Named after the Gymnasium vector-env
+    # convention. ``NotRequired`` because a live agent carries neither.
+    final_observation: NotRequired[BaseObs]
+    final_observation_agent_ids: NotRequired[tuple[str, ...]]
+
 
 class AchievedGoalFn(Protocol):
     """Return the achieved goal for one agent after a step."""
