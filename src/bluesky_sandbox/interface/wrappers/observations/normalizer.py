@@ -183,152 +183,185 @@ class RawNormalizer(Normalizer):
         return np.asarray(values, dtype=np.float64).reshape(-1, 1).astype(np.float32)
 
 
-class MinMaxNormalizer(Normalizer):
-    """Scale to ``[0, 1]`` using the field's bounds.
+class _ScaledNormalizer(Normalizer):
+    """Map the field's bounds onto :attr:`output_interval`, through a curve.
+
+    Every bounded strategy is this one shape: reduce the raw value to a unit
+    position ``u = (value - low) / span``, bend ``u`` with a curve, then place
+    the result in the output interval. Only the curve differs between
+    strategies, so that is all a subclass defines - :meth:`_curve` and its
+    inverse :meth:`_uncurve`, both on ``[0, 1]``.
+
+    ``output_interval`` is a constructor argument, defaulting to the class's
+    own. The range a strategy may emit is a property of the *policy head*
+    reading it, not of the curve underneath: a tanh head lives on
+    ``[-1, 1]``, a sigmoid on ``[0, 1]``, a von Mises on ``[-pi, pi]``. Any of
+    those can sit over any of these curves, so the two are separate choices.
+    """
+
+    def __init__(
+        self,
+        *,
+        clipped: bool = False,
+        output_interval: tuple[float, float] | None = None,
+    ) -> None:
+        self.clipped = clipped
+        if output_interval is not None:
+            self.output_interval = _validated_interval(
+                output_interval, type(self).__name__
+            )
+
+    @staticmethod
+    def _signed_pow(x, p):
+        """Signed power, for scalars and arrays alike."""
+        return np.copysign(np.abs(x) ** p, x)
+
+    def _curve(self, u):
+        """Bend a unit position. Identity unless a subclass says otherwise."""
+        return u
+
+    def _uncurve(self, c):
+        """Inverse of :meth:`_curve`."""
+        return c
+
+    def _place(self, c):
+        low, high = self.output_interval
+        return low + c * (high - low)
+
+    def _unplace(self, value):
+        low, high = self.output_interval
+        return (value - low) / (high - low)
+
+    def normalize(self, field, value, idx):
+        lo, _ = self._bounds(field, idx)
+        u = (value - lo) / self._span(field, idx)
+        return [float(self._clip(self._place(self._curve(u))))]
+
+    def normalize_many(self, field, values, idx):
+        lo, _ = self._bounds(field, idx)
+        u = (np.asarray(values, dtype=np.float64) - lo) / self._span(field, idx)
+        out = np.asarray(self._place(self._curve(u)), dtype=np.float64)
+        return self._clip(out).reshape(-1, 1).astype(np.float32)
+
+    def denormalize(self, field, value, idx):
+        u = self._uncurve(self._unplace(self._action_scalar(field, value)))
+        lo, _ = self._bounds(field, idx)
+        return lo + float(u) * self._span(field, idx)
+
+
+class MinMaxNormalizer(_ScaledNormalizer):
+    """Linear scaling, to ``[0, 1]`` by default.
 
     Difference pair fields should expose delta bounds directly; with bounds
     ``[-span, +span]`` this maps zero difference to ``0.5``.
+
+    Differs from :class:`SymmetricNormalizer` only in its default interval;
+    both are the identity curve. Pass ``output_interval`` to either for any
+    other range.
     """
 
     output_interval = (0.0, 1.0)
 
-    def __init__(self, *, clipped: bool = False) -> None:
-        self.clipped = clipped
 
-    def normalize(self, field, value, idx):
-        lo, _ = self._bounds(field, idx)
-        return [self._clip((value - lo) / self._span(field, idx))]
-
-    def normalize_many(self, field, values, idx):
-        lo, _ = self._bounds(field, idx)
-        out = (np.asarray(values, dtype=np.float64) - lo) / self._span(field, idx)
-        return self._clip(out).reshape(-1, 1).astype(np.float32)
-
-    def denormalize(self, field, value, idx):
-        lo, _ = self._bounds(field, idx)
-        return lo + self._action_scalar(field, value) * self._span(field, idx)
-
-
-class SymmetricNormalizer(Normalizer):
-    """Scale to ``[-1, 1]`` using the field's bounds.
+class SymmetricNormalizer(_ScaledNormalizer):
+    """Linear scaling, to ``[-1, 1]`` by default.
 
     Difference pair fields should expose delta bounds directly; with bounds
     ``[-span, +span]`` this maps to ``[-1, 1]``.
+
+    For a full-turn angle field, ``output_interval=(-math.pi, math.pi)`` gives
+    a scalar angle in radians on exactly the support of a von Mises - and the
+    identification at the interval's ends (``-pi`` and ``+pi`` are one sample)
+    lands on the field's own ends (``0`` and ``360`` are one heading), so the
+    wrap is consistent without any special handling. That is the scalar
+    alternative to :class:`CircularNormalizer`'s ``(cos, sin)`` pair, which
+    costs a second action slot to carry a magnitude ``atan2`` throws away.
     """
 
     output_interval = (-1.0, 1.0)
 
-    def __init__(self, *, clipped: bool = False) -> None:
-        self.clipped = clipped
 
-    def normalize(self, field, value, idx):
-        lo, _ = self._bounds(field, idx)
-        return [self._clip(2.0 * (value - lo) / self._span(field, idx) - 1.0)]
+class SignedPowerNormalizer(_ScaledNormalizer):
+    """Expo-style nonlinear scaling, to ``[-1, 1]`` by default: fine near the
+    centre, full authority at the extremes.
 
-    def normalize_many(self, field, values, idx):
-        lo, _ = self._bounds(field, idx)
-        span = self._span(field, idx)
-        out = 2.0 * (np.asarray(values, dtype=np.float64) - lo) / span - 1.0
-        return self._clip(out).reshape(-1, 1).astype(np.float32)
-
-    def denormalize(self, field, value, idx):
-        v = self._action_scalar(field, value)
-        lo, _ = self._bounds(field, idx)
-        return lo + ((v + 1.0) * 0.5) * self._span(field, idx)
-
-
-class SignedPowerNormalizer(Normalizer):
-    """Expo-style nonlinear scaling to ``[-1, 1]``: fine near the centre, full
-    authority at the extremes.
-
-    Maps the field's bounds to ``[-1, 1]`` like :class:`SymmetricNormalizer`, but
-    passes the value through a signed power curve so most of the range near the
-    centre resolves to *small* physical values while ``+/-1`` still reaches the
-    full bound. With symmetric delta bounds ``[-b, b]`` the centre is the
-    goal-seeking ``0`` action and ``denormalize(a) = sign(a) * |a|**power * b`` -
-    the policy gets fine control near ``0`` without capping the maximum maneuver.
+    Maps the field's bounds to the output interval like
+    :class:`SymmetricNormalizer`, but passes the value through a signed power
+    curve so most of the range near the centre resolves to *small* physical
+    values while the interval's ends still reach the full bound. With symmetric
+    delta bounds ``[-b, b]`` the centre is the goal-seeking ``0`` action and
+    ``denormalize(a) = sign(a) * |a|**power * b`` - the policy gets fine control
+    near ``0`` without capping the maximum maneuver.
 
     ``power > 1`` sharpens the curve (finer near the centre); ``power == 1``
     recovers the linear :class:`SymmetricNormalizer`.
     """
 
-    def __init__(self, *, power: float = 3.0, clipped: bool = False) -> None:
+    output_interval = (-1.0, 1.0)
+
+    def __init__(
+        self,
+        *,
+        power: float = 3.0,
+        clipped: bool = False,
+        output_interval: tuple[float, float] | None = None,
+    ) -> None:
         if power <= 0.0:
             raise ValueError(
                 f"SignedPowerNormalizer power must be > 0, got {power}."
             )
         self.power = float(power)
-        self.clipped = clipped
+        super().__init__(clipped=clipped, output_interval=output_interval)
 
-    output_interval = (-1.0, 1.0)
+    # Curve about the MIDPOINT of the unit interval, then back into [0, 1].
+    def _curve(self, u):
+        return 0.5 * (1.0 + self._signed_pow(2.0 * u - 1.0, 1.0 / self.power))
 
-    @staticmethod
-    def _signed_pow(x: float, p: float) -> float:
-        return math.copysign(abs(x) ** p, x)
-
-    def normalize(self, field, value, idx):
-        lo, _ = self._bounds(field, idx)
-        u = 2.0 * (value - lo) / self._span(field, idx) - 1.0  # linear -> [-1, 1]
-        return [self._clip(self._signed_pow(u, 1.0 / self.power))]  # inverse curve
-
-    def normalize_many(self, field, values, idx):
-        lo, _ = self._bounds(field, idx)
-        u = 2.0 * (np.asarray(values, dtype=np.float64) - lo) / self._span(field, idx) - 1.0
-        a = np.copysign(np.abs(u) ** (1.0 / self.power), u)
-        return self._clip(a).reshape(-1, 1).astype(np.float32)
-
-    def denormalize(self, field, value, idx):
-        v = self._action_scalar(field, value)
-        u = self._signed_pow(v, self.power)                    # compress toward centre
-        lo, _ = self._bounds(field, idx)
-        return lo + (u + 1.0) * 0.5 * self._span(field, idx)
+    def _uncurve(self, c):
+        return 0.5 * (1.0 + self._signed_pow(2.0 * c - 1.0, self.power))
 
 
-class PowerNormalizer(Normalizer):
-    """One-sided expo-style scaling to ``[0, 1]``: fine near ``low``, full
-    range at ``high``.
+class PowerNormalizer(_ScaledNormalizer):
+    """One-sided expo-style scaling, to ``[0, 1]`` by default: fine near
+    ``low``, full range at ``high``.
 
     The one-sided counterpart of :class:`SignedPowerNormalizer`: maps the
-    field's bounds to ``[0, 1]`` like :class:`MinMaxNormalizer`, but through a
-    power curve anchored at ``low`` -
+    field's bounds to the output interval like :class:`MinMaxNormalizer`, but
+    through a power curve anchored at ``low`` -
     ``normalize(v) = ((v - low) / span) ** (1/power)`` - so resolution
     concentrates near the *lower bound* instead of the interval midpoint.
     Suits magnitude-like quantities (ranges, times-to-go) whose
     decision-relevant band hugs ``low``: with ``power == 2`` a range field
-    resolves sqrt-fine near zero while ``1`` still reaches the full bound.
+    resolves sqrt-fine near zero while the interval's top still reaches the
+    full bound.
 
     ``power > 1`` sharpens the curve (finer near ``low``); ``power == 1``
     recovers the linear :class:`MinMaxNormalizer`. Below-``low`` values stay
     monotonic via a signed power (negative output) unless ``clipped``.
     """
 
-    def __init__(self, *, power: float = 2.0, clipped: bool = False) -> None:
+    output_interval = (0.0, 1.0)
+
+    def __init__(
+        self,
+        *,
+        power: float = 2.0,
+        clipped: bool = False,
+        output_interval: tuple[float, float] | None = None,
+    ) -> None:
         if power <= 0.0:
             raise ValueError(
                 f"PowerNormalizer power must be > 0, got {power}."
             )
         self.power = float(power)
-        self.clipped = clipped
+        super().__init__(clipped=clipped, output_interval=output_interval)
 
-    output_interval = (0.0, 1.0)
+    # Curve anchored at the BOTTOM of the unit interval.
+    def _curve(self, u):
+        return self._signed_pow(u, 1.0 / self.power)
 
-    def normalize(self, field, value, idx):
-        lo, _ = self._bounds(field, idx)
-        u = (value - lo) / self._span(field, idx)           # linear -> [0, 1]
-        a = math.copysign(abs(u) ** (1.0 / self.power), u)  # inverse curve
-        return [self._clip(a)]
-
-    def normalize_many(self, field, values, idx):
-        lo, _ = self._bounds(field, idx)
-        u = (np.asarray(values, dtype=np.float64) - lo) / self._span(field, idx)
-        a = np.copysign(np.abs(u) ** (1.0 / self.power), u)
-        return self._clip(a).reshape(-1, 1).astype(np.float32)
-
-    def denormalize(self, field, value, idx):
-        v = self._action_scalar(field, value)
-        u = math.copysign(abs(v) ** self.power, v)          # compress toward low
-        lo, _ = self._bounds(field, idx)
-        return lo + u * self._span(field, idx)
+    def _uncurve(self, c):
+        return self._signed_pow(c, self.power)
 
 
 class CircularNormalizer(Normalizer):
@@ -382,6 +415,26 @@ class CircularNormalizer(Normalizer):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _validated_interval(interval, owner: str) -> tuple[float, float]:
+    """Check a caller-supplied ``output_interval`` before it reaches arithmetic.
+
+    A degenerate or inverted interval divides by zero or silently flips the
+    sign of every action, and both would surface far from the constructor.
+    """
+    try:
+        low, high = (float(x) for x in interval)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{owner} output_interval must be a (low, high) pair, got "
+            f"{interval!r}."
+        ) from exc
+    if not high > low:
+        raise ValueError(
+            f"{owner} output_interval must have high > low, got ({low}, {high})."
+        )
+    return low, high
+
 
 def _static_or_custom_bounds(field: FieldLike) -> tuple[float, float] | None:
     if field.bounds_overridden:

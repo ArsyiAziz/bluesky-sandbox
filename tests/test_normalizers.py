@@ -162,6 +162,13 @@ SAMPLES = (
     # 360 exactly would round-trip to 0 - same angle, different number - so the
     # probe stops short of it.
     Sample("Circular", nz.CircularNormalizer(), (0.0, 360.0), (0.0, 45.0, 90.0, 180.0, 270.0)),
+    # A non-default interval, swept over every field like any other config.
+    Sample(
+        "SymmetricPi",
+        nz.SymmetricNormalizer(output_interval=(-math.pi, math.pi)),
+        (-10.0, 10.0),
+        (-10.0, -5.0, 0.0, 5.0, 10.0),
+    ),
 )
 SAMPLE_IDS = [s.name for s in SAMPLES]
 
@@ -389,6 +396,73 @@ def test_power_of_one_degenerates_to_its_linear_counterpart():
 
 
 # ---- guards and error messages -------------------------------------------- #
+
+
+# ---- the output interval is a free parameter ------------------------------ #
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        nz.MinMaxNormalizer,
+        nz.SymmetricNormalizer,
+        nz.SignedPowerNormalizer,
+        nz.PowerNormalizer,
+    ],
+    ids=["MinMax", "Symmetric", "SignedPower", "Power"],
+)
+def test_the_output_interval_can_be_chosen_per_instance(cls):
+    """The range a strategy emits belongs to the policy head reading it, not to
+    the curve underneath, so the two are configured separately."""
+    field = observations.LatDeg(low=-10.0, high=10.0)
+    interval = (-math.pi, math.pi)
+    normalizer = cls(output_interval=interval)
+
+    assert normalizer.output_interval == interval
+    low, high = normalizer.output_bounds(field)
+    assert (low[0], high[0]) == interval
+    # Endpoints map to endpoints whatever the curve in between.
+    assert normalizer.normalize(field, -10.0, 0)[0] == pytest.approx(-math.pi)
+    assert normalizer.normalize(field, 10.0, 0)[0] == pytest.approx(math.pi)
+
+
+def test_minmax_and_symmetric_differ_only_in_their_default_interval():
+    """Both are the identity curve, so giving one the other's interval makes
+    them indistinguishable - which is why the interval is a parameter rather
+    than a third class."""
+    field = observations.LatDeg(low=-10.0, high=10.0)
+    as_symmetric = nz.MinMaxNormalizer(output_interval=(-1.0, 1.0))
+    for value in (-10.0, -3.0, 0.0, 7.0, 10.0):
+        assert as_symmetric.normalize(field, value, 0) == pytest.approx(
+            nz.SymmetricNormalizer().normalize(field, value, 0)
+        )
+
+
+def test_a_full_turn_field_on_the_von_mises_support_round_trips():
+    """``[-pi, pi]`` is exactly a von Mises' support. The identification at the
+    interval's ends (-pi and +pi are one sample) lands on the field's own ends
+    (0 and 360 are one heading), so no wrapping is needed.
+    """
+    field = actions.HdgDeg(low=0.0, high=360.0)
+    normalizer = nz.SymmetricNormalizer(output_interval=(-math.pi, math.pi))
+    assert normalizer.output_size(field) == 1  # one slot, not Circular's two
+    assert normalizer.denormalize(field, [-math.pi], 0) == pytest.approx(0.0)
+    assert normalizer.denormalize(field, [math.pi], 0) == pytest.approx(360.0)
+    assert normalizer.denormalize(field, [0.0], 0) == pytest.approx(180.0)
+    for deg in (0.0, 37.0, 180.0, 359.0):
+        encoded = normalizer.normalize(field, deg, 0)
+        assert -math.pi <= encoded[0] <= math.pi
+        assert normalizer.denormalize(field, encoded, 0) == pytest.approx(deg)
+
+
+@pytest.mark.parametrize(
+    "interval", [(1.0, 1.0), (5.0, -5.0), 3.0, ("a", "b")], ids=["flat", "inverted", "scalar", "text"]
+)
+def test_a_degenerate_output_interval_is_rejected_at_construction(interval):
+    """Inverted silently flips the sign of every action; flat divides by zero.
+    Both would otherwise surface far from the constructor that caused them."""
+    with pytest.raises(ValueError, match="output_interval"):
+        nz.SymmetricNormalizer(output_interval=interval)
 
 
 @pytest.mark.parametrize("cls", [nz.SignedPowerNormalizer, nz.PowerNormalizer])
