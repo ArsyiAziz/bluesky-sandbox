@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import warnings
 
 import bluesky as bs
 import pytest
@@ -328,3 +329,48 @@ def test_blueskyenv_satisfies_every_declared_hook(monkeypatch):
         assert not [n for n in base_env._TASK_HOOK_NAMES if not hasattr(env, n)]
     finally:
         env.close()
+
+
+def test_task_shadowing_the_runtime_api_warns():
+    """``def step`` in a task reads like a hook and is not one.
+
+    The runtime and the hook surface share one MRO, so a task that defines
+    ``step`` / ``reset`` / ``render`` replaces the environment's own machinery
+    with nothing to say so. Warn at class definition, before anything runs.
+    """
+    with pytest.warns(RuntimeWarning, match=r"runtime API \['step'\]"):
+        type("ShadowingTask", (BlueskyEnv,), {"step": lambda self, actions: None})
+
+
+def test_shadowing_a_runtime_property_warns_too():
+    """Properties are the easier accident: ``rng`` looks like task state."""
+    with pytest.warns(RuntimeWarning, match=r"runtime API \['rng'\]"):
+        type("ShadowingRng", (BlueskyEnv,), {"rng": property(lambda self: None)})
+
+
+def test_hooks_and_new_helpers_are_silent():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        type(
+            "PlainTask",
+            (BlueskyEnv,),
+            {
+                "reward": lambda self, *a: 0.0,
+                "on_before_step": lambda self: None,
+                "my_own_helper": lambda self: 1,
+                # PettingZoo subclasses are expected to set this.
+                "metadata": {"name": "plain-v0"},
+            },
+        )
+
+
+def test_a_deliberate_override_can_be_declared():
+    """Extending ``close`` and calling ``super()`` is legitimate; let it say so."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class DeliberateTask(BlueskyEnv, allow_runtime_override={"close"}):
+            def close(self):
+                return super().close()
+
+    assert DeliberateTask.close is not BlueskyEnv.close

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import warnings
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -28,12 +29,62 @@ from bluesky_sandbox.interface.task import (
 from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
 
 
+# The runtime's public API, inherited from ``BlueskyBaseEnvironment``. These are
+# not task hooks: the environment calls them on itself, and because the two
+# classes share one MRO a subclass that defines one silently replaces machinery
+# rather than customising behaviour. Derived rather than hard-coded so it cannot
+# drift. ``metadata`` is excluded - PettingZoo subclasses are expected to set it.
+_RUNTIME_API: frozenset[str] = frozenset(
+    name for name in vars(BlueskyBaseEnvironment) if not name.startswith("_")
+) - {"metadata"}
+
+
 class BlueskyEnv(BlueskyBaseEnvironment):
     """Pythonic task-authoring base class for BlueSky environments.
 
     Subclasses define Python methods for task behavior and pass an explicit
     static ``EnvConfig`` plus a ``Scenario`` to this base class.
+
+    Override the ``@overridable`` hooks below. Overriding anything else this
+    class inherits warns, because the runtime API and the hook surface live on
+    one MRO - see :meth:`__init_subclass__`.
     """
+
+    def __init_subclass__(
+        cls,
+        allow_runtime_override: Iterable[str] = (),
+        **kwargs: Any,
+    ) -> None:
+        """Warn when a task shadows the runtime instead of a hook.
+
+        ``BlueskyBaseEnvironment`` holds the runtime and this class holds the
+        task hooks, but they are one MRO - so ``def step(self)`` in a task
+        reads like a hook and is actually an override of the PettingZoo entry
+        point, with no error to say so. This turns that into a warning at class
+        definition, before anything runs.
+
+        Deliberate overrides (extending ``close`` and calling ``super()``, say)
+        declare themselves::
+
+            class MyEnv(BlueskyEnv, allow_runtime_override={"close"}):
+                ...
+        """
+        super().__init_subclass__(**kwargs)
+        shadowed = sorted(
+            (_RUNTIME_API & set(vars(cls))) - set(allow_runtime_override)
+        )
+        if shadowed:
+            warnings.warn(
+                f"{cls.__name__} overrides the environment runtime API "
+                f"{shadowed}, which are not task hooks - the environment calls "
+                "them on itself, so overriding them will change or break how it "
+                "runs. Override an @overridable hook instead, or declare this "
+                "deliberate with "
+                f"`class {cls.__name__}(BlueskyEnv, allow_runtime_override="
+                f"{set(shadowed)!r})`.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     def __init__(
         self,
