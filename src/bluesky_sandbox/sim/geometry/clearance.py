@@ -32,6 +32,8 @@ from bluesky.tools.aero import ft, kts, nm, vcas2tas
 # in :func:`predicted_conflict`.
 from bluesky.tools.geo import kwikqdrdist, qdrdist
 
+from bluesky_sandbox.sim.weather import WindField
+
 from .conflict import cd_hpz_m, cd_lookahead_s, cd_rpz_m
 
 __all__ = ["inside_separation_zone", "predicted_conflict"]
@@ -85,8 +87,7 @@ def predicted_conflict(
     sep_nm: float | None = None,
     sep_ft: float | None = None,
     lookahead_s: float | None = None,
-    wind_kts: float = 0.0,
-    wind_dir_deg: float = 0.0,
+    wind: WindField | None = None,
 ) -> bool:
     """True if a candidate spawn state is in a predicted conflict.
 
@@ -102,8 +103,7 @@ def predicted_conflict(
     ``SpawnConfig.region_spawn_separation`` warns about it rather than silently
     obliging.
 
-    ``wind_kts`` / ``wind_dir_deg`` are the steady wind (the caller's
-    ``EnvConfig``); pass the mean field, not a gust - see below.
+    ``wind`` is the airspace's wind field; only its *mean* is used - see below.
     """
     n = int(bs.traf.ntraf)
     if n == 0:
@@ -118,13 +118,13 @@ def predicted_conflict(
     own_e, own_n = tas * np.sin(trk), tas * np.cos(trk)
     # Existing traffic velocities (``bs.traf.gs``) include the wind field; add
     # the mean wind to the candidate's air vector so both sides of the relative
-    # velocity are ground-referenced. Gusts are zero-mean and per-step, so the
-    # steady component is the right one to use here.
-    if float(wind_kts) > 0.0:
-        wind_ms = float(wind_kts) * kts
-        wind_rad = np.radians(float(wind_dir_deg))
-        own_n += -wind_ms * np.cos(wind_rad)
-        own_e += -wind_ms * np.sin(wind_rad)
+    # velocity are ground-referenced. ``mean_ne_ms`` rather than
+    # ``current_ne_ms``: gusts are zero-mean and decorrelate within a step, so
+    # extrapolating one over the lookahead asserts a persistence it lacks.
+    if wind is not None and not wind.is_still:
+        wind_n, wind_e = wind.mean_ne_ms()
+        own_n += wind_n
+        own_e += wind_e
 
     lat = np.asarray(bs.traf.lat[:n], dtype=np.float64)
     lon = np.asarray(bs.traf.lon[:n], dtype=np.float64)

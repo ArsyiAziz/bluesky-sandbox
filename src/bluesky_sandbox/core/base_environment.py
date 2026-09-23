@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import math
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from functools import cached_property
@@ -17,7 +16,6 @@ from typing import (
 
 import bluesky as bs
 import numpy as np
-from bluesky.tools.aero import kts
 from pettingzoo import ParallelEnv
 
 from bluesky_sandbox.config import (
@@ -41,6 +39,7 @@ from bluesky_sandbox.sim.queryables import (
     RegionResult,
 )
 from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
+from bluesky_sandbox.sim.weather import WindField, wind_from_config
 from bluesky_sandbox.ui.drivers import RenderMode, get_driver_class
 
 from .runtime import BlueSkyRuntime
@@ -327,9 +326,11 @@ class BlueskyBaseEnvironment(ParallelEnv):
         # substeps per env step, so walking every configured field each substep
         # to call a no-op would be the expensive way to do nothing.
         self._stateful_fields = tuple(self._collect_stateful_fields())
-        # Time-correlated wind gust state (north, east) in m/s, evolved by an
-        # Ornstein-Uhlenbeck process when ``config.turbulence_kts > 0``.
-        self._wind_gust_ne: tuple[float, float] = (0.0, 0.0)
+        # The airspace's wind, built once from the config's scalar settings.
+        # Single source of truth: the runtime applies it, spawn clearance
+        # predicts against it, and nothing re-derives a vector from
+        # ``wind_dir_deg`` / ``wind_kts`` on its own.
+        self._wind: WindField = wind_from_config(self.config)
 
         self._runtime.configure()
 
@@ -400,7 +401,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
     ) -> tuple[AgentObservations, AgentInfos]:
         self._clear_agent_context_cache()
         self._rng = np.random.default_rng(seed)
-        self._wind_gust_ne = (0.0, 0.0)
+        self._wind.reset()
         self.episode_spec = self.scenario.sample(self._rng)
         normalize_spawn_aircraft_types(self.config, self.episode_spec.spawn)
         # Per-aircraft sampled queryables accumulate per-callsign targets within an
@@ -426,6 +427,8 @@ class BlueskyBaseEnvironment(ParallelEnv):
         # toggle don't always survive, so re-issue both to keep conflict
         # detection running every episode.
         self._runtime.reset(seed=seed)
+        # ``bs.sim.reset()`` clears BlueSky's wind field; re-apply ours.
+        self._runtime.apply_wind(self._wind)
 
         self._hooks.on_before_spawn()
         self._spawn_generator.schedule_episode(self._rng)
@@ -479,7 +482,11 @@ class BlueskyBaseEnvironment(ParallelEnv):
             if not self._hooks.on_agent_action(idx, action):
                 self._action_dispatcher.apply(idx, action)
 
-        self._advance_wind_gust()
+        # A steady field is applied once at reset; only a gusting one needs
+        # pushing into BlueSky again each step.
+        self._wind.advance(float(self.config.dt), self._rng)
+        if self._wind.is_dynamic:
+            self._runtime.apply_wind(self._wind)
 
         for _ in range(self._n_substeps):
             self._driver.step()
@@ -532,28 +539,6 @@ class BlueskyBaseEnvironment(ParallelEnv):
             next_observations = self._assemble_observations(next_controlled_agents)
 
         return next_observations, rewards, terminations, truncations, infos
-
-    def _advance_wind_gust(self) -> None:
-        """Evolve the wind gust one step and re-apply the wind field.
-
-        Turbulence is an Ornstein-Uhlenbeck process on the (north, east) gust
-        velocity: mean-reverting to zero with a correlation time
-        ``config.gust_tau_s`` and a stationary RMS of ``config.turbulence_kts``.
-        No-op (steady mean wind, applied once at reset) when turbulence is off.
-        """
-        turb = float(getattr(self.config, "turbulence_kts", 0.0))
-        if turb <= 0.0:
-            return
-        dt = float(self.config.dt)
-        tau = max(float(getattr(self.config, "gust_tau_s", 30.0)), 1e-3)
-        decay = math.exp(-dt / tau)
-        step_sigma = turb * kts * math.sqrt(max(1.0 - decay * decay, 0.0))
-        gvn, gve = self._wind_gust_ne
-        self._wind_gust_ne = (
-            decay * gvn + step_sigma * float(self._rng.standard_normal()),
-            decay * gve + step_sigma * float(self._rng.standard_normal()),
-        )
-        self._runtime.apply_wind(self._wind_gust_ne)
 
     def _transition_done_agents(
         self,
@@ -618,6 +603,11 @@ class BlueskyBaseEnvironment(ParallelEnv):
     def rng(self) -> np.random.Generator:
         """Random generator for runtime task hooks."""
         return self._rng
+
+    @property
+    def wind(self) -> WindField:
+        """The airspace's wind field."""
+        return self._wind
 
     @property
     def sim_time(self) -> float:

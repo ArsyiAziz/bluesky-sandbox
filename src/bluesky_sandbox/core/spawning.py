@@ -210,11 +210,7 @@ class SpawnGenerator:
                 sep_nm=sep_nm,
                 sep_ft=sep_ft,
                 lookahead_s=lookahead_s,
-                # Steady wind only: existing traffic's ``gs`` carries the field,
-                # so both sides of the relative velocity must be ground-
-                # referenced. Gusts are zero-mean and per-step.
-                wind_kts=float(getattr(self._config(), "wind_kts", 0.0)),
-                wind_dir_deg=float(getattr(self._config(), "wind_dir_deg", 0.0)),
+                wind=self.env.wind,
             )
         return not inside_separation_zone(
             pos.lat_deg,

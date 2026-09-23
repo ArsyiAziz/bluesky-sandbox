@@ -10,6 +10,7 @@ from bluesky.tools.aero import ft, kts
 from wurlitzer import pipes
 
 from bluesky_sandbox.sim.queryables import WaypointTarget
+from bluesky_sandbox.sim.weather import WindField
 
 # BlueSky is a process-global singleton: ``bs.init`` re-imports the plugins and
 # re-registers every stack command, and re-registration is not idempotent - the
@@ -81,9 +82,8 @@ class BlueSkyRuntime:
         if seed is not None:
             bs.sim.setseed(seed)
         self.configure_conflict_management()
-        # ``bs.sim.reset()`` clears the wind field; re-apply the steady mean wind
-        # each episode. Turbulence gusts are layered on per-step by the env.
-        self.apply_wind()
+        # ``bs.sim.reset()`` clears the wind field. The environment owns the
+        # ``WindField``, so it re-applies it immediately after this returns.
 
     def operate(self) -> None:
         bs.sim.op()
@@ -103,28 +103,23 @@ class BlueSkyRuntime:
             bs.stack.stack(f"DTLOOK {config.lookahead_s}")
         simstack.process()
 
-    def apply_wind(self, gust_ne_ms: tuple[float, float] = (0.0, 0.0)) -> None:
-        """(Re)apply the config's uniform wind field, plus a gust vector.
+    def apply_wind(self, wind: WindField | None) -> None:
+        """Push a wind field's current vector into BlueSky.
 
-        ``wind_dir_deg`` is the direction the wind blows *from* (aviation
-        standard); ``gust_ne_ms`` is an extra (north, east) velocity in m/s (the
-        turbulence gust). A single wind point yields a spatially uniform field.
-        No-op when there's no mean wind and no gust.
+        One point yields a spatially uniform field, so the location is
+        irrelevant. ``addpointvne`` takes the (north, east) components
+        directly - the vector never round-trips through magnitude/bearing and
+        back, which the old ``addpoint`` path did only to have BlueSky undo it.
+
+        The field itself decides what "current" means (mean plus any live
+        gust); this method owns no wind logic of its own.
         """
-        config = self._config()
-        if config.wind_kts <= 0.0 and config.turbulence_kts <= 0.0:
+        if wind is None or wind.is_still:
             return
-        spd_ms = float(config.wind_kts) * kts
-        rad = math.radians(float(config.wind_dir_deg))
-        # mean wind as a 'blows-to' vector, then add the gust
-        vn = -spd_ms * math.cos(rad) + gust_ne_ms[0]
-        ve = -spd_ms * math.sin(rad) + gust_ne_ms[1]
+        vn, ve = wind.current_ne_ms()
         bs.traf.wind.clear()
-        mag = math.hypot(vn, ve)
-        if mag >= 1e-6:
-            dir_from = math.degrees(math.atan2(-ve, -vn)) % 360.0
-            # one point -> uniform field; location is irrelevant.
-            bs.traf.wind.addpoint(0.0, 0.0, dir_from, mag)
+        if math.hypot(vn, ve) >= 1e-6:
+            bs.traf.wind.addpointvne(0.0, 0.0, vn, ve)
 
     def create_aircraft(
         self,
