@@ -35,7 +35,7 @@ export const DEFAULT_SPEC: SpecDict = {
     },
     allowed_aircraft: ["A320", "B738"],
     dt: 1.0,
-    simdt: 0.05,
+    simdt: null,
     cd_method: "CSTATEBASED",
     performance_model: "openap",
     wind_dir_deg: 270.0,

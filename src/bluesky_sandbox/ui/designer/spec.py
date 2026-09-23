@@ -908,7 +908,7 @@ class EnvSpec:
     hooks: dict[str, str] = field(default_factory=dict)
     allowed_aircraft: list[str] = field(default_factory=lambda: ["B744"])
     dt: float = 1.0
-    simdt: float = 0.05
+    simdt: float | None = None
     asas_dt: float | None = None
     cd_method: str = "CSTATEBASED"
     reso_method: str | None = None
@@ -993,7 +993,7 @@ class EnvSpec:
             hooks=dict(d.get("hooks", {})),
             allowed_aircraft=list(d.get("allowed_aircraft", ["B744"])),
             dt=d.get("dt", 1.0),
-            simdt=d.get("simdt", 0.05),
+            simdt=d.get("simdt"),
             asas_dt=d.get("asas_dt"),
             cd_method=d.get("cd_method", "CSTATEBASED"),
             reso_method=d.get("reso_method"),

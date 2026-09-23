@@ -73,9 +73,13 @@ class BlueSkyRuntime:
         self.configure_timestep()
 
     def configure_timestep(self) -> None:
+        # ``bs.sim.reset()`` puts BlueSky's clock and ``bs.sim.simdt`` back to
+        # ``bs.settings.simdt``, so re-apply the config's step after init and
+        # every reset. Set them directly rather than through the setting: that
+        # stays BlueSky's own value, which an unset ``EnvConfig.simdt`` reads.
         config = self._config()
-        bs.settings.simdt = config.simdt
         simtime.setdt(config.simdt)
+        bs.sim.simdt = config.simdt
         self.configure_asas_dt()
 
     def configure_asas_dt(self) -> None:

@@ -1157,9 +1157,10 @@ def test_asas_dt_reaches_the_config_and_the_generated_code():
     assert "asas_dt=0.5," in config_py
 
 
-def test_the_catalog_shows_blueskys_asas_dt_not_a_written_in_default():
-    shown = catalog.catalog()["conflict_detection"]["asas_dt"]
-    assert shown == float(bs.settings.asas_dt)
+def test_the_catalog_shows_blueskys_timing_not_a_written_in_default():
+    shown = catalog.catalog()["bluesky_defaults"]
+    assert shown["asas_dt"] == float(bs.settings.asas_dt)
+    assert shown["simdt"] == float(bs.settings.simdt)
 
 
 def test_codegen_generates_importable_package():

@@ -244,9 +244,12 @@ export function ConfigEditor({
 
       <div className="grid3">
         <NumField label="dt (s)" step={0.1} value={env.dt} onChange={(v) => set({ dt: v })} />
-        <NumField label="simdt (s)" step={0.01} value={env.simdt} onChange={(v) => set({ simdt: v })} />
-        <DefaultedNumField stacked label="asas dt (s)" step={env.simdt ?? 0.05}
-          placeholder={`${catalog?.conflict_detection?.asas_dt ?? "BlueSky"} (default)`}
+        <DefaultedNumField stacked label="simdt (s)" step={0.01}
+          placeholder={`${catalog?.bluesky_defaults?.simdt ?? "BlueSky"} (default)`}
+          value={env.simdt} onChange={(v) => set({ simdt: v })} />
+        <DefaultedNumField stacked label="asas dt (s)"
+          step={env.simdt ?? catalog?.bluesky_defaults?.simdt}
+          placeholder={`${catalog?.bluesky_defaults?.asas_dt ?? "BlueSky"} (default)`}
           title="How often conflicts are detected. Must divide dt and be a multiple of simdt."
           value={env.asas_dt} onChange={(v) => set({ asas_dt: v })} />
       </div>

@@ -23,7 +23,7 @@ from bluesky_sandbox.sim.spawn import SpawnConfig
 
 DEFAULT_ALLOWED_AIRCRAFT = ("B744",)
 DEFAULT_DT = 1.0
-DEFAULT_SIMDT = 0.05
+DEFAULT_SIMDT = None
 DEFAULT_ASAS_DT = None
 DEFAULT_CD_METHOD = "CSTATEBASED"
 DEFAULT_RESO_METHOD = None
@@ -77,6 +77,41 @@ def requested_performance_model() -> str:
     return _REQUESTED_MODEL or str(
         getattr(bs.settings, "performance_model", "openap")
     ).lower()
+
+
+_SETTINGS_CFG_READ = False
+
+
+def read_bluesky_settings() -> None:
+    """Load settings.cfg into ``bs.settings`` if BlueSky has not yet done so.
+
+    ``bs.init`` reads the file, but configs are built before it runs, and then
+    ``bs.settings`` holds only the built-in defaults its modules registered. Read
+    the file once, and never after ``bs.init``: re-reading it then would put
+    the file's values back over settings changed at runtime.
+    """
+    global _SETTINGS_CFG_READ
+    if _SETTINGS_CFG_READ or bs.sim is not None:
+        return
+    # Deferred like ``_ensure_navdb_loaded``: pathfinder resolves where
+    # settings.cfg lives, and importing simtime registers BlueSky's own simdt
+    # default for a file that does not set one.
+    from bluesky import pathfinder, settings  # noqa: PLC0415
+    from bluesky.core import simtime  # noqa: F401, PLC0415
+
+    pathfinder.init()
+    settings.init()
+    _SETTINGS_CFG_READ = True
+
+
+def bluesky_simdt_s() -> float:
+    """BlueSky's configured physics step, ``bs.settings.simdt`` (s).
+
+    The sandbox never writes this setting, so it stays BlueSky's value however
+    many envs this process has built with other steps.
+    """
+    read_bluesky_settings()
+    return float(bs.settings.simdt)
 
 
 def apply_performance_model(model: str | None) -> str:
@@ -147,7 +182,9 @@ class EnvConfig:
     dt:
         Simulation time (seconds) advanced per ``step()`` call.
     simdt:
-        BlueSky physics time step in seconds (default 0.05 s = 20 Hz).
+        BlueSky physics time step in seconds. ``None`` takes BlueSky's own
+        ``bs.settings.simdt`` - from settings.cfg, else BlueSky's built-in
+        default - and resolves it here, so ``config.simdt`` is always a number.
     asas_dt:
         Interval in seconds between BlueSky conflict-detection updates.
         ``None`` keeps BlueSky's own ``bs.settings.asas_dt``. Must be a whole
@@ -200,7 +237,7 @@ class EnvConfig:
         default_factory=lambda: list(DEFAULT_ALLOWED_AIRCRAFT)
     )
     dt: float = DEFAULT_DT
-    simdt: float = DEFAULT_SIMDT
+    simdt: float | None = DEFAULT_SIMDT
     # Conflict-detection interval, applied to BlueSky's ``asas`` timer at
     # construction and after every reset. ``None`` keeps ``bs.settings.asas_dt``,
     # which only exists once ``bs.init`` has run, so the runtime checks it there.
@@ -259,6 +296,8 @@ class EnvConfig:
             isinstance(self.dt, (int, float)) and self.dt > 0 and np.isfinite(self.dt)
         ):
             raise ValueError(f"dt must be a positive finite number, got {self.dt!r}.")
+        if self.simdt is None:
+            self.simdt = bluesky_simdt_s()
         if not (
             isinstance(self.simdt, (int, float))
             and self.simdt > 0

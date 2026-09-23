@@ -25,6 +25,7 @@ from bluesky_sandbox.config import _available_aircraft
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as _actions
 from bluesky_sandbox.interface.fields import observations as _observations
+from bluesky_sandbox.config import bluesky_simdt_s
 from bluesky_sandbox.interface.fields import queryables as _queryable_fields
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
 from bluesky_sandbox.interface.wrappers.observations import normalizer as _normalizers
@@ -36,7 +37,7 @@ from bluesky_sandbox.sim.geometry.conflict import (
     cd_rpz_m,
 )
 from bluesky_sandbox.sim.performance.models import spawnable_types
-from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint, _ensure_navdb_loaded
+from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 
 from .emit import _normalizer_import_line
 from .spec import SCENARIO_HOOKS
@@ -691,19 +692,17 @@ def conflict_methods() -> dict[str, list[str]]:
     }
 
 
-def conflict_detection_defaults() -> dict[str, float | None]:
-    """BlueSky's conflict-detection interval that an unset ``asas_dt`` keeps.
+def bluesky_defaults() -> dict[str, float | None]:
+    """BlueSky's own values for the settings a design may leave unset.
 
-    Read from ``bs.settings.asas_dt`` rather than written into the GUI, so the
-    designer shows what BlueSky will actually run. The designer has no
-    ``bs.init``, so this primes BlueSky the same way the map tab does, which
-    reads settings.cfg once and never again after init. ``None`` when
-    settings.cfg does not set it: BlueSky's built-in default is registered only
-    by importing its traffic module, which would pre-empt the performance-model
-    choice a later ``bs.init`` in this process makes.
+    Read from ``bs.settings`` rather than written into the GUI, so the designer
+    shows what BlueSky will actually run. The designer has no ``bs.init``, so
+    this reads settings.cfg first. ``asas_dt`` is ``None`` when settings.cfg does
+    not set it: BlueSky's built-in default is registered only by importing its
+    traffic module, which would pre-empt the performance-model choice a later
+    ``bs.init`` in this process makes.
     """
-    _ensure_navdb_loaded()
-    return {"asas_dt": bluesky_asas_dt_s()}
+    return {"simdt": bluesky_simdt_s(), "asas_dt": bluesky_asas_dt_s()}
 
 
 def colors() -> dict[str, str]:
@@ -822,7 +821,7 @@ def catalog(model: str | None = None) -> dict[str, Any]:
         "colors": colors(),
         "distributions": distributions(),
         "conflict": conflict_methods(),
-        "conflict_detection": conflict_detection_defaults(),
+        "bluesky_defaults": bluesky_defaults(),
         "separation": separation_defaults(),
         "scaffolds": scaffolds(),
     }
