@@ -11,7 +11,6 @@ from .observations import (
     MinMaxNormalizer,
     Normalizer,
     PowerNormalizer,
-    RawNormalizer,
     SignedPowerNormalizer,
     SymmetricNormalizer,
 )
@@ -26,7 +25,6 @@ __all__ = [
     "MinMaxNormalizer",
     "Normalizer",
     "PowerNormalizer",
-    "RawNormalizer",
     "SignedPowerNormalizer",
     "StableIDsParallelWrapper",
     "SymmetricNormalizer",

@@ -26,7 +26,8 @@ export function registerModalCompletions(monaco: any) {
         "ObsQuantity.DISTANCE", "ObsQuantity.ALTITUDE", "ObsQuantity.SPEED",
         "ControlAxis.HEADING", "ControlAxis.SPEED", "ControlAxis.ALTITUDE",
         "ActionMode.ABSOLUTE", "ActionMode.DELTA",
-        "MinMaxNormalizer", "SymmetricNormalizer", "CircularNormalizer", "RawNormalizer",
+        "MinMaxNormalizer", "SymmetricNormalizer", "CircularNormalizer",
+        "PowerNormalizer", "SignedPowerNormalizer",
         "bs.traf.lat[idx]", "bs.traf.lon[idx]", "bs.traf.alt[idx] / ft",
         "bs.traf.cas[idx] / kts", "bs.traf.hdg[idx]", "bs.stack.stack",
       ];

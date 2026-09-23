@@ -31,13 +31,18 @@ _FOOTPRINT_TYPES = {"box", "disk", "polygon", "sector", "annular_sector", "boole
 def _normalizer_import_line() -> str:
     """Emit the normalizer import, deriving the names by introspection.
 
-    Every concrete ``Normalizer`` subclass is included, so a newly added
+    Every public concrete ``Normalizer`` subclass is included, so a newly added
     normalizer is importable in generated code without editing this module.
+    Private bases are skipped by the same underscore convention
+    ``catalog._concrete_subclasses`` uses: a shared implementation base is
+    concrete and lives in this module, so nothing else tells it apart from a
+    strategy a user would name.
     """
     names = sorted(
         name
         for name, obj in inspect.getmembers(_norm, inspect.isclass)
-        if issubclass(obj, _norm.Normalizer)
+        if not name.startswith("_")
+        and issubclass(obj, _norm.Normalizer)
         and obj is not _norm.Normalizer
         and obj.__module__ == _norm.__name__
         and not inspect.isabstract(obj)

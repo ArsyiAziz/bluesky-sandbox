@@ -135,7 +135,6 @@ class Sample:
 
 
 SAMPLES = (
-    Sample("Raw", nz.RawNormalizer(), (-10.0, 10.0), (-10.0, -5.0, 0.0, 5.0, 10.0)),
     Sample(
         "MinMax",
         nz.MinMaxNormalizer(clipped=True),
@@ -303,8 +302,6 @@ def test_emitted_width_matches_the_declared_output_size(cls, sample):
 def test_normalized_values_land_inside_the_declared_output_bounds(cls, sample):
     """The Box space is built from ``output_bounds``; a value outside it fails
     ``contains`` and trips env-checker wrappers."""
-    if sample.name == "Raw":
-        pytest.skip("RawNormalizer declares the field's own bounds, tested elsewhere")
     field = _sweep_field(cls, sample)
     low, high = sample.normalizer.output_bounds(field)
     for value in sample.values:
@@ -507,7 +504,7 @@ def test_a_non_positive_power_is_rejected_at_construction(cls, power):
 
 @pytest.mark.parametrize("sample", SAMPLES, ids=SAMPLE_IDS)
 def test_a_degenerate_span_is_rejected_rather_than_dividing_by_zero(sample):
-    if isinstance(sample.normalizer, (nz.RawNormalizer, nz.CircularNormalizer)):
+    if isinstance(sample.normalizer, nz.CircularNormalizer):
         pytest.skip(f"{sample.name} is range-independent")
     field = observations.LatDeg(low=5.0, high=5.0)
     with pytest.raises(ValueError, match="bounds must have high > low"):
@@ -632,7 +629,7 @@ def test_per_component_bounds_are_refused_by_name(cls, sample):
     """The general guard behind the specific one: any field whose bounds are
     per-component fails in the normalizer that cannot scale it, naming the
     field, rather than producing a row that goes ragged at concatenation."""
-    if isinstance(sample.normalizer, (nz.RawNormalizer, nz.CircularNormalizer)):
+    if isinstance(sample.normalizer, nz.CircularNormalizer):
         pytest.skip(f"{sample.name} is range-independent and never reads bounds")
     field = cls(normalizer=sample.normalizer)
     with pytest.raises(TypeError, match="per-component bounds"):
@@ -650,3 +647,47 @@ def test_services_agrees_with_the_normalizer_it_delegates_to(cls, sample):
     through = services._normalize_field_value(field, value, 0)
     assert list(through) == pytest.approx(list(direct))
     assert services._field_output_size(field) == sample.normalizer.output_size(field)
+
+
+# ---- no normalizer at all ------------------------------------------------- #
+#
+# The replacement for the deleted RawNormalizer, and strictly wider than it
+# was: a Normalizer is scalar-in by contract, so it could never carry a
+# multi-component field, while leaving ``normalizer`` unset can.
+
+
+@pytest.mark.parametrize("cls", ALL_FIELDS, ids=_ids(ALL_FIELDS))
+def test_a_field_without_a_normalizer_passes_its_value_through(cls):
+    """No normalizer means no scaling: the value arrives in physical units, at
+    the field's own declared width."""
+    field = _build(cls, low=-10.0, high=10.0)
+    width = services._field_output_size(field)
+    out = services._normalize_field_value(field, [3.0] * width, 0)
+    assert list(out) == pytest.approx([3.0] * width)
+
+
+@pytest.mark.parametrize(
+    ("cls", "width"),
+    [(observations.FlightPhaseOneHot, 7), (observations.PrevActionNorm, 1)],
+    ids=["FlightPhaseOneHot", "PrevActionNorm"],
+)
+def test_a_multi_component_field_needs_no_normalizer_to_keep_its_width(cls, width):
+    """The case a scalar strategy cannot express, and the reason
+    ``normalizer=None`` is not just a synonym for one."""
+    field = cls()
+    assert services._field_output_size(field) == width
+    value = [0.0] * width
+    value[0] = 1.0
+    assert list(services._normalize_field_value(field, value, 0)) == pytest.approx(value)
+    low, high = services._field_output_bounds(field, None)
+    assert len(low) == len(high) == width
+
+
+def test_an_unset_normalizer_reports_bounds_per_aircraft():
+    """``_field_output_bounds`` resolves a dynamic field at the index it is
+    given. A normalizer's ``output_bounds`` takes no index, so it could only
+    ever answer for aircraft 0 - another way the unset path is wider."""
+    field = observations.LatDeg()
+    assert services._field_normalizer(field) is None
+    low, high = services._field_output_bounds(field, 0)
+    assert (low[0], high[0]) == field.bounds(0)

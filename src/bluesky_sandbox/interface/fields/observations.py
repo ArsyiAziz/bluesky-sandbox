@@ -1991,7 +1991,7 @@ class PrevActionNorm(_LastActionBacked, ObsField):
 
     The stored value is the policy's action *in the task's action space*, whose
     range depends on the action fields' normalizers - ``SymmetricNormalizer`` ->
-    ``[-1, 1]``, ``MinMaxNormalizer`` -> ``[0, 1]``, ``RawNormalizer`` -> the
+    ``[-1, 1]``, ``MinMaxNormalizer`` -> ``[0, 1]``, no normalizer -> the
     field's own bounds. Bounds are therefore **dynamic**: the environment
     publishes the live action-space bounds (:func:`set_action_space_bounds`) and
     this field slices them by ``offset``/``dim``, so it matches any action space
@@ -3444,8 +3444,8 @@ class InConf(_WindowedConflictPairField):
     :class:`_WindowedConflictPairField` for why a buffered zone belongs here and
     not in ``config.pz_radius_nm``.
 
-    Use :class:`~bluesky_sandbox.interface.wrappers.observations.normalizer.RawNormalizer`
-    (or any normalizer with matching bounds) - the value is already 0/1.
+    Leave ``normalizer`` unset - the value is already 0/1, so there is nothing
+    to scale.
 
     Metadata:
         name: in_conf
@@ -3512,8 +3512,8 @@ class InLosNow(PairObsField):
     with a cost computed from ``ConflictView``, whereas this field does by
     construction.
 
-    Use :class:`~bluesky_sandbox.interface.wrappers.observations.normalizer.RawNormalizer`
-    (or any normalizer with matching bounds) - the value is already 0/1.
+    Leave ``normalizer`` unset - the value is already 0/1, so there is nothing
+    to scale.
 
     Metadata:
         name: in_los_now

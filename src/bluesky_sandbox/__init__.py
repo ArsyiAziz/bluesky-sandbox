@@ -66,7 +66,6 @@ from bluesky_sandbox.interface.wrappers import (
     CircularNormalizer,
     MinMaxNormalizer,
     Normalizer,
-    RawNormalizer,
     SymmetricNormalizer,
 )
 from bluesky_sandbox.sim.bounds import (
@@ -176,7 +175,6 @@ __all__ = [
     "QueryableFieldSpec",
     "QueryableKind",
     "RadialAltitudeBand",
-    "RawNormalizer",
     "RegionBounds",
     "RegionCurrent",
     "RegionResult",

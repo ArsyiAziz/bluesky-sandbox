@@ -65,7 +65,11 @@ class Normalizer(ABC):
     #: because the direction flips: ``normalize`` produces this range for an
     #: observation, and ``denormalize`` consumes it for an action.
     #:
-    #: ``None`` passes the field's own bounds through (:class:`RawNormalizer`).
+    #: ``None`` means the strategy does not impose a range of its own, and the
+    #: field's bounds are published unchanged. To leave a field unscaled
+    #: entirely, attach no normalizer at all - ``normalizer=None`` on the field
+    #: - which also preserves a multi-component field's full width, something
+    #: the scalar ``Normalizer`` contract cannot.
     #:
     #: One constant drives three things that have to agree: the Box space
     #: built from :meth:`output_bounds`, the clamp :meth:`normalize` applies
@@ -184,16 +188,6 @@ class Normalizer(ABC):
 # ---------------------------------------------------------------------------
 # Concrete strategies
 # ---------------------------------------------------------------------------
-
-class RawNormalizer(Normalizer):
-    """Pass raw physical values through unchanged."""
-
-    def normalize(self, field, value, idx):
-        return [value]
-
-    def normalize_many(self, field, values, idx):
-        return np.asarray(values, dtype=np.float64).reshape(-1, 1).astype(np.float32)
-
 
 class _ScaledNormalizer(Normalizer):
     """Map the field's bounds onto :attr:`normalized_interval`, through a curve.

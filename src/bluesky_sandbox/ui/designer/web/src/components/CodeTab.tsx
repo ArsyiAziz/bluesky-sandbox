@@ -624,7 +624,8 @@ function registerCompletions(monaco: any) {
         [
           "ObsField", "PairObsField", "ActionField", "ObsMeta", "ActionMeta",
           "ObsQuantity", "Unit", "ControlAxis", "ActionMode",
-          "MinMaxNormalizer", "SymmetricNormalizer", "CircularNormalizer", "RawNormalizer",
+          "MinMaxNormalizer", "SymmetricNormalizer", "CircularNormalizer",
+          "PowerNormalizer", "SignedPowerNormalizer",
         ].forEach((name) => add(name, "bluesky-sandbox field API", K.Class));
         [
           "Unit.DEG", "Unit.FT", "Unit.KTS", "Unit.NM", "Unit.UNITLESS", "Unit.SWITCH",
