@@ -165,7 +165,7 @@ SAMPLES = (
     # A non-default interval, swept over every field like any other config.
     Sample(
         "SymmetricPi",
-        nz.SymmetricNormalizer(output_interval=(-math.pi, math.pi)),
+        nz.SymmetricNormalizer(normalized_low=-math.pi, normalized_high=math.pi),
         (-10.0, 10.0),
         (-10.0, -5.0, 0.0, 5.0, 10.0),
     ),
@@ -320,7 +320,7 @@ def test_clipped_denormalize_commands_the_bound_and_no_further(
     name, normalizer, bounds, expected
 ):
     """An unsquashed policy head emits values outside the space routinely.
-    All four read the clamp from ``output_interval``, the same constant that
+    All four read the clamp from ``normalized_interval``, the same constant that
     builds the Box space, so the flag cannot mean different things on
     different strategies.
     """
@@ -411,14 +411,15 @@ def test_power_of_one_degenerates_to_its_linear_counterpart():
     ],
     ids=["MinMax", "Symmetric", "SignedPower", "Power"],
 )
-def test_the_output_interval_can_be_chosen_per_instance(cls):
+def test_the_normalized_range_can_be_chosen_per_instance(cls):
     """The range a strategy emits belongs to the policy head reading it, not to
     the curve underneath, so the two are configured separately."""
     field = observations.LatDeg(low=-10.0, high=10.0)
     interval = (-math.pi, math.pi)
-    normalizer = cls(output_interval=interval)
+    normalizer = cls(normalized_low=interval[0], normalized_high=interval[1])
 
-    assert normalizer.output_interval == interval
+    assert normalizer.normalized_interval == interval
+    assert (normalizer.normalized_low, normalizer.normalized_high) == interval
     low, high = normalizer.output_bounds(field)
     assert (low[0], high[0]) == interval
     # Endpoints map to endpoints whatever the curve in between.
@@ -431,7 +432,7 @@ def test_minmax_and_symmetric_differ_only_in_their_default_interval():
     them indistinguishable - which is why the interval is a parameter rather
     than a third class."""
     field = observations.LatDeg(low=-10.0, high=10.0)
-    as_symmetric = nz.MinMaxNormalizer(output_interval=(-1.0, 1.0))
+    as_symmetric = nz.MinMaxNormalizer(normalized_low=-1.0, normalized_high=1.0)
     for value in (-10.0, -3.0, 0.0, 7.0, 10.0):
         assert as_symmetric.normalize(field, value, 0) == pytest.approx(
             nz.SymmetricNormalizer().normalize(field, value, 0)
@@ -444,7 +445,9 @@ def test_a_full_turn_field_on_the_von_mises_support_round_trips():
     (0 and 360 are one heading), so no wrapping is needed.
     """
     field = actions.HdgDeg(low=0.0, high=360.0)
-    normalizer = nz.SymmetricNormalizer(output_interval=(-math.pi, math.pi))
+    normalizer = nz.SymmetricNormalizer(
+        normalized_low=-math.pi, normalized_high=math.pi
+    )
     assert normalizer.output_size(field) == 1  # one slot, not Circular's two
     assert normalizer.denormalize(field, [-math.pi], 0) == pytest.approx(0.0)
     assert normalizer.denormalize(field, [math.pi], 0) == pytest.approx(360.0)
@@ -456,13 +459,31 @@ def test_a_full_turn_field_on_the_von_mises_support_round_trips():
 
 
 @pytest.mark.parametrize(
-    "interval", [(1.0, 1.0), (5.0, -5.0), 3.0, ("a", "b")], ids=["flat", "inverted", "scalar", "text"]
+    ("low", "high"),
+    [(1.0, 1.0), (5.0, -5.0), ("a", "b")],
+    ids=["flat", "inverted", "text"],
 )
-def test_a_degenerate_output_interval_is_rejected_at_construction(interval):
+def test_a_degenerate_normalized_range_is_rejected_at_construction(low, high):
     """Inverted silently flips the sign of every action; flat divides by zero.
     Both would otherwise surface far from the constructor that caused them."""
-    with pytest.raises(ValueError, match="output_interval"):
-        nz.SymmetricNormalizer(output_interval=interval)
+    with pytest.raises(ValueError, match="normalized_"):
+        nz.SymmetricNormalizer(normalized_low=low, normalized_high=high)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"normalized_high": 10.0}, (0.0, 10.0)),
+        ({"normalized_low": -5.0}, (-5.0, 1.0)),
+        ({"normalized_low": -5.0, "normalized_high": 10.0}, (-5.0, 10.0)),
+        ({}, (0.0, 1.0)),
+    ],
+    ids=["high only", "low only", "both", "neither"],
+)
+def test_each_end_of_the_normalized_range_moves_independently(kwargs, expected):
+    """Passing one end keeps the class default for the other, so a one-sided
+    tweak does not force you to restate the end you were happy with."""
+    assert nz.MinMaxNormalizer(**kwargs).normalized_interval == expected
 
 
 @pytest.mark.parametrize("cls", [nz.SignedPowerNormalizer, nz.PowerNormalizer])

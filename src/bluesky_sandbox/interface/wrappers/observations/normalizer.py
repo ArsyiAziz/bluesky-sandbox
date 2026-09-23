@@ -48,20 +48,27 @@ class Normalizer(ABC):
     #: custom normalizer answers the question without an isinstance check.
     is_circular: bool = False
 
-    #: Whether this strategy holds its output to :attr:`output_interval`.
-    #: Declared on the base so :meth:`_clip` and :meth:`_action_scalar` are
-    #: safe for strategies with no notion of clipping.
+    #: Whether this strategy holds the normalized value to
+    #: :attr:`normalized_interval`. Declared on the base so :meth:`_clip` and
+    #: :meth:`_action_scalar` are safe for strategies with no notion of
+    #: clipping.
     clipped: bool = False
 
-    #: The interval this strategy emits, or ``None`` to pass the field's own
-    #: bounds through (:class:`RawNormalizer`). One constant drives three
-    #: things that have to agree: the Box space built from
-    #: :meth:`output_bounds`, the clamp :meth:`normalize` applies when
-    #: ``clipped``, and the clamp :meth:`denormalize` applies to an incoming
-    #: action. Each strategy used to write all three out separately, and two of
-    #: the denormalize clamps were simply missing - so an out-of-range action
-    #: commanded past the field's own bound.
-    output_interval: tuple[float, float] | None = None
+    #: The range of the NORMALIZED value - the one a policy reads and writes.
+    #: The field's own ``bounds()`` are the other side of the mapping, in
+    #: physical units. Named for the value rather than for a direction,
+    #: because the direction flips: ``normalize`` produces this range for an
+    #: observation, and ``denormalize`` consumes it for an action.
+    #:
+    #: ``None`` passes the field's own bounds through (:class:`RawNormalizer`).
+    #:
+    #: One constant drives three things that have to agree: the Box space
+    #: built from :meth:`output_bounds`, the clamp :meth:`normalize` applies
+    #: when ``clipped``, and the clamp :meth:`denormalize` applies to an
+    #: incoming action. Each strategy used to write all three out separately,
+    #: and two of the denormalize clamps were simply missing - so an
+    #: out-of-range action commanded past the field's own bound.
+    normalized_interval: tuple[float, float] | None = None
 
     def _bounds(self, field: FieldLike, idx: int) -> tuple[float, float]:
         """Resolve ``(low, high)`` for a configured field object.
@@ -82,20 +89,20 @@ class Normalizer(ABC):
         return low, high
 
     def _clip(self, value):
-        """Hold a normalized value to :attr:`output_interval`.
+        """Hold a normalized value to :attr:`normalized_interval`.
 
         Takes scalars and arrays alike, so :meth:`normalize` and
         :meth:`normalize_many` cannot end up clipping differently.
         """
-        if not self.clipped or self.output_interval is None:
+        if not self.clipped or self.normalized_interval is None:
             return value
-        low, high = self.output_interval
+        low, high = self.normalized_interval
         if isinstance(value, np.ndarray):
             return np.clip(value, low, high)
         return min(max(value, low), high)
 
     def _action_scalar(self, field: FieldLike, value) -> float:
-        """Unwrap a one-element action and hold it to :attr:`output_interval`.
+        """Unwrap a one-element action and hold it to :attr:`normalized_interval`.
 
         Clamping here is the Box space contract: the space advertises a range,
         so a value outside it commands the bound and never past it. Policy
@@ -157,8 +164,8 @@ class Normalizer(ABC):
         self, field: FieldLike,
     ) -> tuple[list[float], list[float]]:
         """Output bounds for ownship-style values."""
-        if self.output_interval is not None:
-            low, high = self.output_interval
+        if self.normalized_interval is not None:
+            low, high = self.normalized_interval
             width = self.output_size(field)
             return [low] * width, [high] * width
         static = _static_or_custom_bounds(field)
@@ -184,7 +191,7 @@ class RawNormalizer(Normalizer):
 
 
 class _ScaledNormalizer(Normalizer):
-    """Map the field's bounds onto :attr:`output_interval`, through a curve.
+    """Map the field's bounds onto :attr:`normalized_interval`, through a curve.
 
     Every bounded strategy is this one shape: reduce the raw value to a unit
     position ``u = (value - low) / span``, bend ``u`` with a curve, then place
@@ -192,24 +199,37 @@ class _ScaledNormalizer(Normalizer):
     strategies, so that is all a subclass defines - :meth:`_curve` and its
     inverse :meth:`_uncurve`, both on ``[0, 1]``.
 
-    ``output_interval`` is a constructor argument, defaulting to the class's
-    own. The range a strategy may emit is a property of the *policy head*
-    reading it, not of the curve underneath: a tanh head lives on
-    ``[-1, 1]``, a sigmoid on ``[0, 1]``, a von Mises on ``[-pi, pi]``. Any of
-    those can sit over any of these curves, so the two are separate choices.
+    ``normalized_low`` / ``normalized_high`` override the class's default
+    range, each independently - pass one to move a single end. The range a
+    strategy may emit is a property of the *policy head* reading it, not of
+    the curve underneath: a tanh head lives on ``[-1, 1]``, a sigmoid on
+    ``[0, 1]``, a von Mises on ``[-pi, pi]``. Any of those can sit over any of
+    these curves, so the two are separate choices.
     """
 
     def __init__(
         self,
         *,
         clipped: bool = False,
-        output_interval: tuple[float, float] | None = None,
+        normalized_low: float | None = None,
+        normalized_high: float | None = None,
     ) -> None:
         self.clipped = clipped
-        if output_interval is not None:
-            self.output_interval = _validated_interval(
-                output_interval, type(self).__name__
+        if normalized_low is not None or normalized_high is not None:
+            default_low, default_high = type(self).normalized_interval
+            self.normalized_interval = _validated_interval(
+                default_low if normalized_low is None else normalized_low,
+                default_high if normalized_high is None else normalized_high,
+                type(self).__name__,
             )
+
+    @property
+    def normalized_low(self) -> float:
+        return self.normalized_interval[0]
+
+    @property
+    def normalized_high(self) -> float:
+        return self.normalized_interval[1]
 
     @staticmethod
     def _signed_pow(x, p):
@@ -225,11 +245,11 @@ class _ScaledNormalizer(Normalizer):
         return c
 
     def _place(self, c):
-        low, high = self.output_interval
+        low, high = self.normalized_interval
         return low + c * (high - low)
 
     def _unplace(self, value):
-        low, high = self.output_interval
+        low, high = self.normalized_interval
         return (value - low) / (high - low)
 
     def normalize(self, field, value, idx):
@@ -256,11 +276,11 @@ class MinMaxNormalizer(_ScaledNormalizer):
     ``[-span, +span]`` this maps zero difference to ``0.5``.
 
     Differs from :class:`SymmetricNormalizer` only in its default interval;
-    both are the identity curve. Pass ``output_interval`` to either for any
+    both are the identity curve. Pass ``normalized_interval`` to either for any
     other range.
     """
 
-    output_interval = (0.0, 1.0)
+    normalized_interval = (0.0, 1.0)
 
 
 class SymmetricNormalizer(_ScaledNormalizer):
@@ -269,7 +289,8 @@ class SymmetricNormalizer(_ScaledNormalizer):
     Difference pair fields should expose delta bounds directly; with bounds
     ``[-span, +span]`` this maps to ``[-1, 1]``.
 
-    For a full-turn angle field, ``output_interval=(-math.pi, math.pi)`` gives
+    For a full-turn angle field, ``normalized_low=-math.pi,
+    normalized_high=math.pi`` gives
     a scalar angle in radians on exactly the support of a von Mises - and the
     identification at the interval's ends (``-pi`` and ``+pi`` are one sample)
     lands on the field's own ends (``0`` and ``360`` are one heading), so the
@@ -278,7 +299,7 @@ class SymmetricNormalizer(_ScaledNormalizer):
     costs a second action slot to carry a magnitude ``atan2`` throws away.
     """
 
-    output_interval = (-1.0, 1.0)
+    normalized_interval = (-1.0, 1.0)
 
 
 class SignedPowerNormalizer(_ScaledNormalizer):
@@ -297,21 +318,26 @@ class SignedPowerNormalizer(_ScaledNormalizer):
     recovers the linear :class:`SymmetricNormalizer`.
     """
 
-    output_interval = (-1.0, 1.0)
+    normalized_interval = (-1.0, 1.0)
 
     def __init__(
         self,
         *,
         power: float = 3.0,
         clipped: bool = False,
-        output_interval: tuple[float, float] | None = None,
+        normalized_low: float | None = None,
+        normalized_high: float | None = None,
     ) -> None:
         if power <= 0.0:
             raise ValueError(
                 f"SignedPowerNormalizer power must be > 0, got {power}."
             )
         self.power = float(power)
-        super().__init__(clipped=clipped, output_interval=output_interval)
+        super().__init__(
+            clipped=clipped,
+            normalized_low=normalized_low,
+            normalized_high=normalized_high,
+        )
 
     # Curve about the MIDPOINT of the unit interval, then back into [0, 1].
     def _curve(self, u):
@@ -340,21 +366,26 @@ class PowerNormalizer(_ScaledNormalizer):
     monotonic via a signed power (negative output) unless ``clipped``.
     """
 
-    output_interval = (0.0, 1.0)
+    normalized_interval = (0.0, 1.0)
 
     def __init__(
         self,
         *,
         power: float = 2.0,
         clipped: bool = False,
-        output_interval: tuple[float, float] | None = None,
+        normalized_low: float | None = None,
+        normalized_high: float | None = None,
     ) -> None:
         if power <= 0.0:
             raise ValueError(
                 f"PowerNormalizer power must be > 0, got {power}."
             )
         self.power = float(power)
-        super().__init__(clipped=clipped, output_interval=output_interval)
+        super().__init__(
+            clipped=clipped,
+            normalized_low=normalized_low,
+            normalized_high=normalized_high,
+        )
 
     # Curve anchored at the BOTTOM of the unit interval.
     def _curve(self, u):
@@ -379,7 +410,7 @@ class CircularNormalizer(Normalizer):
     """
 
     is_circular = True
-    output_interval = (-1.0, 1.0)
+    normalized_interval = (-1.0, 1.0)
 
     def normalize(self, field, value, idx):
         rad = math.radians(value)
@@ -416,22 +447,24 @@ class CircularNormalizer(Normalizer):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _validated_interval(interval, owner: str) -> tuple[float, float]:
-    """Check a caller-supplied ``output_interval`` before it reaches arithmetic.
+def _validated_interval(low, high, owner: str) -> tuple[float, float]:
+    """Check a caller-supplied normalized range before it reaches arithmetic.
 
-    A degenerate or inverted interval divides by zero or silently flips the
-    sign of every action, and both would surface far from the constructor.
+    A flat range divides by zero and an inverted one silently flips the sign
+    of every action; both would otherwise surface far from the constructor
+    that caused them.
     """
     try:
-        low, high = (float(x) for x in interval)
+        low, high = float(low), float(high)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            f"{owner} output_interval must be a (low, high) pair, got "
-            f"{interval!r}."
+            f"{owner} normalized_low/normalized_high must be numbers, got "
+            f"({low!r}, {high!r})."
         ) from exc
     if not high > low:
         raise ValueError(
-            f"{owner} output_interval must have high > low, got ({low}, {high})."
+            f"{owner} needs normalized_high > normalized_low, got "
+            f"({low}, {high})."
         )
     return low, high
 
