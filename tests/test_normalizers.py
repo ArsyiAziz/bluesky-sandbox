@@ -36,6 +36,8 @@ from __future__ import annotations
 import inspect
 import math
 from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import ClassVar
 
 import numpy as np
 import pytest
@@ -770,3 +772,164 @@ def test_a_lagged_pair_keeps_its_inner_scale_at_any_depth(steps):
     lagged = observations.LaggedPair(inner=inner, steps=steps, normalizer=normalizer)
     assert lagged.bounds(0) == inner.bounds(0)
     assert normalizer.normalize(lagged, 12.5, 0) == pytest.approx([0.25])
+
+
+# ---- what a lag channel actually returns ---------------------------------- #
+#
+# The tests above pin the lag channel's SCALE. These pin its VALUE: that
+# ``.lagged(k)`` really is the reading from k observation-queries ago, that a
+# history shorter than k is zero-order held rather than zero-filled, and that
+# sibling lags of one inner field share a single evaluation.
+
+
+@dataclass(frozen=True)
+class _Recorded(ObsField):
+    """An inner field whose value the test sets, counting its evaluations."""
+
+    meta = observations.ObsMeta(
+        "recorded", observations.Unit.UNITLESS, observations.ObsQuantity.INDICATOR
+    )
+    low: float | None = -1e9
+    high: float | None = 1e9
+
+    #: class-level so the frozen dataclass stays frozen
+    value: ClassVar[float] = 0.0
+    calls: ClassVar[int] = 0
+
+    def get(self, idx):
+        return self.get_many([int(idx)])[0]
+
+    def get_many(self, indices):
+        type(self).calls += 1
+        return [type(self).value for _ in indices]
+
+    def bounds(self, idx):
+        return (-1e9, 1e9)
+
+
+class _Clock:
+    """Minimal stand-in for the bits of ``bs`` the lag buffer reads."""
+
+    def __init__(self):
+        self.sim = SimpleNamespace(simt=0.0)
+        self.traf = SimpleNamespace(id=["AC1"])
+
+    def tick(self, value: float) -> None:
+        self.sim.simt += 1.0
+        _Recorded.value = value
+
+
+@pytest.fixture
+def lag_clock(monkeypatch):
+    """A clean lag buffer and a fake sim clock, restored afterwards."""
+    observations._LAG_HISTORY.clear()
+    observations._LAG_LAST_SIMT.clear()
+    clock = _Clock()
+    monkeypatch.setattr(observations, "bs", clock)
+    _Recorded.value, _Recorded.calls = 0.0, 0
+    yield clock
+    observations._LAG_HISTORY.clear()
+    observations._LAG_LAST_SIMT.clear()
+
+
+@pytest.mark.parametrize("steps", [1, 2, 3, _LAG_MAXLEN - 1], ids=lambda n: f"lag{n}")
+def test_a_lag_channel_returns_the_reading_from_that_many_queries_ago(lag_clock, steps):
+    """Feed a distinct value per step, then read each depth back."""
+    inner = _Recorded()
+    lagged = observations.LaggedObs(inner=inner, steps=steps)
+    history = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+
+    for value in history:
+        lag_clock.tick(value)
+        got = lagged.get(0)
+
+    # ``history[-1]`` is this step's value, so depth k is k places before it.
+    assert got == pytest.approx(history[-1 - steps])
+
+
+def test_a_short_history_is_held_not_zero_filled(lag_clock):
+    """Zero is MEANINGFUL for these fields - raw 0 on ConflictTlosS means "in
+    LoS right now" - so a new aircraft must not read as a maximal threat."""
+    lagged = observations.LaggedObs(inner=_Recorded(), steps=5)
+
+    lag_clock.tick(42.0)
+    assert lagged.get(0) == pytest.approx(42.0)  # its own value, not 0.0
+
+    lag_clock.tick(43.0)
+    assert lagged.get(0) == pytest.approx(42.0)  # oldest held, still not 0.0
+
+
+def test_depth_one_is_the_previous_reading(lag_clock):
+    """Sanity anchor for the indexing: the live value is one ahead of lag1."""
+    live = _Recorded()
+    lag1 = observations.LaggedObs(inner=_Recorded(), steps=1)
+    for value in (10.0, 20.0):
+        lag_clock.tick(value)
+        lag1.get(0)
+    assert live.get(0) == pytest.approx(20.0)
+    assert lag1.get(0) == pytest.approx(10.0)
+
+
+def test_the_lag_counts_observation_queries_not_sim_steps(lag_clock):
+    """A step nobody observed never enters the history, so the lag is measured
+    in queries at distinct sim times. Training observes every live agent every
+    step so the two coincide - but a caller that observes a subset sees that
+    subset's own lag, which is easy to mistake for a bug.
+    """
+    lag1 = observations.LaggedObs(inner=_Recorded(), steps=1)
+
+    lag_clock.tick(10.0)
+    lag1.get(0)
+    lag_clock.tick(20.0)  # nobody asks, so 20.0 is never recorded
+    lag_clock.tick(30.0)
+    lag1.get(0)
+
+    assert lag1.get(0) == pytest.approx(10.0), "the unobserved step entered history"
+
+
+def test_one_sim_time_is_recorded_once_however_often_it_is_queried(lag_clock):
+    """The push is guarded by sim time, so re-reading within a step must not
+    advance the history - an agent observed twice would otherwise shift its
+    own past."""
+    lag1 = observations.LaggedObs(inner=_Recorded(), steps=1)
+    lag_clock.tick(10.0)
+    lag1.get(0)
+    lag_clock.tick(20.0)
+    for _ in range(5):
+        assert lag1.get(0) == pytest.approx(10.0)
+
+
+def test_sibling_lags_of_one_field_share_a_single_evaluation(lag_clock):
+    """The buffer is keyed on the INNER field and its push is guarded by sim
+    time, so .lagged(1) and .lagged(2) cost one inner evaluation per step, not
+    two. This sits in the per-agent per-step rollout path."""
+    inner = _Recorded()
+    lag1 = observations.LaggedObs(inner=inner, steps=1)
+    lag2 = observations.LaggedObs(inner=inner, steps=2)
+
+    for value in (10.0, 20.0, 30.0):
+        lag_clock.tick(value)
+        before = _Recorded.calls
+        lag1.get_many([0])
+        lag2.get_many([0])
+        assert _Recorded.calls == before + 1, "second sibling re-evaluated the inner"
+
+    assert lag1.get(0) == pytest.approx(20.0)
+    assert lag2.get(0) == pytest.approx(10.0)
+
+
+def test_a_lag_buffer_is_per_aircraft(lag_clock):
+    """Histories are keyed by callsign, so one aircraft's past never leaks into
+    another's - and an aircraft that appears late reads its own value."""
+    lagged = observations.LaggedObs(inner=_Recorded(), steps=1)
+
+    lag_clock.tick(10.0)
+    lagged.get_many([0])
+    lag_clock.tick(20.0)
+    lagged.get_many([0])
+    assert lagged.get(0) == pytest.approx(10.0)
+
+    # A second aircraft joins with no history of its own.
+    lag_clock.traf.id = ["AC1", "AC2"]
+    lag_clock.tick(30.0)
+    assert lagged.get_many([0, 1]) == pytest.approx([20.0, 30.0])

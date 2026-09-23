@@ -1,4 +1,4 @@
-"""Spawn clearance: one zone, two moments.
+"""Spawn clearance
 
 Every spawn-clear check uses the same separation - the region's ``spawn_sep_nm``
 / ``spawn_sep_ft``, absolute values that each default to CD's own zone when left
