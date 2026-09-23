@@ -1701,9 +1701,37 @@ _LAST_NORM_ACTION: dict[str, np.ndarray] = {}
 # time, so ``.lagged(1)`` and ``.lagged(2)`` on the same field cost ONE inner
 # evaluation per step rather than one each - this sits in the per-agent per-step
 # rollout hot path.
-_LAG_MAXLEN = 9
 _LAG_HISTORY: dict[tuple, Any] = {}
 _LAG_LAST_SIMT: dict[tuple, float] = {}
+
+# How deep each inner field's history has to be: the deepest lag anyone
+# actually built on it. Derived rather than capped - a fixed ceiling made
+# ``.lagged(12)`` a source edit for no benefit, since ``deque(maxlen=n)``
+# allocates on append and an unused depth costs nothing. Sizing per field also
+# stops the common case over-allocating: with only ``.lagged(1)`` configured a
+# buffer now holds 2 frames per aircraft instead of a blanket 9.
+#
+# Keyed by ``repr(inner)`` like the history itself, so sibling lags of one
+# field agree on a size. This is derived from CONFIGURATION, not from episode
+# state, which is why ``reset_field_state`` clears the history and leaves this
+# alone.
+_LAG_DEPTH: dict[str, int] = {}
+
+
+def _register_lag_depth(key: str, steps: int) -> None:
+    """Record that ``key``'s history must reach at least ``steps`` back."""
+    _LAG_DEPTH[key] = max(_LAG_DEPTH.get(key, 0), int(steps))
+
+
+def _lag_buffer(key: str, steps: int) -> Any:
+    """A history buffer deep enough for every lag registered on ``key``.
+
+    Sized when the buffer is first created, which is after configuration built
+    every field, so all depths are known by then. A lag constructed *after*
+    stepping has begun on the same inner field would find the existing buffer
+    already sized; it degrades to a zero-order hold rather than failing.
+    """
+    return deque(maxlen=_LAG_DEPTH.get(key, int(steps)) + 1)
 
 
 
@@ -1755,12 +1783,8 @@ class LaggedObs(_LagHistoryBacked, ObsField):
         inner = self._field()
         if int(self.steps) < 1:
             raise ValueError(f"lagged(steps=) must be >= 1, got {self.steps}.")
-        if int(self.steps) >= _LAG_MAXLEN:
-            raise ValueError(
-                f"lagged(steps={self.steps}) exceeds the {_LAG_MAXLEN - 1}-step "
-                "history buffer; raise _LAG_MAXLEN to go deeper."
-            )
         object.__setattr__(self, "_key", repr(inner))
+        _register_lag_depth(self._key, self.steps)
         super().__post_init__()
 
     def _field(self) -> ObsField:
@@ -1789,7 +1813,7 @@ class LaggedObs(_LagHistoryBacked, ObsField):
             current = inner.get_many(idxs)
             for pos, i in enumerate(idxs):
                 buf = _LAG_HISTORY.setdefault(
-                    (self._key, bs.traf.id[i]), deque(maxlen=_LAG_MAXLEN)
+                    (self._key, bs.traf.id[i]), _lag_buffer(self._key, self.steps)
                 )
                 buf.append(current[pos])
         out = []
@@ -1837,12 +1861,8 @@ class LaggedPair(_LagHistoryBacked, PairObsField):
         inner = self._field()
         if int(self.steps) < 1:
             raise ValueError(f"lagged(steps=) must be >= 1, got {self.steps}.")
-        if int(self.steps) >= _LAG_MAXLEN:
-            raise ValueError(
-                f"lagged(steps={self.steps}) exceeds the {_LAG_MAXLEN - 1}-step "
-                "history buffer; raise _LAG_MAXLEN to go deeper."
-            )
         object.__setattr__(self, "_key", repr(inner))
+        _register_lag_depth(self._key, self.steps)
         super().__post_init__()
 
     def _field(self) -> PairObsField:
@@ -1876,7 +1896,8 @@ class LaggedPair(_LagHistoryBacked, PairObsField):
             current = np.asarray(inner.get_pairs(own_idx, others))
             for pos, j in enumerate(others):
                 buf = _LAG_HISTORY.setdefault(
-                    (self._key, own_acid, bs.traf.id[j]), deque(maxlen=_LAG_MAXLEN)
+                    (self._key, own_acid, bs.traf.id[j]),
+                    _lag_buffer(self._key, self.steps),
                 )
                 buf.append(current[pos])
         out = []

@@ -44,7 +44,6 @@ import pytest
 
 import bluesky_sandbox.interface.fields.actions as actions
 import bluesky_sandbox.interface.fields.observations as observations
-from bluesky_sandbox.interface.fields.observations import _LAG_MAXLEN
 from bluesky_sandbox.core import services
 from bluesky_sandbox.interface.fields import base
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
@@ -712,7 +711,7 @@ def test_an_unset_normalizer_reports_bounds_per_aircraft():
 
 
 @pytest.mark.parametrize("sample", SAMPLES, ids=SAMPLE_IDS)
-@pytest.mark.parametrize("steps", [1, 2, 3, _LAG_MAXLEN - 1], ids=lambda n: f"lag{n}")
+@pytest.mark.parametrize("steps", [1, 2, 3, 8, 40], ids=lambda n: f"lag{n}")
 def test_a_lag_channel_normalizes_identically_at_any_depth(steps, sample):
     """Every depth has to produce the value the LIVE field would."""
     low, high = sample.bounds
@@ -735,7 +734,7 @@ def test_a_lag_channel_normalizes_identically_at_any_depth(steps, sample):
         )
 
 
-@pytest.mark.parametrize("steps", [1, 2, 3, _LAG_MAXLEN - 1], ids=lambda n: f"lag{n}")
+@pytest.mark.parametrize("steps", [1, 2, 3, 8, 40], ids=lambda n: f"lag{n}")
 def test_a_lag_channel_is_named_for_its_depth(steps):
     """The depth is the only thing that distinguishes stacked channels, so it
     has to reach the observation labels."""
@@ -755,17 +754,46 @@ def test_a_lag_depth_below_one_is_rejected(steps):
         observations.LaggedObs(inner=observations.LatDeg(), steps=steps)
 
 
-@pytest.mark.parametrize(
-    "steps", [_LAG_MAXLEN, _LAG_MAXLEN + 5], ids=["at the limit", "past it"]
-)
-def test_a_lag_depth_beyond_the_history_buffer_is_rejected(steps):
-    """The buffer is finite, so a depth it cannot serve has to fail loudly at
-    construction rather than silently returning the oldest frame it has."""
-    with pytest.raises(ValueError, match="history buffer"):
-        observations.LaggedObs(inner=observations.LatDeg(), steps=steps)
+@pytest.mark.parametrize("steps", [9, 40, 500], ids=["9", "40", "500"])
+def test_a_deep_lag_needs_no_ceiling_raised(steps):
+    """Depth is the caller's choice. The buffer is sized from the deepest lag
+    built on that inner field, so there is no constant to edit."""
+    inner = observations.LatDeg(low=-10.0, high=10.0)
+    lagged = observations.LaggedObs(inner=inner, steps=steps)
+    assert lagged.meta.name.endswith(f"_lag{steps}")
+    assert observations._LAG_DEPTH[lagged._key] >= steps
 
 
-@pytest.mark.parametrize("steps", [1, 3, _LAG_MAXLEN - 1], ids=lambda n: f"lag{n}")
+def test_sibling_lags_size_one_shared_buffer_to_the_deepest(lag_clock):
+    """Siblings share a buffer keyed on the inner field, so it has to serve the
+    deepest of them - a buffer sized for the shallowest would silently
+    zero-order hold the deeper one forever."""
+    inner = _Recorded()
+    shallow = observations.LaggedObs(inner=inner, steps=1)
+    deep = observations.LaggedObs(inner=inner, steps=6)
+
+    for value in range(1, 9):
+        lag_clock.tick(float(value * 10))
+        shallow.get(0)
+
+    buf = observations._LAG_HISTORY[(shallow._key, "AC1")]
+    assert buf.maxlen >= deep.steps + 1
+    assert shallow.get(0) == pytest.approx(70.0)
+    assert deep.get(0) == pytest.approx(20.0)
+
+
+def test_a_buffer_holds_only_what_its_deepest_lag_needs(lag_clock):
+    """The other half of the bargain: a field used only at depth 1 must not
+    keep a deep history per aircraft."""
+    only_shallow = observations.LaggedObs(inner=_Recorded(), steps=1)
+    for value in range(1, 9):
+        lag_clock.tick(float(value * 10))
+        only_shallow.get(0)
+    buf = observations._LAG_HISTORY[(only_shallow._key, "AC1")]
+    assert buf.maxlen == 2, "a depth-1 lag kept more frames than it can read"
+
+
+@pytest.mark.parametrize("steps", [1, 3, 40], ids=lambda n: f"lag{n}")
 def test_a_lagged_pair_keeps_its_inner_scale_at_any_depth(steps):
     inner = observations.DistToOwnNm(low=0.0, high=50.0)
     normalizer = nz.MinMaxNormalizer()
@@ -824,6 +852,7 @@ def lag_clock(monkeypatch):
     """A clean lag buffer and a fake sim clock, restored afterwards."""
     observations._LAG_HISTORY.clear()
     observations._LAG_LAST_SIMT.clear()
+    observations._LAG_DEPTH.clear()
     clock = _Clock()
     monkeypatch.setattr(observations, "bs", clock)
     _Recorded.value, _Recorded.calls = 0.0, 0
@@ -832,12 +861,14 @@ def lag_clock(monkeypatch):
     observations._LAG_LAST_SIMT.clear()
 
 
-@pytest.mark.parametrize("steps", [1, 2, 3, _LAG_MAXLEN - 1], ids=lambda n: f"lag{n}")
+@pytest.mark.parametrize("steps", [1, 2, 3, 8, 40], ids=lambda n: f"lag{n}")
 def test_a_lag_channel_returns_the_reading_from_that_many_queries_ago(lag_clock, steps):
     """Feed a distinct value per step, then read each depth back."""
     inner = _Recorded()
     lagged = observations.LaggedObs(inner=inner, steps=steps)
-    history = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+    # Enough distinct readings that the requested depth is genuinely in range,
+    # with a few to spare so the answer is not just the oldest frame held.
+    history = [10.0 * (i + 1) for i in range(steps + 3)]
 
     for value in history:
         lag_clock.tick(value)
