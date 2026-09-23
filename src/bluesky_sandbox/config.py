@@ -360,10 +360,10 @@ class EnvConfig:
 
         self.allowed_aircraft = [ac.upper() for ac in self.allowed_aircraft]
 
-def normalize_spawn_aircraft_types(config: EnvConfig, spawn: SpawnConfig) -> None:
-    """Normalize one sampled spawn config against static allowed aircraft."""
+def resolve_spawn_aircraft_types(config: EnvConfig, spawn: SpawnConfig) -> None:
+    """Resolve a sampled spawn config's aircraft types against ``allowed_aircraft``."""
 
-    def _normalize_aircraft_type(ac_type, label: str) -> Categorical:
+    def _resolve_aircraft_type(ac_type, label: str) -> Categorical:
         if isinstance(ac_type, Categorical):
             unknown = [
                 t for t in ac_type.weights if t.upper() not in config.allowed_aircraft
@@ -377,13 +377,13 @@ def normalize_spawn_aircraft_types(config: EnvConfig, spawn: SpawnConfig) -> Non
             return Categorical({ac_type.upper(): 1.0})
         return Categorical({t: 1.0 for t in config.allowed_aircraft})
 
-    spawn.aircraft_type = _normalize_aircraft_type(
+    spawn.aircraft_type = _resolve_aircraft_type(
         spawn.aircraft_type,
         "SpawnConfig.aircraft_type",
     )
     for i, region in enumerate(spawn.regions):
         if region.aircraft_type is not None:
-            region.aircraft_type = _normalize_aircraft_type(
+            region.aircraft_type = _resolve_aircraft_type(
                 region.aircraft_type,
                 f"SpawnRegion[{i}].aircraft_type",
             )

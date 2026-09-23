@@ -643,7 +643,7 @@ class SpawnConfig:
         if self.aircraft_type is not None:
             return self.aircraft_type.rvs(random_state=rng)
         raise ValueError(
-            "aircraft_type is None; normalize SpawnConfig before use."
+            "aircraft_type is None; resolve SpawnConfig before use."
         )
 
     def sample_route(

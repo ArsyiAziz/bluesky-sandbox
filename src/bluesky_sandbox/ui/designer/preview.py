@@ -23,27 +23,28 @@ from .builder import build_scenario
 from .spec import DesignSpec
 
 
-def _normalize_spawn_types(spawn: SpawnConfig, allowed_aircraft: list[str]) -> None:
-    """Fill in ``aircraft_type`` the way ``EnvConfig`` would, for standalone preview.
+def _resolve_spawn_types(spawn: SpawnConfig, allowed_aircraft: list[str]) -> None:
+    """Fill in ``aircraft_type`` the way the env would, for standalone preview.
 
     ``iter_spawns`` needs a non-``None`` global ``aircraft_type``; the env
-    normally sets this in ``EnvConfig.__post_init__``. Preview builds the
-    scenario without an ``EnvConfig`` (so the map renders even when code refs
-    are incomplete), so we replicate just that normalisation here.
+    resolves it every ``reset()`` via
+    :func:`~bluesky_sandbox.config.resolve_spawn_aircraft_types`. Preview builds
+    the scenario without an ``EnvConfig`` (so the map renders even when code
+    refs are incomplete), so we replicate just that resolution here.
     """
     allowed = [a.upper() for a in allowed_aircraft] or ["B744"]
 
-    def norm(t):
+    def resolve(t):
         if isinstance(t, Categorical):
             return t
         if isinstance(t, str):
             return Categorical({t.upper(): 1.0})
         return Categorical({a: 1.0 for a in allowed})
 
-    spawn.aircraft_type = norm(spawn.aircraft_type)
+    spawn.aircraft_type = resolve(spawn.aircraft_type)
     for region in spawn.regions:
         if region.aircraft_type is not None:
-            region.aircraft_type = norm(region.aircraft_type)
+            region.aircraft_type = resolve(region.aircraft_type)
 
 
 def _bounds_geometry(bounds: Bounds) -> dict[str, Any]:
@@ -143,7 +144,7 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
     # Sample (not support) so per-episode randomisation - rotation and, below,
     # spawn locations - is what the map shows; reseeding varies it.
     episode = scenario.sample(rng)
-    _normalize_spawn_types(episode.spawn, spec.env.allowed_aircraft)
+    _resolve_spawn_types(episode.spawn, spec.env.allowed_aircraft)
 
     airspace = (
         _bounds_geometry(episode.airspace_bounds)

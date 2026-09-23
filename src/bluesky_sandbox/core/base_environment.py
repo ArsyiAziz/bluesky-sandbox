@@ -19,7 +19,7 @@ from pettingzoo import ParallelEnv
 
 from bluesky_sandbox.config import (
     EnvConfig,
-    normalize_spawn_aircraft_types,
+    resolve_spawn_aircraft_types,
 )
 from bluesky_sandbox.interface.fields.base import StepContext
 from bluesky_sandbox.interface.fields.observations import (
@@ -363,7 +363,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._rng = np.random.default_rng(seed)
         self._wind.reset()
         self.episode_spec = self.scenario.sample(self._rng)
-        normalize_spawn_aircraft_types(self.config, self.episode_spec.spawn)
+        resolve_spawn_aircraft_types(self.config, self.episode_spec.spawn)
         self._hooks.on_episode_reset(seed=seed, options=options)
         self._hooks.on_episode_loaded(self.episode_spec)
 
