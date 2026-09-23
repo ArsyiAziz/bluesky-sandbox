@@ -302,31 +302,20 @@ def test_normalized_values_land_inside_the_declared_output_bounds(cls, sample):
 @pytest.mark.parametrize(
     ("name", "normalizer", "bounds", "expected"),
     [
-        pytest.param(
-            "MinMax", nz.MinMaxNormalizer(clipped=True), (-10.0, 10.0), 10.0,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="MinMaxNormalizer.denormalize does not clamp when clipped",
-            ),
-        ),
+        pytest.param("MinMax", nz.MinMaxNormalizer(clipped=True), (-10.0, 10.0), 10.0),
         pytest.param("Symmetric", nz.SymmetricNormalizer(clipped=True), (-10.0, 10.0), 10.0),
         pytest.param("SignedPower", nz.SignedPowerNormalizer(clipped=True), (-10.0, 10.0), 10.0),
-        pytest.param(
-            "Power", nz.PowerNormalizer(clipped=True), (0.0, 100.0), 100.0,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="PowerNormalizer.denormalize does not clamp when clipped",
-            ),
-        ),
+        pytest.param("Power", nz.PowerNormalizer(clipped=True), (0.0, 100.0), 100.0),
     ],
     ids=["MinMax", "Symmetric", "SignedPower", "Power"],
 )
 def test_clipped_denormalize_commands_the_bound_and_no_further(
     name, normalizer, bounds, expected
 ):
-    """An unsquashed policy head emits values outside ``[-1, 1]`` routinely.
-    ``SymmetricNormalizer.denormalize`` calls clamping "the Box space contract";
-    the same flag on the other strategies has to mean the same thing.
+    """An unsquashed policy head emits values outside the space routinely.
+    All four read the clamp from ``output_interval``, the same constant that
+    builds the Box space, so the flag cannot mean different things on
+    different strategies.
     """
     field = actions.HdgDeltaDeg(low=bounds[0], high=bounds[1], normalizer=normalizer)
     assert normalizer.denormalize(field, [1.5], 0) == pytest.approx(expected)

@@ -48,9 +48,53 @@ class Normalizer(ABC):
     #: custom normalizer answers the question without an isinstance check.
     is_circular: bool = False
 
+    #: Whether this strategy holds its output to :attr:`output_interval`.
+    #: Declared on the base so :meth:`_clip` and :meth:`_action_scalar` are
+    #: safe for strategies with no notion of clipping.
+    clipped: bool = False
+
+    #: The interval this strategy emits, or ``None`` to pass the field's own
+    #: bounds through (:class:`RawNormalizer`). One constant drives three
+    #: things that have to agree: the Box space built from
+    #: :meth:`output_bounds`, the clamp :meth:`normalize` applies when
+    #: ``clipped``, and the clamp :meth:`denormalize` applies to an incoming
+    #: action. Each strategy used to write all three out separately, and two of
+    #: the denormalize clamps were simply missing - so an out-of-range action
+    #: commanded past the field's own bound.
+    output_interval: tuple[float, float] | None = None
+
     def _bounds(self, field: FieldLike, idx: int) -> tuple[float, float]:
         """Resolve ``(low, high)`` for a configured field object."""
         return field.bounds(idx)
+
+    def _clip(self, value):
+        """Hold a normalized value to :attr:`output_interval`.
+
+        Takes scalars and arrays alike, so :meth:`normalize` and
+        :meth:`normalize_many` cannot end up clipping differently.
+        """
+        if not self.clipped or self.output_interval is None:
+            return value
+        low, high = self.output_interval
+        if isinstance(value, np.ndarray):
+            return np.clip(value, low, high)
+        return min(max(value, low), high)
+
+    def _action_scalar(self, field: FieldLike, value) -> float:
+        """Unwrap a one-element action and hold it to :attr:`output_interval`.
+
+        Clamping here is the Box space contract: the space advertises a range,
+        so a value outside it commands the bound and never past it. Policy
+        heads without a squashing layer emit out-of-range actions routinely.
+        """
+        if isinstance(value, Sequence):
+            if len(value) != 1:
+                raise ValueError(
+                    f"{self.__class__.__name__} expected one action value for "
+                    f"{field.meta.name!r}, got {len(value)}."
+                )
+            value = value[0]
+        return float(self._clip(float(value)))
 
     def _span(self, field: FieldLike, idx: int) -> float:
         """Resolve a strictly positive normalisation span for ``field``."""
@@ -89,14 +133,7 @@ class Normalizer(ABC):
         idx: int,
     ) -> float:
         """Map external action value(s) back to the field's physical units."""
-        if isinstance(value, Sequence):
-            if len(value) != 1:
-                raise ValueError(
-                    f"{self.__class__.__name__} expected one action value for "
-                    f"{field.meta.name!r}, got {len(value)}."
-                )
-            return float(value[0])
-        return float(value)
+        return self._action_scalar(field, value)
 
     def output_size(self, field: FieldLike) -> int:
         """Number of output floats produced for this field (default 1)."""
@@ -106,6 +143,10 @@ class Normalizer(ABC):
         self, field: FieldLike,
     ) -> tuple[list[float], list[float]]:
         """Output bounds for ownship-style values."""
+        if self.output_interval is not None:
+            low, high = self.output_interval
+            width = self.output_size(field)
+            return [low] * width, [high] * width
         static = _static_or_custom_bounds(field)
         if static is None:
             lo, hi = float("-inf"), float("inf")
@@ -135,37 +176,23 @@ class MinMaxNormalizer(Normalizer):
     ``[-span, +span]`` this maps zero difference to ``0.5``.
     """
 
+    output_interval = (0.0, 1.0)
+
     def __init__(self, *, clipped: bool = False) -> None:
         self.clipped = clipped
 
     def normalize(self, field, value, idx):
         lo, _ = self._bounds(field, idx)
-        normalized = (value - lo) / self._span(field, idx)
-        if self.clipped:
-            normalized = min(max(normalized, 0.0), 1.0)
-        return [normalized]
+        return [self._clip((value - lo) / self._span(field, idx))]
 
     def normalize_many(self, field, values, idx):
         lo, _ = self._bounds(field, idx)
-        span = self._span(field, idx)
-        out = (np.asarray(values, dtype=np.float64) - lo) / span
-        if self.clipped:
-            out = np.clip(out, 0.0, 1.0)
-        return out.reshape(-1, 1).astype(np.float32)
+        out = (np.asarray(values, dtype=np.float64) - lo) / self._span(field, idx)
+        return self._clip(out).reshape(-1, 1).astype(np.float32)
 
     def denormalize(self, field, value, idx):
-        if isinstance(value, Sequence):
-            if len(value) != 1:
-                raise ValueError(
-                    f"MinMaxNormalizer expected one action value for "
-                    f"{field.meta.name!r}, got {len(value)}."
-                )
-            value = value[0]
         lo, _ = self._bounds(field, idx)
-        return lo + float(value) * self._span(field, idx)
-
-    def output_bounds(self, _field: FieldLike) -> tuple[list[float], list[float]]:
-        return [0.0], [1.0]
+        return lo + self._action_scalar(field, value) * self._span(field, idx)
 
 
 class SymmetricNormalizer(Normalizer):
@@ -175,42 +202,25 @@ class SymmetricNormalizer(Normalizer):
     ``[-span, +span]`` this maps to ``[-1, 1]``.
     """
 
+    output_interval = (-1.0, 1.0)
+
     def __init__(self, *, clipped: bool = False) -> None:
         self.clipped = clipped
 
     def normalize(self, field, value, idx):
         lo, _ = self._bounds(field, idx)
-        normalized = 2.0 * (value - lo) / self._span(field, idx) - 1.0
-        if self.clipped:
-            normalized = min(max(normalized, -1.0), 1.0)
-        return [normalized]
+        return [self._clip(2.0 * (value - lo) / self._span(field, idx) - 1.0)]
 
     def normalize_many(self, field, values, idx):
         lo, _ = self._bounds(field, idx)
         span = self._span(field, idx)
         out = 2.0 * (np.asarray(values, dtype=np.float64) - lo) / span - 1.0
-        if self.clipped:
-            out = np.clip(out, -1.0, 1.0)
-        return out.reshape(-1, 1).astype(np.float32)
+        return self._clip(out).reshape(-1, 1).astype(np.float32)
 
     def denormalize(self, field, value, idx):
-        if isinstance(value, Sequence):
-            if len(value) != 1:
-                raise ValueError(
-                    f"SymmetricNormalizer expected one action value for "
-                    f"{field.meta.name!r}, got {len(value)}."
-                )
-            value = value[0]
-        v = float(value)
-        if self.clipped:
-            # Enforce the field's bounds at the interface: an action beyond
-            # [-1, 1] commands the bound, never more (the Box space contract).
-            v = min(max(v, -1.0), 1.0)
+        v = self._action_scalar(field, value)
         lo, _ = self._bounds(field, idx)
         return lo + ((v + 1.0) * 0.5) * self._span(field, idx)
-
-    def output_bounds(self, _field: FieldLike) -> tuple[list[float], list[float]]:
-        return [-1.0], [1.0]
 
 
 class SignedPowerNormalizer(Normalizer):
@@ -236,6 +246,8 @@ class SignedPowerNormalizer(Normalizer):
         self.power = float(power)
         self.clipped = clipped
 
+    output_interval = (-1.0, 1.0)
+
     @staticmethod
     def _signed_pow(x: float, p: float) -> float:
         return math.copysign(abs(x) ** p, x)
@@ -243,37 +255,19 @@ class SignedPowerNormalizer(Normalizer):
     def normalize(self, field, value, idx):
         lo, _ = self._bounds(field, idx)
         u = 2.0 * (value - lo) / self._span(field, idx) - 1.0  # linear -> [-1, 1]
-        a = self._signed_pow(u, 1.0 / self.power)              # inverse curve
-        if self.clipped:
-            a = min(max(a, -1.0), 1.0)
-        return [a]
+        return [self._clip(self._signed_pow(u, 1.0 / self.power))]  # inverse curve
 
     def normalize_many(self, field, values, idx):
         lo, _ = self._bounds(field, idx)
         u = 2.0 * (np.asarray(values, dtype=np.float64) - lo) / self._span(field, idx) - 1.0
         a = np.copysign(np.abs(u) ** (1.0 / self.power), u)
-        if self.clipped:
-            a = np.clip(a, -1.0, 1.0)
-        return a.reshape(-1, 1).astype(np.float32)
+        return self._clip(a).reshape(-1, 1).astype(np.float32)
 
     def denormalize(self, field, value, idx):
-        if isinstance(value, Sequence):
-            if len(value) != 1:
-                raise ValueError(
-                    f"SignedPowerNormalizer expected one action value for "
-                    f"{field.meta.name!r}, got {len(value)}."
-                )
-            value = value[0]
-        v = float(value)
-        if self.clipped:
-            # Same interface contract as SymmetricNormalizer.denormalize.
-            v = min(max(v, -1.0), 1.0)
+        v = self._action_scalar(field, value)
         u = self._signed_pow(v, self.power)                    # compress toward centre
         lo, _ = self._bounds(field, idx)
         return lo + (u + 1.0) * 0.5 * self._span(field, idx)
-
-    def output_bounds(self, _field: FieldLike) -> tuple[list[float], list[float]]:
-        return [-1.0], [1.0]
 
 
 class PowerNormalizer(Normalizer):
@@ -302,37 +296,25 @@ class PowerNormalizer(Normalizer):
         self.power = float(power)
         self.clipped = clipped
 
+    output_interval = (0.0, 1.0)
+
     def normalize(self, field, value, idx):
         lo, _ = self._bounds(field, idx)
         u = (value - lo) / self._span(field, idx)           # linear -> [0, 1]
         a = math.copysign(abs(u) ** (1.0 / self.power), u)  # inverse curve
-        if self.clipped:
-            a = min(max(a, 0.0), 1.0)
-        return [a]
+        return [self._clip(a)]
 
     def normalize_many(self, field, values, idx):
         lo, _ = self._bounds(field, idx)
         u = (np.asarray(values, dtype=np.float64) - lo) / self._span(field, idx)
         a = np.copysign(np.abs(u) ** (1.0 / self.power), u)
-        if self.clipped:
-            a = np.clip(a, 0.0, 1.0)
-        return a.reshape(-1, 1).astype(np.float32)
+        return self._clip(a).reshape(-1, 1).astype(np.float32)
 
     def denormalize(self, field, value, idx):
-        if isinstance(value, Sequence):
-            if len(value) != 1:
-                raise ValueError(
-                    f"PowerNormalizer expected one action value for "
-                    f"{field.meta.name!r}, got {len(value)}."
-                )
-            value = value[0]
-        v = float(value)
+        v = self._action_scalar(field, value)
         u = math.copysign(abs(v) ** self.power, v)          # compress toward low
         lo, _ = self._bounds(field, idx)
         return lo + u * self._span(field, idx)
-
-    def output_bounds(self, _field: FieldLike) -> tuple[list[float], list[float]]:
-        return [0.0], [1.0]
 
 
 class CircularNormalizer(Normalizer):
@@ -350,6 +332,7 @@ class CircularNormalizer(Normalizer):
     """
 
     is_circular = True
+    output_interval = (-1.0, 1.0)
 
     def normalize(self, field, value, idx):
         rad = math.radians(value)
@@ -380,9 +363,6 @@ class CircularNormalizer(Normalizer):
 
     def output_size(self, field):
         return 2
-
-    def output_bounds(self, _field: FieldLike) -> tuple[list[float], list[float]]:
-        return [-1.0, -1.0], [1.0, 1.0]
 
 
 class PerFieldNormalizer(Normalizer):
