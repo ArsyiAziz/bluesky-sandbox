@@ -42,6 +42,7 @@ from bluesky_sandbox.sim.performance.envelope import (
     reachable_alt_window,
 )
 from bluesky_sandbox.sim.queryables import Waypoint, WaypointTarget
+from bluesky_sandbox.sim.sampling.distributions import Categorical
 from bluesky_sandbox.sim.spawn import route_step_name
 
 from .state import (
@@ -52,7 +53,6 @@ from .state import (
     SpawnQueueItem,
 )
 
-_ALPHABET = list(string.ascii_uppercase)
 
 # A candidate spawn state must clear all live traffic (avoiding an instant loss
 # of separation), retried up to this many times before deferring to a later
@@ -75,6 +75,7 @@ class SpawnGenerator:
         self._maintain_failures: dict[int, int] = {}
         self._maintain_target: dict[int, int] = {}
         self._scheduled_count: int = 0
+        self._callsigns = _CallsignIssuer()
 
     def bind_env(self, env) -> None:
         self.env = env
@@ -94,6 +95,7 @@ class SpawnGenerator:
         """
         self._queue.clear()
         self._maintain_failures.clear()
+        self._callsigns.start_episode(rng)
         self._sample_maintain_targets(rng)
 
     def schedule_episode(self, rng: np.random.Generator) -> None:
@@ -148,20 +150,11 @@ class SpawnGenerator:
 
     # ---- internals ------------------------------------------------------- #
 
-    def _generate_callsign(
-        self,
-        used: set[Callsign],
-        rng: np.random.Generator,
-        prefix: str | None = None,
-    ) -> Callsign:
-        while True:
-            if prefix is None:
-                letters = "".join(rng.choice(_ALPHABET, size=3))
-            else:
-                letters = prefix
-            callsign = f"{letters}{rng.integers(1, 1000):03d}"
-            if callsign not in used:
-                return callsign
+    def _prefix_options(self, region_index: int) -> Any:
+        """The region's ``callsign_prefixes``, for when its sampled one runs dry."""
+        if region_index < 0:
+            return None
+        return self.env.episode_spawn.regions[region_index].callsign_prefixes
 
     def _spawn_hdg(self, pos: SpawnPosition, rng: np.random.Generator) -> float:
         """Resolve a candidate's spawn heading (random when unspecified)."""
@@ -238,7 +231,7 @@ class SpawnGenerator:
         if not pos.spd_from_envelope:
             return pos
         used = set(self.env._runtime.agent_ids)
-        callsign = self._generate_callsign(used, rng)
+        callsign = self._callsigns.issue(used)
         self.env._runtime.create_aircraft(
             callsign,
             actype,
@@ -505,7 +498,9 @@ class SpawnGenerator:
         top-up. ``used`` is the set of callsigns already taken this pass and is
         updated in place.
         """
-        callsign = self._generate_callsign(used, rng, item.callsign_prefix)
+        callsign = self._callsigns.issue(
+            used, item.callsign_prefix, self._prefix_options(item.region_index)
+        )
         used.add(callsign)
         hdg = (
             float(item.position.hdg_deg) % 360.0
@@ -684,3 +679,133 @@ class SpawnGenerator:
                 changed = self._materialize_spawn(item, used, rng) or changed
         if changed:
             self.env._invalidate_agent_cache()
+
+
+# Callsigns are a prefix - or three random letters - and a flight number.
+_CALLSIGN_LETTERS = list(string.ascii_uppercase)
+_CALLSIGN_NUMBERS = 999  # 001-999
+_RANDOM_LETTER_CALLSIGNS = len(_CALLSIGN_LETTERS) ** 3 * _CALLSIGN_NUMBERS
+
+
+class _CallsignIssuer:
+    """Random-looking callsigns, each issued at most once per episode.
+
+    BlueSky refuses only a *live* duplicate, but everything keyed by callsign -
+    the substep monitors, agent names - would take an aircraft reusing a
+    deleted one's callsign for that aircraft. So draws are rejected against
+    every callsign issued, or seen live, this episode. Each letter group counts
+    how many of its numbers are taken, so a prefix running dry is an exact
+    check, never an unlucky streak of draws.
+
+    Naming draws from its own child of the episode's generator: the number of
+    draws a rejection loop takes then never shifts the draws that place and
+    fly traffic.
+    """
+
+    def __init__(self) -> None:
+        self._rng: np.random.Generator | None = None
+        self._taken: set[Callsign] = set()
+        # Letter group (a prefix, or three random letters) -> numbers taken.
+        self._taken_per_group: dict[str, int] = {}
+        self._random_letter_taken = 0
+
+    def start_episode(self, rng: np.random.Generator) -> None:
+        # ``spawn`` derives an independent stream without advancing ``rng``.
+        self._rng = rng.spawn(1)[0]
+        self._taken.clear()
+        self._taken_per_group.clear()
+        self._random_letter_taken = 0
+
+    def issue(
+        self,
+        live: set[Callsign],
+        prefix: str | None = None,
+        prefix_options: Any = None,
+    ) -> Callsign:
+        """A callsign that is neither ``live`` nor issued this episode.
+
+        ``prefix`` is the one sampled for this aircraft; ``prefix_options`` its
+        region's ``callsign_prefixes``. When ``prefix`` is full, another of the
+        region's prefixes stands in by the region's own weights, so a region
+        runs dry only when all of its prefixes have.
+        """
+        if self._rng is None:
+            raise RuntimeError("_CallsignIssuer.start_episode has not been called.")
+        for callsign in live:
+            self._take(callsign)
+        if prefix is None:
+            if self._random_letter_taken >= _RANDOM_LETTER_CALLSIGNS:
+                raise RuntimeError(
+                    "Every random-letter callsign was issued this episode."
+                )
+            return self._draw(None)
+        full: set[str] = set()
+        while not self._has_left(prefix):
+            full.add(prefix)
+            prefix = self._fallback(prefix_options, full)
+            if prefix is None:
+                raise RuntimeError(_callsigns_exhausted(full, prefix_options))
+        return self._draw(prefix)
+
+    def _draw(self, prefix: str | None) -> Callsign:
+        # Ends: the caller checked a free callsign exists in this group.
+        while True:
+            letters = (
+                "".join(self._rng.choice(_CALLSIGN_LETTERS, size=3))
+                if prefix is None
+                else prefix
+            )
+            callsign = f"{letters}{self._rng.integers(1, _CALLSIGN_NUMBERS + 1):03d}"
+            if callsign not in self._taken:
+                self._take(callsign)
+                return callsign
+
+    def _take(self, callsign: Callsign) -> None:
+        if callsign in self._taken:
+            return
+        self._taken.add(callsign)
+        group, number = callsign[:-3], callsign[-3:]
+        if not (number.isdigit() and number != "000"):
+            return  # not of the form this issuer draws; nothing to count
+        self._taken_per_group[group] = self._taken_per_group.get(group, 0) + 1
+        if len(group) == 3 and group.isalpha() and group.isupper():
+            self._random_letter_taken += 1
+
+    def _has_left(self, prefix: str) -> bool:
+        return self._taken_per_group.get(prefix, 0) < _CALLSIGN_NUMBERS
+
+    def _fallback(self, options: Any, full: set[str]) -> str | None:
+        weights = _callsign_prefix_weights(options)
+        candidates = [
+            prefix
+            for prefix, weight in weights.items()
+            if weight > 0 and prefix not in full and self._has_left(prefix)
+        ]
+        if not candidates:
+            return None
+        p = np.array([weights[prefix] for prefix in candidates], dtype=np.float64)
+        return candidates[int(self._rng.choice(len(candidates), p=p / p.sum()))]
+
+
+def _callsign_prefix_weights(options: Any) -> dict[str, float]:
+    """A region's callsign prefixes and their weights, when they can be listed."""
+    if isinstance(options, list):
+        return dict.fromkeys(options, 1.0)
+    if isinstance(options, Categorical):
+        return {prefix: float(weight) for prefix, weight in options.weights.items()}
+    return {}
+
+
+def _callsigns_exhausted(full: set[str], options: Any) -> str:
+    # Every prefix the region lists is full by now, not just the ones drawn.
+    listable = _callsign_prefix_weights(options)
+    named = sorted(listable or full)
+    listed = "" if listable else (
+        " The region's callsign_prefixes cannot be listed, so no other prefix"
+        " could stand in."
+    )
+    return (
+        f"Callsign prefixes {named} have no callsigns left: all "
+        f"{_CALLSIGN_NUMBERS} of each were issued this episode, and callsigns are "
+        f"never reused within an episode. Give the region more prefixes.{listed}"
+    )
