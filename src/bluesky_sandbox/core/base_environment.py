@@ -190,6 +190,20 @@ class TaskHooks(Protocol):
     def truncated(self, obs, action, context, info, rng) -> bool: ...
 
 
+# The hook names ``TaskHooks`` declares, checked once per construction so a
+# class that is missing them fails where it is built rather than part-way
+# through ``reset``. ``__protocol_attrs__`` is a typing implementation detail,
+# so derive the same set from the Protocol's own namespace if it disappears.
+_TASK_HOOK_NAMES: frozenset[str] = frozenset(
+    getattr(TaskHooks, "__protocol_attrs__", None)
+    or {
+        name
+        for name in vars(TaskHooks)
+        if not name.startswith("_") and callable(getattr(TaskHooks, name, None))
+    }
+)
+
+
 class BlueskyBaseEnvironment(ParallelEnv):
     """Internal BlueSky multi-agent runner (PettingZoo ParallelEnv).
 
@@ -268,6 +282,14 @@ class BlueskyBaseEnvironment(ParallelEnv):
         if not isinstance(config, EnvConfig):
             raise TypeError(f"config must be EnvConfig, got {type(config)!r}")
         self.config = copy.deepcopy(config)
+
+        missing = sorted(name for name in _TASK_HOOK_NAMES if not hasattr(self, name))
+        if missing:
+            raise TypeError(
+                f"{type(self).__name__} does not implement the task hooks "
+                f"{missing}. Subclass BlueskyEnv, which supplies defaults for "
+                "all of them, rather than BlueskyBaseEnvironment directly."
+            )
         self._hooks = cast(TaskHooks, self)
 
         self._aircraft_spawn_time: dict[str, float] = {}

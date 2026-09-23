@@ -7,6 +7,10 @@ import pytest
 
 from bluesky_sandbox import config as config_module
 from bluesky_sandbox.config import apply_performance_model, requested_performance_model
+import bluesky_sandbox.core.base_environment as base_env
+from bluesky_sandbox.core.base_environment import (
+    BlueskyBaseEnvironment as BlueSkyBaseEnvironmentForTest,
+)
 from bluesky_sandbox.core.runtime import BlueSkyRuntime
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.sim.performance.envelope import _aircraft_limits_cached
@@ -273,3 +277,54 @@ def test_requested_performance_model_survives_bs_init():
     finally:
         apply_performance_model(before)
     print("  requested performance model is sticky: OK")
+
+
+# ---- the task-hook contract --------------------------------------------- #
+
+
+def _empty_config():
+    return config_module.EnvConfig(
+        obs_fields=[], intruder_obs_fields=None, action_fields=[], dt=0.2, simdt=0.1
+    )
+
+
+class _EmptyScenario:
+    def sample(self, _rng):
+        return self.support()
+
+    def support(self):
+        return EpisodeSpec(
+            airspace_bounds=None,
+            spawn=SpawnConfig(regions=[]),
+            queryables={},
+            max_aircraft=0,
+        )
+
+
+def test_base_env_rejects_a_class_with_no_task_hooks(monkeypatch):
+    """``self._hooks = cast(TaskHooks, self)`` is an unverified claim.
+
+    ``BlueskyBaseEnvironment`` deliberately defines none of the hooks - they
+    live on ``BlueskyEnv`` - so constructing the base directly used to succeed
+    and then die part-way through ``reset`` with a bare AttributeError. The
+    cast suppresses exactly the warning that would have caught it, and the
+    project runs no type checker, so the check has to be at runtime.
+    """
+    monkeypatch.setattr(
+        config_module, "_available_aircraft", lambda _model: frozenset({"b744"})
+    )
+    with pytest.raises(TypeError, match="does not implement the task hooks"):
+        BlueSkyBaseEnvironmentForTest(config=_empty_config(), scenario=_EmptyScenario())
+
+
+def test_blueskyenv_satisfies_every_declared_hook(monkeypatch):
+    """The public authoring base must supply a default for all of them."""
+    monkeypatch.setattr(
+        config_module, "_available_aircraft", lambda _model: frozenset({"b744"})
+    )
+    env = BlueskyEnv(scenario=_EmptyScenario(), config=_empty_config())
+    try:
+        assert env._hooks is env  # the cast is an alias, not an indirection
+        assert not [n for n in base_env._TASK_HOOK_NAMES if not hasattr(env, n)]
+    finally:
+        env.close()
