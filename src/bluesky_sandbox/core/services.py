@@ -642,7 +642,7 @@ class QueryStateMonitor:
         )
 
     def _sync_aircraft_rows(self, *, reset_step: bool) -> None:
-        current_ids = tuple(str(acid) for acid in bs.traf.id)
+        current_ids = tuple(bs.traf.id)
         if current_ids == self._aircraft_ids:
             if reset_step:
                 self._reset_step_arrays()
@@ -768,17 +768,26 @@ class QueryStateMonitor:
             reached_rows[reached_indices] = True
         except (AttributeError, TypeError, ValueError):
             pass
-        active_route_idx = np.full(n, -1, dtype=np.int32)
-        routes = bs.traf.ap.route
-        for acidx in range(min(n, len(routes))):
-            try:
-                active_route_idx[acidx] = (
-                    -1 if routes[acidx].iactwp is None else int(routes[acidx].iactwp)
-                )
-            except (TypeError, ValueError):
-                active_route_idx[acidx] = -1
-        swlnav = np.asarray(bs.traf.swlnav, dtype=bool)[:n]
-        just_reached_idx = np.where(swlnav, active_route_idx - 1, active_route_idx)
+        # Which route waypoint each aircraft just passed. It only feeds
+        # ``reached_rows & ...``, and a waypoint is reached on a tiny fraction
+        # of substeps, so skip the per-aircraft route walk when none was.
+        just_reached_idx = np.full(n, -1, dtype=np.int32)
+        if reached_rows.any():
+            active_route_idx = np.full(n, -1, dtype=np.int32)
+            routes = bs.traf.ap.route
+            for acidx in range(min(n, len(routes))):
+                try:
+                    active_route_idx[acidx] = (
+                        -1
+                        if routes[acidx].iactwp is None
+                        else int(routes[acidx].iactwp)
+                    )
+                except (TypeError, ValueError):
+                    active_route_idx[acidx] = -1
+            swlnav = np.asarray(bs.traf.swlnav, dtype=bool)[:n]
+            just_reached_idx = np.where(
+                swlnav, active_route_idx - 1, active_route_idx
+            )
 
         for col in self._tracked_waypoint_cols:
             queryable = self._tracked_queryables[col]
@@ -1055,7 +1064,16 @@ class QueryStateMonitor:
 
 
 class TrafficMonitor:
-    """Observe traffic during a step and retain per-agent traffic facts."""
+    """Observe traffic during a step and retain per-agent traffic facts.
+
+    Conflict and LoS state come from BlueSky's detector, which runs only every
+    ``asas_dt`` (see :attr:`EnvConfig.asas_dt`), not every physics substep. The
+    per-substep counts and durations therefore change only when it runs: each
+    detection's result is held for the substeps until the next one. Detection
+    replaces ``confpairs`` / ``lospairs`` / ``inconf`` with new objects, so
+    :meth:`record_substep` rebuilds partners and increments only when one of
+    them is a different object, and otherwise re-adds the cached increments.
+    """
 
     def __init__(self, env=None) -> None:
         self.env = env
@@ -1070,6 +1088,13 @@ class TrafficMonitor:
         self.substep_count = 0
         self._current_conflict_partners: list[tuple[str, ...]] | None = None
         self._current_los_partners: list[tuple[str, ...]] | None = None
+        # The detector output and aircraft ids the cached increments below were
+        # built from; ``None`` forces a rebuild on the next substep.
+        self._cd_seen: tuple[object, ...] | None = None
+        self._inc_conf = np.zeros(0, dtype=np.int32)
+        self._inc_conf_s = np.zeros(0, dtype=np.float64)
+        self._inc_los = np.zeros(0, dtype=np.int32)
+        self._inc_los_s = np.zeros(0, dtype=np.float64)
 
     def bind_env(self, env) -> None:
         self.env = env
@@ -1096,12 +1121,36 @@ class TrafficMonitor:
         self._los_step_partners = [None for _acid in self._aircraft_ids]
         self._current_conflict_partners = None
         self._current_los_partners = None
+        # Rebuild on the first substep: the step partner sets were just wiped,
+        # and BlueSky's own reset empties ``confpairs`` in place - the same list
+        # object - so identity alone would miss it.
+        self._cd_seen = None
 
     def record_substep(self) -> None:
         self.substep_count += 1
         simdt = float(self.env.config.simdt) if self.env is not None else 0.0
         self._sync_aircraft_rows(reset_step=False)
 
+        cd = bs.traf.cd
+        seen = (cd.confpairs, cd.lospairs, cd.inconf, self._aircraft_ids)
+        if self._cd_seen is None or any(
+            now is not before for now, before in zip(seen, self._cd_seen)
+        ):
+            self._refresh_detection(simdt)
+            self._cd_seen = seen
+
+        self._conflict_step_substeps += self._inc_conf
+        self._conflict_total_s += self._inc_conf_s
+        self._los_step_substeps += self._inc_los
+        self._los_total_s += self._inc_los_s
+
+    def _refresh_detection(self, simdt: float) -> None:
+        """Rebuild partners and per-substep increments from BlueSky's detector.
+
+        Merging this detection's partners into the step's partner sets once is
+        the same as merging them every substep it stays current: a set union
+        with the same members changes nothing.
+        """
         conf_partners, los_partners = self._build_current_partner_sets()
         self._current_conflict_partners = tuple(
             () if partners is None else tuple(sorted(partners))
@@ -1116,15 +1165,15 @@ class TrafficMonitor:
         inconf = np.asarray(bs.traf.cd.inconf, dtype=bool)[:n]
         if inconf.size < n:
             inconf = np.pad(inconf, (0, n - inconf.size), constant_values=False)
-        self._conflict_step_substeps += inconf.astype(np.int32)
-        self._conflict_total_s += inconf.astype(np.float64) * simdt
+        self._inc_conf = inconf.astype(np.int32)
+        self._inc_conf_s = inconf.astype(np.float64) * simdt
 
         los_mask = np.zeros(n, dtype=bool)
         los_rows = [row for row, partners in enumerate(los_partners) if partners]
         if los_rows:
             los_mask[np.asarray(los_rows, dtype=np.intp)] = True
-        self._los_step_substeps += los_mask.astype(np.int32)
-        self._los_total_s += los_mask.astype(np.float64) * simdt
+        self._inc_los = los_mask.astype(np.int32)
+        self._inc_los_s = los_mask.astype(np.float64) * simdt
 
         for row, partners in enumerate(conf_partners):
             if not partners:
@@ -1199,7 +1248,7 @@ class TrafficMonitor:
         return self.build_separation_context(acid, acidx).as_info()
 
     def _sync_aircraft_rows(self, *, reset_step: bool) -> None:
-        current_ids = tuple(str(acid) for acid in bs.traf.id)
+        current_ids = tuple(bs.traf.id)
         if current_ids == self._aircraft_ids:
             if reset_step:
                 self._conflict_step_partners = [None for _acid in self._aircraft_ids]
