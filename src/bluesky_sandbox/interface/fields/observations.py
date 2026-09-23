@@ -2274,13 +2274,16 @@ class ApCasErrorKts(_CasEnvelopeBounds, _SpeedEnvelopeKts):
         return (bs.traf.selspd[indices] - bs.traf.cas[indices]) * _MS_TO_KTS
 
     def bounds(self, idx: int) -> tuple[float, float]:
-        lo, hi = self._speed_bounds_ms(idx)
-        current = bs.traf.cas[idx]
-        span = max(
-            max(abs(current - lo), abs(hi - current)) * _MS_TO_KTS,
-            _MIN_DYNAMIC_SPAN,
-        )
-        return self._dynamic_or_configured_bounds(lambda: (-span, span))
+        def resolve() -> tuple[float, float]:
+            lo, hi = self._speed_bounds_ms(idx)
+            current = bs.traf.cas[idx]
+            span = max(
+                max(abs(current - lo), abs(hi - current)) * _MS_TO_KTS,
+                _MIN_DYNAMIC_SPAN,
+            )
+            return -span, span
+
+        return self._dynamic_or_configured_bounds(resolve)
 
 
 @dataclass(frozen=True)
@@ -2310,13 +2313,16 @@ class ApAltErrorFt(_AltitudeEnvelopeBounds, ObsField):
         return (bs.traf.selalt[indices] - bs.traf.alt[indices]) * _M_TO_FT
 
     def bounds(self, idx: int) -> tuple[float, float]:
-        current_ft = bs.traf.alt[idx] * _M_TO_FT
-        ceiling_ft = self._altitude_ceiling_ft(idx)
-        span = max(
-            max(abs(current_ft), abs(ceiling_ft - current_ft)),
-            _MIN_DYNAMIC_SPAN,
-        )
-        return self._dynamic_or_configured_bounds(lambda: (-span, span))
+        def resolve() -> tuple[float, float]:
+            current_ft = bs.traf.alt[idx] * _M_TO_FT
+            ceiling_ft = self._altitude_ceiling_ft(idx)
+            span = max(
+                max(abs(current_ft), abs(ceiling_ft - current_ft)),
+                _MIN_DYNAMIC_SPAN,
+            )
+            return -span, span
+
+        return self._dynamic_or_configured_bounds(resolve)
 
 
 @dataclass(frozen=True)
@@ -2346,13 +2352,16 @@ class ApAltErrorM(_AltitudeEnvelopeBounds, ObsField):
         return bs.traf.selalt[indices] - bs.traf.alt[indices]
 
     def bounds(self, idx: int) -> tuple[float, float]:
-        current_m = bs.traf.alt[idx]
-        ceiling_m = self._altitude_ceiling_m(idx)
-        span = max(
-            max(abs(current_m), abs(ceiling_m - current_m)),
-            _MIN_DYNAMIC_SPAN,
-        )
-        return self._dynamic_or_configured_bounds(lambda: (-span, span))
+        def resolve() -> tuple[float, float]:
+            current_m = bs.traf.alt[idx]
+            ceiling_m = self._altitude_ceiling_m(idx)
+            span = max(
+                max(abs(current_m), abs(ceiling_m - current_m)),
+                _MIN_DYNAMIC_SPAN,
+            )
+            return -span, span
+
+        return self._dynamic_or_configured_bounds(resolve)
 
 
 @dataclass(frozen=True)

@@ -613,11 +613,12 @@ class ApSpdDeltaKts(ActionField):
         bs.stack.stack(f"SPD {bs.traf.id[idx]} {min(max(target, lo), hi):{_FMT}}")
 
     def bounds(self, idx: int) -> tuple[float, float]:
-        current = bs.traf.cas[idx] * _MS_TO_KTS
-        lo, hi = self._target_bounds_kts(idx)
-        return self._dynamic_or_configured_bounds(
-            lambda: _reachable_delta(lo, hi, current)
-        )
+        def resolve() -> tuple[float, float]:
+            current = bs.traf.cas[idx] * _MS_TO_KTS
+            lo, hi = self._target_bounds_kts(idx)
+            return _reachable_delta(lo, hi, current)
+
+        return self._dynamic_or_configured_bounds(resolve)
 
     def _target_bounds_kts(self, idx: int) -> tuple[float, float]:
         lo = bs.traf.perf.vmin[idx] * _MS_TO_KTS

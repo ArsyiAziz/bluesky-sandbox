@@ -27,9 +27,8 @@ Four invariants:
 
 Known defects are marked ``xfail(strict=True)``, so whichever fix lands first
 reports XPASS and has to remove the marker. Pairings the sweep simply cannot
-measure - a multi-output field under a scalar normalizer, a field whose bounds
-it cannot set - are skipped instead, and the defect behind the skip is pinned
-by a strict test of its own.
+measure - a multi-output field under a scalar normalizer - are skipped
+instead, and the defect behind the skip is pinned by a strict test of its own.
 """
 
 from __future__ import annotations
@@ -96,14 +95,6 @@ _EXTRA_KWARGS = {
         "steps": 1,
     },
 }
-
-# These four declare ``low``/``high`` as "None = runtime envelope", and setting
-# them flips ``bounds_overridden`` to True - but their ``bounds()`` override
-# reads ``bs.traf`` directly and never consults ``self.low``/``self.high``, so
-# the explicit values are silently discarded.
-_IGNORES_EXPLICIT_BOUNDS = frozenset(
-    {"ApAltErrorFt", "ApAltErrorM", "ApCasErrorKts", "ApSpdDeltaKts"}
-)
 
 # Multi-output fields: ``bounds()`` returns arrays, one entry per component, so
 # the scalar ``Normalizer`` contract does not apply. ``services`` rejects the
@@ -180,33 +171,14 @@ ALL_FIELDS = OBS_FIELDS + ACTION_FIELDS
 def _sweep_field(cls: type, sample: Sample):
     """Build ``cls`` for ``sample``, skipping pairings that are out of scope.
 
-    These are *skips*, not xfails: the sweep cannot test a field whose bounds it
-    cannot set, but that is a missing measurement rather than a known-wrong
-    answer. The wrong answer itself is owned by
-    :func:`test_every_field_builds_with_explicit_bounds`, which carries the
-    strict marker that fails when the field is fixed.
+    This is a *skip*, not an xfail: the sweep cannot scale a field whose bounds
+    are per-component, but that is a missing measurement rather than a
+    known-wrong answer. The wrong answer itself is owned by
+    :func:`test_scalar_normalizer_on_a_multi_output_field_is_rejected`.
     """
     if cls.__name__ in _MULTI_OUTPUT:
         pytest.skip(f"{cls.__name__} is multi-output; scalar normalizers do not apply")
-    if cls.__name__ in _IGNORES_EXPLICIT_BOUNDS:
-        pytest.skip(f"{cls.__name__}.bounds() ignores explicit low/high")
     return _build(cls, low=sample.bounds[0], high=sample.bounds[1], normalizer=sample.normalizer)
-
-
-def _params(classes: list[type]):
-    """Parametrize over field classes, marking the known-broken ones strictly so
-    a fix reports XPASS instead of passing silently."""
-    out = []
-    for cls in classes:
-        marks = ()
-        if cls.__name__ in _IGNORES_EXPLICIT_BOUNDS:
-            marks = pytest.mark.xfail(
-                strict=True,
-                reason=f"{cls.__name__}.bounds() reads bs.traf and never consults "
-                "self.low/self.high, so bounds_overridden=True is a no-op",
-            )
-        out.append(pytest.param(cls, marks=marks, id=cls.__name__))
-    return out
 
 
 # ---- the registry itself -------------------------------------------------- #
@@ -220,9 +192,15 @@ def test_the_sweep_actually_covers_the_field_modules():
     assert actions.HdgDeltaDeg in ACTION_FIELDS
 
 
-@pytest.mark.parametrize("cls", _params(ALL_FIELDS))
+@pytest.mark.parametrize("cls", ALL_FIELDS, ids=_ids(ALL_FIELDS))
 def test_every_field_builds_with_explicit_bounds(cls):
-    """The premise of the sweep: bounds can be forced without a live sim."""
+    """The premise of the sweep: bounds can be forced without a live sim.
+
+    Every dynamic field resolves through ``_dynamic_or_configured_bounds``,
+    which consults ``bounds_overridden`` before touching ``bs.traf`` - but only
+    if the caller defers the traffic read into the callable rather than
+    computing it first. Nothing static catches that, so this does.
+    """
     field = _build(cls, low=-10.0, high=10.0)
     low, high = field.bounds(0)
     assert np.all(np.asarray(low) <= np.asarray(high))
