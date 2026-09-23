@@ -191,11 +191,20 @@ def _field_params(cls) -> list[dict[str, Any]]:
     try:
         fields = dataclasses.fields(cls)
     except TypeError:
+        # Not a dataclass - a Normalizer, say. Its constructor annotations live
+        # on ``__init__``, not on the class, and PEP 563 leaves them as strings
+        # there. Resolving them off the class alone leaves every ``X | None``
+        # parameter looking like an un-editable object, so it drops silently
+        # out of the palette.
+        try:
+            init_hints = get_type_hints(cls.__init__, include_extras=True)
+        except Exception:
+            init_hints = {}
         for name, p in inspect.signature(cls).parameters.items():
             if name in {"self", * _SKIP_FIELD_PARAMS} or name.startswith("_"):
                 continue
             default = None if p.default is inspect.Parameter.empty else p.default
-            _append(name, p.annotation, default)
+            _append(name, init_hints.get(name, p.annotation), default)
         return out
     for f in fields:
         if f.name in _SKIP_FIELD_PARAMS or f.name.startswith("_"):

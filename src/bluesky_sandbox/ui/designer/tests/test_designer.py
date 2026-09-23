@@ -27,6 +27,8 @@ from scipy.stats import poisson, randint, truncnorm
 
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.task import QueryableTemporalStateUnavailable
+from bluesky_sandbox.ui.designer import catalog
+from bluesky_sandbox.ui.designer.builder import _resolve_normalizer
 from bluesky_sandbox.interface.wrappers.observations.normalizer import (
     MinMaxNormalizer,
     SymmetricNormalizer,
@@ -1029,6 +1031,10 @@ def test_build_scenario_and_env_config():
     assert isinstance(cfg.obs_fields[2].normalizer, MinMaxNormalizer)
     assert isinstance(cfg.action_fields[1].normalizer, SymmetricNormalizer)
     assert cfg.action_fields[1].normalizer.clipped is True
+    # The normalized range is a plain scalar pair, so it survives the spec
+    # round-trip like any other kwarg - and reaches the palette, which only
+    # exposes scalar-defaulted constructor params.
+    assert cfg.obs_fields[2].normalizer.normalized_interval == (0.0, 1.0)
     assert cfg.allowed_aircraft == ["A320", "B738"]
     assert len(cfg.task_info_providers) == 1
     # Config remains static; scenario airspace is not injected into field bounds.
@@ -1515,3 +1521,30 @@ def test_runner_repo_root_is_the_package_parent():
     )
     assert root.name != "bluesky_sandbox"
     print("  runner repo root: OK")
+
+
+def test_the_normalizer_palette_exposes_the_normalized_range():
+    """The range a policy head emits has to be reachable from the designer, not
+    just from code. It is typed ``float | None`` on ``__init__`` rather than on
+    the class, so the catalog has to resolve hints from the constructor.
+    """
+    by_name = {n["name"]: n for n in catalog.normalizers()}
+    params = {p["name"]: p for p in by_name["SymmetricNormalizer"]["params"]}
+
+    assert set(params) == {"clipped", "normalized_low", "normalized_high"}
+    for end in ("normalized_low", "normalized_high"):
+        assert params[end]["default"] is None
+        assert params[end]["optional"] is True  # blank keeps the class default
+        assert params[end]["type"] == "float | None"
+
+
+def test_a_designed_normalizer_carries_its_normalized_range_through_the_spec():
+    built = _resolve_normalizer(
+        {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {"normalized_low": -math.pi, "normalized_high": math.pi},
+        }
+    )
+    assert isinstance(built, SymmetricNormalizer)
+    assert built.normalized_interval == (-math.pi, math.pi)
