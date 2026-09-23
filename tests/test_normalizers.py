@@ -43,6 +43,7 @@ import pytest
 import bluesky_sandbox.interface.fields.actions as actions
 import bluesky_sandbox.interface.fields.observations as observations
 from bluesky_sandbox.core import services
+from bluesky_sandbox.interface.fields import base
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
 from bluesky_sandbox.interface.wrappers.observations import normalizer as nz
 
@@ -185,7 +186,18 @@ def _sweep_field(cls: type, sample: Sample):
     """
     if cls.__name__ in _MULTI_OUTPUT:
         pytest.skip(f"{cls.__name__} is multi-output; scalar normalizers do not apply")
-    return _build(cls, low=sample.bounds[0], high=sample.bounds[1], normalizer=sample.normalizer)
+    field = _build(
+        cls, low=sample.bounds[0], high=sample.bounds[1], normalizer=sample.normalizer
+    )
+    # CircularNormalizer refuses anything that is not an angle in degrees, so
+    # the sweep cannot pair it with a speed or a distance. That refusal is
+    # behaviour under test in its own right - see
+    # ``test_circular_refuses_a_field_that_does_not_wrap``.
+    if isinstance(sample.normalizer, nz.CircularNormalizer):
+        unit = getattr(field.meta, "unit", None)
+        if unit is not base.Unit.DEG:
+            pytest.skip(f"{cls.__name__} is in {unit}; CircularNormalizer needs degrees")
+    return field
 
 
 # ---- the registry itself -------------------------------------------------- #
@@ -500,6 +512,67 @@ def test_a_degenerate_span_is_rejected_rather_than_dividing_by_zero(sample):
     field = observations.LatDeg(low=5.0, high=5.0)
     with pytest.raises(ValueError, match="bounds must have high > low"):
         sample.normalizer.normalize(field, 5.0, 0)
+
+
+@pytest.mark.parametrize(
+    ("field_factory", "match"),
+    [
+        pytest.param(
+            lambda: observations.AltFt(low=0.0, high=360.0), "in degrees",
+            id="wrong unit, right span",
+        ),
+        pytest.param(
+            lambda: observations.DistToOwnNm(low=0.0, high=360.0), "in degrees",
+            id="distance",
+        ),
+        pytest.param(
+            lambda: observations.LatDeg(), "one full turn",
+            id="degrees that do not wrap",
+        ),
+        pytest.param(
+            lambda: observations.HdgDeg(low=-math.pi, high=math.pi), "one full turn",
+            id="radians mislabelled as degrees",
+        ),
+    ],
+)
+def test_circular_refuses_a_field_that_does_not_wrap(field_factory, match):
+    """cos/sin of a non-angle is not an error, just nonsense - an altitude in
+    feet aliases every 360 ft onto the same point, and a field holding radians
+    collapses the whole circle into a 6.3 degree arc. Both used to pass
+    silently on the observation path."""
+    with pytest.raises(ValueError, match=match):
+        nz.CircularNormalizer().output_bounds(field_factory())
+
+
+@pytest.mark.parametrize(
+    "field_factory",
+    [
+        lambda: observations.HdgDeg(low=0.0, high=360.0),
+        lambda: observations.TrkDeg(low=0.0, high=360.0),
+        lambda: observations.AngleDifference(
+            left=observations.TrkDeg(), right=observations.HdgDeg()
+        ),
+        lambda: actions.HdgDeg(low=0.0, high=360.0),
+    ],
+    ids=["HdgDeg", "TrkDeg", "AngleDifference(-180,180)", "action HdgDeg"],
+)
+def test_circular_accepts_a_genuine_full_turn(field_factory):
+    """The guard must not reject the fields it exists to serve - including a
+    signed difference on (-180, 180), which wraps just as 0..360 does."""
+    assert nz.CircularNormalizer().output_bounds(field_factory()) == (
+        [-1.0, -1.0],
+        [1.0, 1.0],
+    )
+
+
+def test_circular_takes_no_normalized_range():
+    """``atan2`` recovers the angle from the pair's direction, which survives a
+    positive scaling but not a translation - so an interval off-centre from
+    zero would decode to the wrong angle. The unit circle is the only sensible
+    choice, so there is nothing to configure."""
+    with pytest.raises(TypeError):
+        nz.CircularNormalizer(normalized_low=0.0, normalized_high=1.0)
+    assert nz.CircularNormalizer().normalized_interval == (-1.0, 1.0)
 
 
 def test_circular_refuses_an_action_field_narrower_than_a_full_turn():

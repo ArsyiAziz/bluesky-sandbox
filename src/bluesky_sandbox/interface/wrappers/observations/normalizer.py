@@ -28,7 +28,12 @@ from typing import TypeAlias
 
 import numpy as np
 
-from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
+from bluesky_sandbox.interface.fields.base import (
+    ActionField,
+    ObsField,
+    PairObsField,
+    Unit,
+)
 
 FieldLike: TypeAlias = ObsField | PairObsField | ActionField
 
@@ -398,8 +403,14 @@ class PowerNormalizer(_ScaledNormalizer):
 class CircularNormalizer(Normalizer):
     """Encode an angle (degrees) as ``(cos, sin) in [-1, 1]^2``.
 
-    Range-independent. For pair angle differences, use
-    ``obs.AngleDifference(...)`` or ``obs.TrkDeg().relative_to_own(...)``.
+    Only accepts a field that is genuinely circular - unit ``DEG``, spanning
+    one full turn - checked when the space is built. Anything else has no
+    circular encoding, and the failure is otherwise silent rather than loud.
+
+    Range-independent *within* that constraint: the encoding reads the value
+    directly, so the bounds set the contract but never scale the result. For
+    pair angle differences, use ``obs.AngleDifference(...)`` or
+    ``obs.TrkDeg().relative_to_own(...)``.
 
     As an ACTION encoder the pair is decoded by ``atan2``, so only its direction
     reaches the sim and its magnitude is a redundant degree of freedom. See
@@ -410,7 +421,54 @@ class CircularNormalizer(Normalizer):
     """
 
     is_circular = True
+    # Not configurable, unlike the scaled strategies. ``atan2`` recovers the
+    # angle from the pair's DIRECTION, which survives a positive scaling but
+    # not a translation - so any interval not centred on zero would decode to
+    # the wrong angle. ``(-1, 1)`` is the unit circle and the only sensible
+    # choice, which is why there is no ``normalized_low``/``normalized_high``
+    # here.
     normalized_interval = (-1.0, 1.0)
+
+    def _require_a_full_turn(self, field) -> None:
+        """Reject a field that is not an angle in degrees spanning one turn.
+
+        The encoding is ``cos``/``sin`` of the value read as DEGREES, which
+        only means anything for a quantity that wraps. Applied to anything
+        else it silently produces a plausible-looking pair rather than
+        failing: a field holding radians reads ``pi`` as 3.14 *degrees* and
+        collapses the whole circle into a 6.3 degree arc, and an altitude in
+        feet aliases every 360 ft onto the same point.
+
+        Checked where the space is built rather than per value. ``normalize``
+        runs per field, per aircraft, per step, and reading the field's bounds
+        there costs more than the ``cos``/``sin`` it would be guarding.
+        """
+        unit = getattr(field.meta, "unit", None)
+        if unit is not Unit.DEG:
+            raise ValueError(
+                f"CircularNormalizer needs an angle in degrees, but "
+                f"{field.meta.name!r} is in {unit}. Use a scaled strategy "
+                f"for a non-angular quantity."
+            )
+        static = _static_or_custom_bounds(field)
+        if static is None:
+            # Dynamic bounds resolve against live traffic, so there is nothing
+            # to check yet; ``denormalize`` still checks the action path.
+            return
+        span = static[1] - static[0]
+        if not math.isclose(span, 360.0):
+            raise ValueError(
+                f"CircularNormalizer needs a field spanning one full turn, "
+                f"but {field.meta.name!r} spans {span} degrees. A quantity "
+                f"that does not wrap has no circular encoding - "
+                f"SymmetricNormalizer scales it linearly instead."
+            )
+
+    def output_bounds(self, field):
+        # The one hook every configured field passes through when its space is
+        # built, so a bad pairing fails at construction, not mid-episode.
+        self._require_a_full_turn(field)
+        return super().output_bounds(field)
 
     def normalize(self, field, value, idx):
         rad = math.radians(value)
