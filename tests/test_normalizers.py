@@ -42,6 +42,7 @@ import pytest
 
 import bluesky_sandbox.interface.fields.actions as actions
 import bluesky_sandbox.interface.fields.observations as observations
+from bluesky_sandbox.interface.fields.observations import _LAG_MAXLEN
 from bluesky_sandbox.core import services
 from bluesky_sandbox.interface.fields import base
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
@@ -89,13 +90,19 @@ _EXTRA_KWARGS = {
     },
     "LaggedObs": lambda lo, hi: {
         "inner": observations.LatDeg(low=lo, high=hi),
-        "steps": 1,
+        "steps": _SWEEP_LAG_STEPS,
     },
     "LaggedPair": lambda lo, hi: {
         "inner": observations.DistToOwnNm(low=lo, high=hi),
-        "steps": 1,
+        "steps": _SWEEP_LAG_STEPS,
     },
 }
+
+# The sweep builds lag channels at a non-trivial depth: ``steps=1`` is the
+# minimum and would not distinguish a wrapper that ignores its depth from one
+# that handles it. Depth-independence itself is pinned by
+# ``test_a_lag_channel_normalizes_identically_at_any_depth``.
+_SWEEP_LAG_STEPS = 3
 
 # Multi-output fields: ``bounds()`` returns one pair per component, so the
 # scalar ``Normalizer`` contract does not apply and the sweep cannot measure
@@ -691,3 +698,75 @@ def test_an_unset_normalizer_reports_bounds_per_aircraft():
     assert services._field_normalizer(field) is None
     low, high = services._field_output_bounds(field, 0)
     assert (low[0], high[0]) == field.bounds(0)
+
+
+# ---- lag depth ------------------------------------------------------------ #
+#
+# ``LaggedObs``/``LaggedPair`` promise that "bounds, normalizer and output size
+# all delegate to inner, so a stacked channel lands on exactly the same scale
+# as the live one and needs no separate calibration". If a depth ever leaked
+# into the scale, stacked frames would disagree about what a value means and
+# the disagreement would be invisible - the numbers stay plausible.
+
+
+@pytest.mark.parametrize("sample", SAMPLES, ids=SAMPLE_IDS)
+@pytest.mark.parametrize("steps", [1, 2, 3, _LAG_MAXLEN - 1], ids=lambda n: f"lag{n}")
+def test_a_lag_channel_normalizes_identically_at_any_depth(steps, sample):
+    """Every depth has to produce the value the LIVE field would."""
+    low, high = sample.bounds
+    if isinstance(sample.normalizer, nz.CircularNormalizer):
+        live = observations.HdgDeg(low=0.0, high=360.0, normalizer=sample.normalizer)
+        inner = observations.HdgDeg(low=0.0, high=360.0)
+    else:
+        live = observations.LatDeg(low=low, high=high, normalizer=sample.normalizer)
+        inner = observations.LatDeg(low=low, high=high)
+    lagged = observations.LaggedObs(
+        low=low, high=high, normalizer=sample.normalizer, inner=inner, steps=steps
+    )
+
+    assert lagged.bounds(0) == live.bounds(0)
+    assert services._field_output_size(lagged) == services._field_output_size(live)
+    assert sample.normalizer.output_bounds(lagged) == sample.normalizer.output_bounds(live)
+    for value in sample.values:
+        assert sample.normalizer.normalize(lagged, value, 0) == pytest.approx(
+            sample.normalizer.normalize(live, value, 0)
+        )
+
+
+@pytest.mark.parametrize("steps", [1, 2, 3, _LAG_MAXLEN - 1], ids=lambda n: f"lag{n}")
+def test_a_lag_channel_is_named_for_its_depth(steps):
+    """The depth is the only thing that distinguishes stacked channels, so it
+    has to reach the observation labels."""
+    inner = observations.LatDeg(low=-10.0, high=10.0)
+    assert observations.LaggedObs(inner=inner, steps=steps).meta.name == (
+        f"{inner.meta.name}_lag{steps}"
+    )
+    pair = observations.DistToOwnNm(low=0.0, high=50.0)
+    assert observations.LaggedPair(inner=pair, steps=steps).meta.name == (
+        f"{pair.meta.name}_lag{steps}"
+    )
+
+
+@pytest.mark.parametrize("steps", [0, -1], ids=["zero", "negative"])
+def test_a_lag_depth_below_one_is_rejected(steps):
+    with pytest.raises(ValueError, match="must be >= 1"):
+        observations.LaggedObs(inner=observations.LatDeg(), steps=steps)
+
+
+@pytest.mark.parametrize(
+    "steps", [_LAG_MAXLEN, _LAG_MAXLEN + 5], ids=["at the limit", "past it"]
+)
+def test_a_lag_depth_beyond_the_history_buffer_is_rejected(steps):
+    """The buffer is finite, so a depth it cannot serve has to fail loudly at
+    construction rather than silently returning the oldest frame it has."""
+    with pytest.raises(ValueError, match="history buffer"):
+        observations.LaggedObs(inner=observations.LatDeg(), steps=steps)
+
+
+@pytest.mark.parametrize("steps", [1, 3, _LAG_MAXLEN - 1], ids=lambda n: f"lag{n}")
+def test_a_lagged_pair_keeps_its_inner_scale_at_any_depth(steps):
+    inner = observations.DistToOwnNm(low=0.0, high=50.0)
+    normalizer = nz.MinMaxNormalizer()
+    lagged = observations.LaggedPair(inner=inner, steps=steps, normalizer=normalizer)
+    assert lagged.bounds(0) == inner.bounds(0)
+    assert normalizer.normalize(lagged, 12.5, 0) == pytest.approx([0.25])
