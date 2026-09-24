@@ -198,3 +198,21 @@ def test_a_new_episode_may_issue_the_same_callsigns_again():
         assert set(bs.traf.id) == first  # same seed, same names: nothing carried over
     finally:
         env.close()
+
+
+def test_creating_a_live_callsign_is_an_error_not_a_silent_no_op():
+    # BlueSky's ``cre`` refuses a live duplicate by returning (False, reason),
+    # not by raising; the runtime must not carry on as if it had worked.
+    env = BlueskyEnv(
+        scenario=_Scenario(), config=EnvConfig(dt=12.0, obs_fields=[], action_fields=[])
+    )
+    try:
+        env.reset(seed=0)
+        live = bs.traf.id[0]
+        count = bs.traf.ntraf
+        refused = rf"did not create aircraft '{live}'.*already exists"
+        with pytest.raises(RuntimeError, match=refused):
+            env._runtime.create_aircraft(live, "B744", 52.0, 4.0, 0.0, 8_000.0, 250.0)
+        assert bs.traf.ntraf == count
+    finally:
+        env.close()

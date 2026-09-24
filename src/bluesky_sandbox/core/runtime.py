@@ -166,7 +166,7 @@ class BlueSkyRuntime:
     ) -> None:
         # Public sandbox inputs use aviation units; BlueSky's Traffic API
         # expects altitude in metres and CAS in metres/second.
-        bs.traf.cre(
+        created = bs.traf.cre(
             callsign,
             actype,
             lat_deg,
@@ -175,6 +175,14 @@ class BlueSkyRuntime:
             alt_ft * ft,
             spd_kts * kts,
         )
+        # ``cre`` does not raise when it refuses: it returns ``(False, reason)``
+        # and creates nothing. Carrying on would set up control state, spawn
+        # time and a route for an aircraft BlueSky never made.
+        if created is not True:
+            reason = created[1] if isinstance(created, tuple) else created
+            raise RuntimeError(
+                f"BlueSky did not create aircraft {callsign!r}: {reason}"
+            )
         # ``cre`` leaves the aircraft in the NA flight phase until the first
         # perf update, and OpenAP maps ``NA -> vmin = 0``. Envelope-speed
         # sampling (feasible_cas_at_alt / feasible_alt_cas) runs immediately
