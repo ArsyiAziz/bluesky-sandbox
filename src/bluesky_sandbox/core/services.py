@@ -187,17 +187,14 @@ class ActionDispatcher:
             for field, value in values
             if isinstance(field, SwitchActionMixin)
         ]
-        switch_commands = {
-            field.meta.name: field.switch_command(value)
-            for field, value in switch_fields
-        }
-        switch_on = {
-            field.meta.name: (
-                command is True or (command is None and field.current_switch_state(idx))
+        switch_commands = {}
+        switch_on = {}
+        for field, value in switch_fields:
+            command = field.switch_command(value)
+            switch_commands[field.meta.name] = command
+            switch_on[field.meta.name] = command is True or (
+                command is None and field.current_switch_state(idx)
             )
-            for field, _value in switch_fields
-            for command in (switch_commands[field.meta.name],)
-        }
         switch_on_before_dependencies = dict(switch_on)
 
         changed = True
@@ -664,9 +661,7 @@ class QueryStateMonitor:
                 except (TypeError, ValueError):
                     active_route_idx[acidx] = -1
             swlnav = np.asarray(bs.traf.swlnav, dtype=bool)[:n]
-            just_reached_idx = np.where(
-                swlnav, active_route_idx - 1, active_route_idx
-            )
+            just_reached_idx = np.where(swlnav, active_route_idx - 1, active_route_idx)
 
         min_distance = table["min_distance_nm"]
         min_abs_alt = table["min_abs_alt_diff_ft"]
