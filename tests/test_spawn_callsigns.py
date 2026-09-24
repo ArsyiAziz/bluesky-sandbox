@@ -175,8 +175,8 @@ def test_naming_never_moves_traffic(monkeypatch):
         # Burn naming draws at episode start: different names, same traffic.
         original = _CallsignIssuer.start_episode
 
-        def start_then_burn(self, rng):
-            original(self, rng)
+        def start_then_burn(self, rng, *args, **kwargs):
+            original(self, rng, *args, **kwargs)
             self._rng.integers(1000, size=7)
 
         monkeypatch.setattr(_CallsignIssuer, "start_episode", start_then_burn)

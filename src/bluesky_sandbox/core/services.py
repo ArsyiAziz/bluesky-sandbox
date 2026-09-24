@@ -479,6 +479,29 @@ class RenderableBuilder:
             # aircraft's route instead (see each view's selected-route drawing).
 
 
+def _aircraft_keys(env) -> tuple[int, ...]:
+    """The monitors' row keys: each aircraft's uid, in ``bs.traf.id`` order.
+
+    Keyed by uid, not callsign: a new aircraft can reuse a deleted one's
+    callsign, and rows keyed by callsign would hand it the old one's history.
+    """
+    if env is None:
+        raise RuntimeError("Monitor env has not been set.")
+    return tuple(env._runtime.aircraft_uids.tolist())
+
+
+def _row_at(table: AircraftTable, env, acidx: int) -> int | None:
+    """The table row of the aircraft at BlueSky index ``acidx``, by its uid.
+
+    Right however traffic changed since the table last synced: the uid array
+    is kept current by BlueSky itself.
+    """
+    uids = env._runtime.aircraft_uids
+    if not 0 <= acidx < len(uids):
+        return None
+    return table.row.get(int(uids[acidx]))
+
+
 class QueryStateMonitor:
     """Track built-in queryable event state across simulator substeps.
 
@@ -523,7 +546,7 @@ class QueryStateMonitor:
     ) -> None:
         """Remember which BlueSky route index corresponds to each query name."""
         self._sync_layout()
-        row = self._table.row.get(acid)
+        row = self._row_of(acid)
         if row is None:
             return
         route_index = self._table["route_index"]
@@ -536,12 +559,19 @@ class QueryStateMonitor:
                 route_index[row, col] = index
 
     def clear_aircraft_route(self, acid: str) -> None:
-        row = self._table.row.get(acid)
+        row = self._row_of(acid)
         if row is not None:
             self._table["route_index"][row, :] = -1
 
-    def _route_index(self, acid: str, name: str) -> int | None:
-        row = self._table.row.get(acid)
+    def _row_of(self, acid: str) -> int | None:
+        try:
+            acidx = bs.traf.id.index(acid)
+        except ValueError:
+            return None
+        return _row_at(self._table, self.env, acidx)
+
+    def _route_index(self, acidx: int, name: str) -> int | None:
+        row = _row_at(self._table, self.env, acidx)
         col = self._table.col.get(name)
         if row is None or col is None:
             return None
@@ -565,7 +595,7 @@ class QueryStateMonitor:
         """Columns to the episode's queryables, rows to BlueSky's aircraft."""
         names = () if self.env is None else tuple(self.env.episode_queryables)
         self._table.set_columns(names)
-        self._table.sync_rows(bs.traf.id)
+        self._table.sync_rows(_aircraft_keys(self.env))
 
     def record_substep(self) -> None:
         if self.env is None:
@@ -573,7 +603,7 @@ class QueryStateMonitor:
         if not self._tracked:
             return
         table = self._table
-        table.sync_rows(bs.traf.id)
+        table.sync_rows(_aircraft_keys(self.env))
         simdt = float(self.env.config.simdt)
         n = len(table)
         if n == 0:
@@ -781,7 +811,7 @@ class QueryStateMonitor:
     def query(self, acid: str, acidx: int, name: str, queryable):
         track_temporal_state = bool(getattr(queryable, "track_temporal_state", False))
         if isinstance(queryable, Waypoint) and not track_temporal_state:
-            route_idx = self._route_index(acid, name)
+            route_idx = self._route_index(acidx, name)
             target = (
                 queryable.target_from_route(acidx, route_idx)
                 if route_idx is not None
@@ -800,7 +830,7 @@ class QueryStateMonitor:
             current = queryable.contains_aircraft(acidx)
             event = self._event(
                 current,
-                self._table.row.get(acid),
+                _row_at(self._table, self.env, acidx),
                 self._table.col.get(name),
                 self._table["held_step_substeps"],
                 self._table["held_total_s"],
@@ -824,9 +854,9 @@ class QueryStateMonitor:
         queryable: Waypoint,
     ) -> WaypointResult:
         table = self._table
-        row = table.row.get(acid)
+        row = _row_at(table, self.env, acidx)
         col = table.col.get(name)
-        route_idx = self._route_index(acid, name)
+        route_idx = self._route_index(acidx, name)
         target = (
             queryable.target_from_route(acidx, route_idx)
             if route_idx is not None
@@ -1036,7 +1066,7 @@ class TrafficMonitor:
 
         simdt = float(self.env.config.simdt) if self.env is not None else 0.0
         table = self._table
-        row = table.row.get(acid)
+        row = _row_at(table, self.env, acidx)
         if row is None:
             conflict_substeps = 0
             los_substeps = 0
@@ -1089,7 +1119,7 @@ class TrafficMonitor:
 
     def _sync_rows(self) -> None:
         """Rows to BlueSky's aircraft, carrying the partner lists alongside."""
-        take = self._table.sync_rows(bs.traf.id)
+        take = self._table.sync_rows(_aircraft_keys(self.env))
         if take is None:
             return
         self._conflict_step_partners = [
@@ -1121,10 +1151,12 @@ class TrafficMonitor:
         self,
     ) -> tuple[list[set[str] | None], list[set[str] | None]]:
         self._sync_rows()
+        # Freshly synced, the rows are in ``bs.traf.id`` order.
+        row_of = {acid: row for row, acid in enumerate(bs.traf.id)}
         conf_partners: list[set[str] | None] = [None] * len(self._table)
         los_partners: list[set[str] | None] = [None] * len(self._table)
         for a, b in bs.traf.cd.confpairs:
-            row = self._table.row.get(str(a))
+            row = row_of.get(str(a))
             if row is not None:
                 partners = conf_partners[row]
                 if partners is None:
@@ -1132,7 +1164,7 @@ class TrafficMonitor:
                 else:
                     partners.add(str(b))
         for a, b in bs.traf.cd.lospairs:
-            row = self._table.row.get(str(a))
+            row = row_of.get(str(a))
             if row is not None:
                 partners = los_partners[row]
                 if partners is None:

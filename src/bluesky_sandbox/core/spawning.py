@@ -85,7 +85,7 @@ class SpawnGenerator:
         """
         self._queue.clear()
         self._maintain_failures.clear()
-        self._callsigns.start_episode(rng)
+        self._callsigns.start_episode(rng, self.env._runtime.created_callsigns)
         self._sample_maintain_targets(rng)
 
     def schedule_episode(self, rng: np.random.Generator) -> None:
@@ -679,10 +679,12 @@ _RANDOM_LETTER_CALLSIGNS = len(_CALLSIGN_LETTERS) ** 3 * _CALLSIGN_NUMBERS
 class _CallsignIssuer:
     """Random-looking callsigns, each issued at most once per episode.
 
-    BlueSky refuses only a *live* duplicate, but everything keyed by callsign -
-    the substep monitors, agent names - would take an aircraft reusing a
-    deleted one's callsign for that aircraft. So draws are rejected against
-    every callsign issued, or seen live, this episode. Each letter group counts
+    BlueSky refuses only a *live* duplicate, but anything keyed by callsign -
+    agent names, for one - would take an aircraft reusing a deleted one's
+    callsign for that aircraft. So draws are rejected against every callsign
+    issued, seen live, or created by anyone this episode - the runtime logs
+    each creation, so aircraft that user code created and deleted between two
+    spawns are known too. Each letter group counts
     how many of its numbers are taken, so a prefix running dry is an exact
     check, never an unlucky streak of draws.
 
@@ -693,14 +695,23 @@ class _CallsignIssuer:
 
     def __init__(self) -> None:
         self._rng: np.random.Generator | None = None
+        # The runtime's log of every callsign created, and how far it is read.
+        self._created: list[Callsign] | None = None
+        self._created_read = 0
         self._taken: set[Callsign] = set()
         # Letter group (a prefix, or three random letters) -> numbers taken.
         self._taken_per_group: dict[str, int] = {}
         self._random_letter_taken = 0
 
-    def start_episode(self, rng: np.random.Generator) -> None:
+    def start_episode(
+        self,
+        rng: np.random.Generator,
+        created: list[Callsign] | None = None,
+    ) -> None:
         # ``spawn`` derives an independent stream without advancing ``rng``.
         self._rng = rng.spawn(1)[0]
+        self._created = created
+        self._created_read = 0
         self._taken.clear()
         self._taken_per_group.clear()
         self._random_letter_taken = 0
@@ -726,6 +737,7 @@ class _CallsignIssuer:
             raise RuntimeError("_CallsignIssuer.start_episode has not been called.")
         for callsign in live:
             self._take(callsign)
+        self._take_created()
         if prefix is None:
             if self._random_letter_taken >= _RANDOM_LETTER_CALLSIGNS:
                 raise RuntimeError(
@@ -753,6 +765,16 @@ class _CallsignIssuer:
             if callsign not in self._taken:
                 self._take(callsign)
                 return callsign
+
+    def _take_created(self) -> None:
+        log = self._created
+        if log is None:
+            return
+        if self._created_read > len(log):  # BlueSky reset cleared the log
+            self._created_read = 0
+        for callsign in log[self._created_read:]:
+            self._take(callsign)
+        self._created_read = len(log)
 
     def _take(self, callsign: Callsign) -> None:
         if callsign in self._taken:

@@ -4,7 +4,9 @@ import math
 from collections.abc import Sequence
 
 import bluesky as bs
+import numpy as np
 from bluesky.core import simtime
+from bluesky.core.trafficarrays import TrafficArrays
 from bluesky.stack import simstack
 from bluesky.tools.aero import ft, kts
 from wurlitzer import pipes
@@ -26,11 +28,52 @@ from bluesky_sandbox.sim.weather import WindField
 _BLUESKY_PERFORMANCE_MODEL: str | None = None
 
 
+class _AircraftUids(TrafficArrays):
+    """A serial number per aircraft, never reused, that BlueSky keeps aligned.
+
+    BlueSky names an aircraft only by its callsign and reuses a callsign once
+    that aircraft is deleted, so anything remembering aircraft by callsign can
+    take a new aircraft for an old one. ``uid`` is a BlueSky traffic array:
+    BlueSky itself grows it on every ``cre`` and shrinks it on every ``delete``,
+    however the aircraft came or went - the spawner, a task hook, a qtgl
+    command, a plugin - so ``uid[i]`` always belongs to ``bs.traf.id[i]``.
+
+    ``created`` logs every callsign created since the last ``bs.sim.reset()``,
+    reused ones included, for the callsign issuer to keep clear of.
+    """
+
+    def __init__(self) -> None:
+        # Set before registering: registering with traffic already present
+        # calls ``create`` for it straight away.
+        self._next_uid = 0
+        self.created: list[str] = []
+        super().__init__()  # attaches to bs.traf, so only after bs.init
+        with self.settrafarrays():
+            self.uid = np.array([], dtype=np.int64)
+
+    def create(self, n: int = 1) -> None:
+        super().create(n)  # appends n zeros
+        self.uid[-n:] = np.arange(self._next_uid, self._next_uid + n)
+        self._next_uid += n
+        # ``cre`` writes the new callsigns before it creates children.
+        self.created.extend(bs.traf.id[-n:])
+
+    def reset(self) -> None:
+        super().reset()
+        self.created.clear()
+
+    def detach(self) -> None:
+        """Stop following traffic. BlueSky has no way to unregister a child."""
+        if self._parent is not None and self in self._parent._children:
+            self._parent._children.remove(self)
+
+
 class BlueSkyRuntime:
     """BlueSky's process simulator interface."""
 
     def __init__(self, env=None) -> None:
         self.env = env
+        self._uids: _AircraftUids | None = None
 
     def bind_env(self, env) -> None:
         self.env = env
@@ -43,6 +86,25 @@ class BlueSkyRuntime:
     @property
     def agent_ids(self):
         return bs.traf.id
+
+    @property
+    def aircraft_uids(self) -> np.ndarray:
+        """A never-reused serial number per aircraft, in ``bs.traf.id`` order."""
+        if self._uids is None:
+            raise RuntimeError("BlueSkyRuntime.configure has not been called.")
+        return self._uids.uid
+
+    @property
+    def created_callsigns(self) -> list[str]:
+        """Every callsign created since the last ``bs.sim.reset()``."""
+        if self._uids is None:
+            raise RuntimeError("BlueSkyRuntime.configure has not been called.")
+        return self._uids.created
+
+    def close(self) -> None:
+        if self._uids is not None:
+            self._uids.detach()
+            self._uids = None
 
     @property
     def sim_time(self) -> float:
@@ -70,6 +132,8 @@ class BlueSkyRuntime:
                 "The model is fixed at bs.init and cannot be switched in-process - "
                 "run the two envs in separate processes."
             )
+        if self._uids is None:
+            self._uids = _AircraftUids()
         self.configure_timestep()
 
     def configure_timestep(self) -> None:

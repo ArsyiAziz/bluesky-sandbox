@@ -231,13 +231,16 @@ def test_step_partners_follow_their_aircraft_when_another_leaves(monkeypatch):
     # same row sync. So pin it directly - partner sets are kept beside the
     # table and must be carried by callsign, like the table's own arrays.
     traf = SimpleNamespace(id=["A", "B", "C"])
+    runtime = SimpleNamespace(aircraft_uids=np.array([10, 11, 12]))
     monkeypatch.setattr(services.bs, "traf", traf)
-    monitor = TrafficMonitor()
+    monitor = TrafficMonitor(env=SimpleNamespace(_runtime=runtime))
     monitor.begin_step()
     monitor._conflict_step_partners[0] = {"C"}
     monitor._los_step_partners[2] = {"A"}
 
-    traf.id = ["C", "A"]  # B leaves mid-step, and the order changes
+    # B leaves mid-step, and the order changes; the uids travel with them.
+    traf.id = ["C", "A"]
+    runtime.aircraft_uids = np.array([12, 10])
     monitor._sync_rows()
 
     assert monitor._conflict_step_partners == [None, {"C"}]

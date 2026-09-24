@@ -531,7 +531,10 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
     def close(self) -> None:
         """Terminate the QtGL subprocess and release resources."""
-        self._driver.close()
+        try:
+            self._driver.close()
+        finally:
+            self._runtime.close()
 
     @property
     def episode_spawn(self):
