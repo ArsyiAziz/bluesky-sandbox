@@ -633,8 +633,6 @@ class QueryStateMonitor:
         if not waypoints:
             return
 
-        cas_kts = np.asarray(bs.traf.cas, dtype=np.float64)[:n] / kts
-        trk_deg = np.asarray(bs.traf.trk, dtype=np.float64)[:n]
         reached_rows = np.zeros(n, dtype=bool)
         try:
             reached_indices = np.asarray(tuple(bs.traf.ap.idxreached), dtype=np.int64)
@@ -679,8 +677,6 @@ class QueryStateMonitor:
                 lat_deg,
                 lon_deg,
                 alt_ft,
-                cas_kts,
-                trk_deg,
             )
             np.minimum(min_distance[:, col], distance_nm, out=min_distance[:, col])
             abs_alt_diff = np.abs(alt_diff_ft)
@@ -758,8 +754,6 @@ class QueryStateMonitor:
         lat_deg: np.ndarray,
         lon_deg: np.ndarray,
         alt_ft: np.ndarray,
-        cas_kts: np.ndarray,
-        trk_deg: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         n = lat_deg.size
         target = queryable.target
@@ -770,7 +764,7 @@ class QueryStateMonitor:
             target_speed_kts,
         ) = self._waypoint_target_arrays(name, queryable, route_indices, n)
 
-        qdr_deg, distance_nm = qdrdist(lat_deg, lon_deg, target_lat, target_lon)
+        _qdr_deg, distance_nm = qdrdist(lat_deg, lon_deg, target_lat, target_lon)
         alt_diff_ft = alt_ft - target_alt_ft
         within_lateral = (
             np.ones(n, dtype=bool)
