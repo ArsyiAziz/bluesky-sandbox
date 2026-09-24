@@ -1163,6 +1163,33 @@ def test_the_catalog_shows_blueskys_timing_not_a_written_in_default():
     assert shown["simdt"] == float(bs.settings.simdt)
 
 
+def test_spawn_retry_counts_default_round_trip_and_emit_only_when_changed():
+    spec = _example_design_spec()
+    # A design that never set them gets SpawnConfig's own defaults.
+    spawn = S._spawn_config_load(spec.spawn)
+    assert (spawn.spawn_max_tries, spawn.spawn_warn_after) == (20, 5)
+    assert catalog.catalog()["spawn_defaults"] == {
+        "spawn_max_tries": 20, "spawn_warn_after": 5,
+    }
+    scenario_py = next(
+        text for path, text in codegen.generate_task(spec, "retries").items()
+        if path.endswith("/scenario.py")
+    )
+    assert "spawn_max_tries" not in scenario_py
+
+    spec.spawn["spawn_max_tries"] = 50
+    spec.spawn["spawn_warn_after"] = 2
+    reloaded = S.DesignSpec.from_json(spec.to_json())
+    spawn = S._spawn_config_load(reloaded.spawn)
+    assert (spawn.spawn_max_tries, spawn.spawn_warn_after) == (50, 2)
+    assert S._spawn_config_dump(spawn)["spawn_max_tries"] == 50
+    scenario_py = next(
+        text for path, text in codegen.generate_task(spec, "retries").items()
+        if path.endswith("/scenario.py")
+    )
+    assert "spawn_max_tries=50" in scenario_py and "spawn_warn_after=2" in scenario_py
+
+
 def test_codegen_generates_importable_package():
     spec = _example_design_spec()
     spec.env.hook_setup = "import math\nimport math\nHOOK_SCALE = math.sqrt(4.0)"

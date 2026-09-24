@@ -7,11 +7,13 @@ reads as Python code rather than a serialized blob.
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 from typing import Any
 
 from bluesky_sandbox.interface.fields import queryables as _queryable_fields
 from bluesky_sandbox.interface.wrappers.observations import normalizer as _norm
+from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from . import spec as _spec
 from .builder import expand_region_members
@@ -26,6 +28,14 @@ from .spec import (
 )
 
 _FOOTPRINT_TYPES = {"box", "disk", "polygon", "sector", "annular_sector", "boolean"}
+
+
+# SpawnConfig's own defaults, so generated code only spells out a changed value.
+_SPAWN_CONFIG_DEFAULTS = {
+    f.name: f.default
+    for f in dataclasses.fields(SpawnConfig)
+    if f.name in ("spawn_max_tries", "spawn_warn_after")
+}
 
 
 def _normalizer_import_line() -> str:
@@ -345,6 +355,10 @@ class _Emitter:
             extra += f", spawn_sep_ft={float(d['spawn_sep_ft'])!r}"
         if d.get("spawn_lookahead_s"):
             extra += f", spawn_lookahead_s={float(d['spawn_lookahead_s'])!r}"
+        for name in ("spawn_max_tries", "spawn_warn_after"):
+            value = d.get(name)
+            if value is not None and int(value) != _SPAWN_CONFIG_DEFAULTS[name]:
+                extra += f", {name}={int(value)!r}"
         return f"SpawnConfig(regions={regions}{extra})"
 
     # ---- fields ---------------------------------------------------------- #

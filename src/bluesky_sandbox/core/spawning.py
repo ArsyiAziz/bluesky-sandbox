@@ -54,16 +54,6 @@ from .state import (
 )
 
 
-# A candidate spawn state must clear all live traffic (avoiding an instant loss
-# of separation), retried up to this many times before deferring to a later
-# step. The zone itself is the live CD protected zone plus the region's
-# ``spawn_sep_*``, so it tracks whatever the scenario actually detects
-# conflicts against.
-_MAINTAIN_SPAWN_MAX_TRIES = 20
-# Consecutive fully-failed spawns for one region before warning once. A single
-# failure is normal; a sustained failure means the guard is unsatisfiable and
-# the region is silently under-populated.
-_MAINTAIN_SPAWN_WARN_AFTER = 5
 
 
 class SpawnGenerator:
@@ -257,13 +247,12 @@ class SpawnGenerator:
         Resolves and pins the spawn speed (envelope draw) and heading before
         each check, so the materialised aircraft flies exactly the state that
         was cleared. Returns ``None`` when no clear candidate is found within
-        ``_MAINTAIN_SPAWN_MAX_TRIES`` - the caller defers the spawn instead of
+        ``SpawnConfig.spawn_max_tries`` - the caller defers the spawn instead of
         creating an aircraft in (predicted) conflict.
         """
-        sep_nm, sep_ft, look_s = self.env.episode_spawn.region_spawn_separation(
-            item.region_index
-        )
-        for _ in range(_MAINTAIN_SPAWN_MAX_TRIES):
+        spawn = self.env.episode_spawn
+        sep_nm, sep_ft, look_s = spawn.region_spawn_separation(item.region_index)
+        for _ in range(spawn.spawn_max_tries):
             pos = self._resolve_spawn_speed(item.actype, item.position, rng)
             hdg = self._spawn_hdg(pos, rng)
             if self._spawn_position_clear(
@@ -294,17 +283,16 @@ class SpawnGenerator:
     ) -> SpawnQueueItem | None:
         """Sample a maintain-region spawn clear of existing traffic.
 
-        Retries up to ``_MAINTAIN_SPAWN_MAX_TRIES`` (respecting
+        Retries up to ``SpawnConfig.spawn_max_tries`` (respecting
         ``conflict_free_spawn``), returning ``None`` if none is clear so the
-        top-up defers to a later step. Repeated failure warns once per region:
-        an unsatisfiable guard would otherwise quietly hold the region below the
-        aircraft count ``maintain`` asks for.
+        top-up defers to a later step. ``spawn_warn_after`` failures in a row
+        warn once per region: an unsatisfiable guard would otherwise quietly
+        hold the region below the aircraft count ``maintain`` asks for.
         """
-        conflict_free = self.env.episode_spawn.region_conflict_free(region_index)
-        sep_nm, sep_ft, look_s = self.env.episode_spawn.region_spawn_separation(
-            region_index
-        )
-        for _ in range(_MAINTAIN_SPAWN_MAX_TRIES):
+        spawn = self.env.episode_spawn
+        conflict_free = spawn.region_conflict_free(region_index)
+        sep_nm, sep_ft, look_s = spawn.region_spawn_separation(region_index)
+        for _ in range(spawn.spawn_max_tries):
             _spawn_time, actype, position, prefix, route = (
                 self.env.episode_spawn.sample_region_spawn(region_index, rng)
             )
@@ -333,7 +321,7 @@ class SpawnGenerator:
                 )
         n = self._maintain_failures.get(region_index, 0) + 1
         self._maintain_failures[region_index] = n
-        if n == _MAINTAIN_SPAWN_WARN_AFTER:
+        if n == spawn.spawn_warn_after:
             zone_nm = cd_rpz_m() / nm if sep_nm is None else sep_nm
             zone_ft = cd_hpz_m() / ft if sep_ft is None else sep_ft
             what = (
@@ -344,10 +332,11 @@ class SpawnGenerator:
             )
             warnings.warn(
                 f"[spawn] maintain region {region_index} has failed to find a "
-                f"{what} on {n} consecutive resets "
-                f"({_MAINTAIN_SPAWN_MAX_TRIES} tries each); it is running below "
+                f"{what} on {n} consecutive top-ups "
+                f"({spawn.spawn_max_tries} tries each); it is running below "
                 "its requested aircraft count. Widen the region, lower the "
-                "count, or lower SpawnConfig.spawn_sep_nm / _ft.",
+                "count, lower SpawnConfig.spawn_sep_nm / _ft, or raise "
+                "SpawnConfig.spawn_max_tries.",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -637,7 +626,7 @@ class SpawnGenerator:
                     retry_at = now + (float(self._config().dt) or 1.0)
                     print(
                         "[spawn] no conflict-free spawn state found after "
-                        f"{_MAINTAIN_SPAWN_MAX_TRIES} tries (region "
+                        f"{self.env.episode_spawn.spawn_max_tries} tries (region "
                         f"{item.region_index}); deferring to t={retry_at:.0f}s"
                     )
                     deferred.append(replace(item, spawn_time=retry_at))

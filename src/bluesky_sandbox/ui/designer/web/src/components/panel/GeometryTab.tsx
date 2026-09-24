@@ -90,10 +90,15 @@ export default function GeometryTab({
 
   // The zone conflict-free spawns are cleared against, from BlueSky's CD.
   const [sep, setSep] = useState<Record<string, number>>({});
+  // SpawnConfig's own retry defaults, shown when a field is left empty.
+  const [spawnDefaults, setSpawnDefaults] = useState<Record<string, number>>({});
   useEffect(() => {
     api
       .catalogOnce()
-      .then((c) => setSep(c?.separation ?? {}))
+      .then((c) => {
+        setSep(c?.separation ?? {});
+        setSpawnDefaults(c?.spawn_defaults ?? {});
+      })
       .catch(() => setSep({}));
   }, []);
   const sepZone =
@@ -480,6 +485,69 @@ export default function GeometryTab({
               </div>
             </div>
           )}
+          <div style={{ padding: "0 8px 4px 8px" }}>
+              <div className="value-field">
+                <div className="vf-head">
+                  <span className="vf-label">spawn max tries</span>
+                  <span className="vf-spacer" />
+                  <NumInput
+                    className="vf-input"
+                    int
+                    step={1}
+                    placeholder={`${spawnDefaults.spawn_max_tries ?? ""} (default)`}
+                    value={(spec.spawn?.spawn_max_tries as number | undefined) ?? Number.NaN}
+                    onChange={(n) =>
+                      edit((s) => {
+                        s.spawn = s.spawn ?? emptySpawn();
+                        s.spawn.spawn_max_tries = Math.max(1, Math.round(n));
+                      })
+                    }
+                    onClear={() =>
+                      edit((s) => {
+                        s.spawn = s.spawn ?? emptySpawn();
+                        delete s.spawn.spawn_max_tries;
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            <div className="muted small">
+              clear spawn states to try before deferring to the next step
+            </div>
+            {spawnRegions.some((r) => r.maintain === true) && (
+              <>
+                <div className="value-field">
+                  <div className="vf-head">
+                    <span className="vf-label">warn after failed top-ups</span>
+                    <span className="vf-spacer" />
+                    <NumInput
+                      className="vf-input"
+                      int
+                      step={1}
+                      placeholder={`${spawnDefaults.spawn_warn_after ?? ""} (default)`}
+                      value={(spec.spawn?.spawn_warn_after as number | undefined) ?? Number.NaN}
+                      onChange={(n) =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          s.spawn.spawn_warn_after = Math.max(1, Math.round(n));
+                        })
+                      }
+                      onClear={() =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          delete s.spawn.spawn_warn_after;
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="muted small">
+                  warn once when a maintain area misses its count this many times
+                  in a row
+                </div>
+              </>
+            )}
+          </div>
           {spawnRegions
             .map((r, i): [SpecDict, number] => [r, i])
             .filter(([r, i]) => has(r.name || `spawn_${i + 1}`))

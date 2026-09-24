@@ -38,6 +38,7 @@ from bluesky_sandbox.sim.geometry.conflict import (
 )
 from bluesky_sandbox.sim.performance.models import spawnable_types
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
+from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from .emit import _normalizer_import_line
 from .spec import SCENARIO_HOOKS
@@ -705,6 +706,19 @@ def bluesky_defaults() -> dict[str, float | None]:
     return {"simdt": bluesky_simdt_s(), "asas_dt": bluesky_asas_dt_s()}
 
 
+def spawn_defaults() -> dict[str, int]:
+    """``SpawnConfig``'s own spawn-retry defaults, for the designer's placeholders.
+
+    Read from the dataclass rather than written into the GUI, so the number
+    shown for an empty field is the one a design that leaves it empty gets.
+    """
+    return {
+        f.name: f.default
+        for f in dataclasses.fields(SpawnConfig)
+        if f.name in ("spawn_max_tries", "spawn_warn_after")
+    }
+
+
 def colors() -> dict[str, str]:
     """Named display colors → hex, for the GUI colour picker.
 
@@ -823,5 +837,6 @@ def catalog(model: str | None = None) -> dict[str, Any]:
         "conflict": conflict_methods(),
         "bluesky_defaults": bluesky_defaults(),
         "separation": separation_defaults(),
+        "spawn_defaults": spawn_defaults(),
         "scaffolds": scaffolds(),
     }

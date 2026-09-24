@@ -734,6 +734,8 @@ def _spawn_config_dump(c: SpawnConfig) -> dict[str, Any]:
         "spawn_sep_nm": c.spawn_sep_nm,
         "spawn_sep_ft": c.spawn_sep_ft,
         "spawn_lookahead_s": c.spawn_lookahead_s,
+        "spawn_max_tries": c.spawn_max_tries,
+        "spawn_warn_after": c.spawn_warn_after,
     }
 
 
@@ -747,6 +749,12 @@ def _spawn_config_load(d: dict[str, Any]) -> SpawnConfig:
         spawn_sep_nm=d.get("spawn_sep_nm"),
         spawn_sep_ft=d.get("spawn_sep_ft"),
         spawn_lookahead_s=d.get("spawn_lookahead_s"),
+        # Absent or null keeps SpawnConfig's own default, the one place it lives.
+        **{
+            name: int(d[name])
+            for name in ("spawn_max_tries", "spawn_warn_after")
+            if d.get(name) is not None
+        },
     )
 
 

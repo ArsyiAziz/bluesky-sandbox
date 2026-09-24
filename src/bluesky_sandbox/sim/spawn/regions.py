@@ -470,6 +470,17 @@ class SpawnConfig:
         conflict-free policy is achievable; conflicts still *develop* as aircraft
         converge. Default ``False`` (spawn as sampled - e.g. the conflict tests).
         Set it per region to mix conflict-free and as-sampled spawn areas.
+    spawn_max_tries:
+        Candidate spawn states tried before a spawn gives up on the current
+        step: a queued conflict-free spawn is deferred to the next step, a
+        ``maintain`` top-up retries next step. Each try resamples the region
+        and checks it against live traffic (``spawn_sep_*``). Raise it for
+        dense regions where a clear state is rare; each try costs one check.
+    spawn_warn_after:
+        Consecutive failed ``maintain`` top-ups for one region before a single
+        warning that it is running below its requested aircraft count. A lone
+        failure is normal in busy airspace; a sustained run means the region
+        cannot be satisfied as configured.
     """
 
     regions:       list[SpawnRegion]
@@ -497,9 +508,17 @@ class SpawnConfig:
     spawn_sep_nm: float | None = None
     spawn_sep_ft: float | None = None
     spawn_lookahead_s: float | None = None
+    spawn_max_tries: int = 20
+    spawn_warn_after: int = 5
 
     def __post_init__(self) -> None:
         self.regions = list(self.regions)
+        for name in ("spawn_max_tries", "spawn_warn_after"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(
+                    f"SpawnConfig.{name} must be a positive integer, got {value!r}."
+                )
         # Region indices already warned about a below-CD separation, so a
         # per-step top-up does not repeat itself every spawn.
         self._warned_below_cd: set[int] = set()
