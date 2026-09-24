@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,8 +29,12 @@ class AircraftTable:
     With ``keyed_columns`` every array also has one column per named key (the
     episode's queryables); without, the arrays are 1-D. Rows and columns are
     matched *by key*, so an aircraft keeps its values when others spawn or
-    leave, and a key keeps its values when others are added. The table knows
-    nothing of BlueSky: callers pass the callsigns.
+    leave, and a key keeps its values when others are added.
+
+    The table knows nothing of BlueSky: callers choose the row keys. The
+    monitors pass each aircraft's uid rather than its callsign - BlueSky reuses
+    a callsign once its aircraft is deleted, and a row keyed by callsign would
+    hand the new aircraft the old one's values.
 
     :attr:`ids` is replaced by a new tuple only when the rows actually change,
     so a caller may cache work against it by identity.
@@ -39,8 +43,8 @@ class AircraftTable:
     def __init__(self, arrays: dict[str, Column], *, keyed_columns: bool = False):
         self._columns_spec = dict(arrays)
         self._keyed = keyed_columns
-        self.ids: tuple[str, ...] = ()
-        self.row: dict[str, int] = {}
+        self.ids: tuple[Hashable, ...] = ()
+        self.row: dict[Hashable, int] = {}
         self.columns: tuple[str, ...] = ()
         self.col: dict[str, int] = {}
         self._arrays = {name: self._blank(name, 0, 0) for name in self._columns_spec}
@@ -60,8 +64,8 @@ class AircraftTable:
     def __len__(self) -> int:
         return len(self.ids)
 
-    def sync_rows(self, ids: Iterable[str]) -> np.ndarray | None:
-        """Match the rows to ``ids``.
+    def sync_rows(self, ids: Iterable[Hashable]) -> np.ndarray | None:
+        """Match the rows to the row keys ``ids``.
 
         Survivors keep every array's values, newcomers get each array's fill,
         and departed aircraft are dropped. Returns, for each new row, the old
@@ -71,11 +75,11 @@ class AircraftTable:
         ids = tuple(ids)
         if ids == self.ids:
             return None
-        row = {acid: i for i, acid in enumerate(ids)}
+        row = {key: i for i, key in enumerate(ids)}
         if len(row) != len(ids):
             raise ValueError(f"AircraftTable rows must be unique, got {ids!r}.")
         take = np.fromiter(
-            (self.row.get(acid, -1) for acid in ids), dtype=np.intp, count=len(ids)
+            (self.row.get(key, -1) for key in ids), dtype=np.intp, count=len(ids)
         )
         kept = take >= 0
         for name, old in self._arrays.items():
