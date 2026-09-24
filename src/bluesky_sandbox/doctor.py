@@ -45,6 +45,11 @@ def report() -> tuple[list[str], bool]:
                 ok = False
 
     lines.append("")
+    compiled_lines, compiled_ok = _compiled_modules()
+    lines.extend(compiled_lines)
+    ok = ok and compiled_ok
+
+    lines.append("")
     lines.append(f"BADA data directory : {bada_data_dir()}")
     lines.append(f"BADA data present   : {'yes' if bada_available() else 'no'}")
     lines.append("BlueSky resource search order:")
@@ -56,11 +61,40 @@ def report() -> tuple[list[str], bool]:
     return lines, ok
 
 
+def _compiled_modules() -> tuple[list[str], bool]:
+    """Whether BlueSky's compiled geo functions and conflict detector load.
+
+    Both are built when BlueSky is installed, and both fall back quietly when
+    they fail to load. Python geo is only slower, and differs in the last
+    digits. Without the compiled detector, the default ``cd_method``
+    (``CSTATEBASED``) does not exist: ``CDMETHOD`` fails without raising, and
+    BlueSky runs with no conflict detection at all.
+    """
+    from bluesky.tools import geo  # noqa: PLC0415
+    from bluesky.traffic.asas import statebased  # noqa: PLC0415
+
+    from bluesky_sandbox.config import DEFAULT_CD_METHOD  # noqa: PLC0415
+
+    compiled_geo = geo.select_backend().__name__.endswith("_cgeo")
+    compiled_cd = hasattr(statebased, "CStateBased")
+    lines = [
+        f"geo functions      : {'compiled' if compiled_geo else 'Python'}",
+        "conflict detection : "
+        + ("compiled (CSTATEBASED)" if compiled_cd else "UNAVAILABLE (CSTATEBASED)"),
+    ]
+    if not compiled_cd:
+        lines.append(
+            f"                     the default cd_method ({DEFAULT_CD_METHOD}) "
+            "needs it; reinstall bluesky-simulator with a C++ compiler"
+        )
+    return lines, compiled_cd
+
+
 def main() -> int:
     lines, ok = report()
     print("\n".join(lines))
     if not ok:
-        print("\nThe configured performance model could not be loaded.")
+        print("\nA check above failed.")
     return 0 if ok else 1
 
 
