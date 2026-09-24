@@ -18,6 +18,7 @@ from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.spawning import _CallsignIssuer
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
+from bluesky_sandbox.sim.queryables import Waypoint
 from bluesky_sandbox.sim.sampling.distributions import Categorical
 from bluesky_sandbox.sim.scenario import EpisodeSpec
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
@@ -214,5 +215,42 @@ def test_creating_a_live_callsign_is_an_error_not_a_silent_no_op():
         with pytest.raises(RuntimeError, match=refused):
             env._runtime.create_aircraft(live, "B744", 52.0, 4.0, 0.0, 8_000.0, 250.0)
         assert bs.traf.ntraf == count
+    finally:
+        env.close()
+
+
+def test_prefixes_are_upper_cased_like_every_bluesky_callsign():
+    issuer = _issuer()
+    assert issuer.issue(set(), "kl").startswith("KL")
+    # "kl" and "KL" are one prefix: once its 999 are used, both are full.
+    for _ in range(998):
+        issuer.issue(set(), "KL")
+    with pytest.raises(RuntimeError, match=r"\['KL'\]"):
+        issuer.issue(set(), "kl", ["kl", "KL"])
+
+
+def test_a_lowercase_prefix_still_gets_its_route():
+    # BlueSky's stack upper-cases callsigns, so an aircraft created as "kl042"
+    # silently ignored every route command addressed to it.
+    route_scenario = _Scenario()
+    route_scenario.spawn.regions[0].callsign_prefixes = ["kl"]
+    route_scenario.spawn.regions[0].route = ["merge"]
+    queryables = {"merge": Waypoint(lat=52.0, lon=4.6, alt_ft=9_000)}
+    route_scenario.support = lambda: EpisodeSpec(
+        airspace_bounds=None,
+        spawn=route_scenario.spawn,
+        queryables=queryables,
+        max_aircraft=10,
+    )
+    env = BlueskyEnv(
+        scenario=route_scenario,
+        config=EnvConfig(dt=12.0, obs_fields=[], action_fields=[]),
+    )
+    try:
+        env.reset(seed=0)
+        assert bs.traf.ntraf > 0
+        for i, acid in enumerate(bs.traf.id):
+            assert acid.startswith("KL")
+            assert bs.traf.ap.route[i].nwp >= 1
     finally:
         env.close()

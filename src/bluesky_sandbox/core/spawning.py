@@ -717,6 +717,10 @@ class _CallsignIssuer:
         region's ``callsign_prefixes``. When ``prefix`` is full, another of the
         region's prefixes stands in by the region's own weights, so a region
         runs dry only when all of its prefixes have.
+
+        Prefixes are upper-cased: BlueSky's stack upper-cases every callsign it
+        is given, so an aircraft created as ``kl042`` could never be addressed -
+        its route commands would find no such aircraft and silently do nothing.
         """
         if self._rng is None:
             raise RuntimeError("_CallsignIssuer.start_episode has not been called.")
@@ -728,6 +732,7 @@ class _CallsignIssuer:
                     "Every random-letter callsign was issued this episode."
                 )
             return self._draw(None)
+        prefix = prefix.upper()
         full: set[str] = set()
         while not self._has_left(prefix):
             full.add(prefix)
@@ -777,12 +782,20 @@ class _CallsignIssuer:
 
 
 def _callsign_prefix_weights(options: Any) -> dict[str, float]:
-    """A region's callsign prefixes and their weights, when they can be listed."""
+    """A region's callsign prefixes, upper-cased, and their weights, if listable.
+
+    Prefixes that differ only in case are one prefix, so their weights add up.
+    """
     if isinstance(options, list):
-        return dict.fromkeys(options, 1.0)
-    if isinstance(options, Categorical):
-        return {prefix: float(weight) for prefix, weight in options.weights.items()}
-    return {}
+        pairs = [(prefix, 1.0) for prefix in dict.fromkeys(options)]
+    elif isinstance(options, Categorical):
+        pairs = [(prefix, float(weight)) for prefix, weight in options.weights.items()]
+    else:
+        return {}
+    weights: dict[str, float] = {}
+    for prefix, weight in pairs:
+        weights[prefix.upper()] = weights.get(prefix.upper(), 0.0) + weight
+    return weights
 
 
 def _callsigns_exhausted(full: set[str], options: Any) -> str:
