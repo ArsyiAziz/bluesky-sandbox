@@ -20,9 +20,9 @@ linkify-it-py>=2.0
 #
 # NOTE: this pin must be kept in step with the one in pyproject.toml. It is
 # duplicated rather than derived because installing the package to obtain it
-# is what this file exists to avoid. When the fork is dropped for an upstream
+# is what this file exists to avoid. When the pin is replaced by an upstream
 # release, both change together.
-bluesky-simulator @ git+https://github.com/ArsyiAziz/bluesky.git@60e64486aca3dce205384d9a5e12b5318e6ecc50
+bluesky-simulator @ git+https://github.com/TUDelft-CNS-ATM/bluesky.git@5a925b4113f53c5fbed6a3c6c05d8a2b816cfa72
 numpy>=2.1
 scipy>=1.14
 shapely>=2.1

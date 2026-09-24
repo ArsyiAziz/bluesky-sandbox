@@ -158,9 +158,9 @@ pytest
 
 ## Technical Notes
 
-### BlueSky Fork
+### BlueSky Version
 
-The `bluesky-simulator` dependency is currently pinned to a custom fork of BlueSky containing necessary bug fixes. It will be updated to the standard PyPI release once these fixes are merged into upstream BlueSky's main branch.
+The `bluesky-simulator` dependency is currently pinned to a commit on upstream BlueSky's `master`, because it needs bug fixes that are merged but not yet released. It will be updated to the standard PyPI release once one includes them.
 
 
 ## License

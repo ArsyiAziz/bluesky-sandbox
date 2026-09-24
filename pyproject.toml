@@ -24,23 +24,20 @@ classifiers = [
 # Version floors rather than pins: a library must not dictate exact versions
 # to the application installing it.
 #
-# bluesky-simulator is pinned to a fork by direct URL. Upstream's OpenAP
-# performance model has two defects this package is exposed to, because spawn
-# altitudes and speeds are drawn from the flight envelope:
-#   perfoap.py  the fixed-wing phase test reads `(phase >= CL) | (phase <= DE)`,
-#               true for every phase, so en-route limits apply in all phases -
-#               initial climb is held to the en-route envelope.
-#   coeff.py    `vsmin` is taken from the climb_vs_* wrappers, which are climb
-#               rates; the minimum vertical speed must come from descent_vs_*.
-# Both are fixed on the fork's `combined-fixes`. They are not separable into a
-# runtime shim: coeff.py runs at coefficient-load time, before anything of ours
-# is importable.
+# bluesky-simulator is pinned by direct URL to an upstream commit, not a
+# release. This package needs fixes that are merged upstream but not yet in a
+# PyPI release (the latest is 1.1.1):
+#   OpenAP      the fixed-wing phase test applied en-route limits in every phase,
+#               and `vsmin` came from climb rather than descent rates. Spawn
+#               altitudes and speeds are drawn from this envelope.
+#   geo         the compiled backend was chosen before settings.cfg was read,
+#               and did not broadcast scalars against arrays like the Python one.
+# Replace the pin with a version floor once a release includes these.
 #
-# NOTE: PyPI rejects distributions whose metadata carries a direct reference.
-# This pin must be resolved - fixes upstreamed, or the fork published under its
-# own name - before `bluesky-sandbox` can be uploaded.
+# NOTE: PyPI rejects distributions whose metadata carries a direct reference,
+# so `bluesky-sandbox` cannot be uploaded until then.
 dependencies = [
-    "bluesky-simulator @ git+https://github.com/ArsyiAziz/bluesky.git@60e64486aca3dce205384d9a5e12b5318e6ecc50",
+    "bluesky-simulator @ git+https://github.com/TUDelft-CNS-ATM/bluesky.git@5a925b4113f53c5fbed6a3c6c05d8a2b816cfa72",
     "numpy>=2.1",
     "scipy>=1.14",
     "shapely>=2.1",
