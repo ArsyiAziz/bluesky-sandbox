@@ -284,7 +284,7 @@ export default function DesignPanel({
       </Section>
 
       {/* ----------------------------------------------------------- actions */}
-      <Section title="Actions" subtitle="agent control axes" hint="What the policy can command each step. Each field is one continuous axis, normalized to [-1, 1]; the field decides what that maps to (a heading delta, an altitude delta, a speed target).">
+      <Section title="Actions" subtitle="agent control axes" hint="What the policy can command each step. A continuous action takes a range, usually normalized to [-1, 1]; the field decides what that maps to (a heading delta, an altitude delta, a speed target). A switch takes 0 or 1. With any switch, the action space is a Dict of the two parts: continuous and binary.">
         <FieldList
           label="action"
           fields={env.action_fields ?? []}
@@ -385,5 +385,12 @@ function actionStrategy(env: any, catalog: any): string {
     const mode = meta.mode ? ` (${meta.mode})` : "";
     return `${axis}${mode}`;
   });
-  return `Each agent commands: ${parts.join(", ")}.`;
+  // Built-in actions say which part of the action space they are in; a custom
+  // one's class does, which the designer cannot see.
+  const kinds = fields.map((f: any) => (byName.get(f.field) as any)?.kind);
+  const binary = kinds.filter((k: string) => k === "binary").length;
+  const space = binary
+    ? ` Action space: Dict of continuous (${fields.length - binary}) and binary (${binary}).`
+    : "";
+  return `Each agent commands: ${parts.join(", ")}.${space}`;
 }

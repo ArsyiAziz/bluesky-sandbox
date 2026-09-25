@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from ..base import (
     ActionField,
+    ActionKind,
     ActionMeta,
     ActionMode,
     ControlAxis,
@@ -51,6 +52,7 @@ from .speed import (
 
 __all__ = [
     "ActionField",
+    "ActionKind",
     "ActionMeta",
     "ActionMode",
     "ControlAxis",

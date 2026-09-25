@@ -22,6 +22,8 @@ import numpy as np
 from gymnasium.spaces import Box, Dict, Sequence
 from pettingzoo.utils.wrappers import BaseParallelWrapper
 
+from bluesky_sandbox.core.slot import Slot
+
 
 class IntrudersKeepWrapper(BaseParallelWrapper):
     """Add an ``intruders_keep`` bool mask (per intruder) to each agent's obs."""
@@ -60,6 +62,13 @@ class IntrudersKeepWrapper(BaseParallelWrapper):
                 ),
             }
         return out
+
+    def observation_layout(self, agent=None):
+        """The wrapped layout, plus ``intruders_keep``: one flag per intruder row."""
+        layout = self.env.observation_layout(agent)
+        if not self._active:
+            return layout
+        return {**layout, "intruders_keep": [Slot("intruders_keep", slice(0, 1))]}
 
     def observation_space(self, agent):
         space = self.env.observation_space(agent)

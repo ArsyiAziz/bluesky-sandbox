@@ -25,6 +25,8 @@ import numpy as np
 from gymnasium.spaces import Box, Dict, Sequence
 from pettingzoo.utils.wrappers import BaseParallelWrapper
 
+from bluesky_sandbox.core.slot import Slot
+
 
 class IntruderPaddingWrapper(BaseParallelWrapper):
     """Pad ``obs["intruders"]`` from variable length to a fixed Box.
@@ -113,6 +115,15 @@ class IntruderPaddingWrapper(BaseParallelWrapper):
     def observation_space(self, _agent):
         self._refresh_from_env()
         return self._obs_space
+
+    def observation_layout(self, agent=None):
+        """The wrapped layout, with the validity flag after the intruder features."""
+        layout = self.env.observation_layout(agent)
+        if not self._has_intruders:
+            return layout
+        n = self._n_features
+        valid = Slot("valid", slice(n, n + 1))
+        return {**layout, "intruders": [*layout["intruders"], valid]}
 
     # ---- lifecycle -------------------------------------------------------
     def reset(self, seed=None, options=None):

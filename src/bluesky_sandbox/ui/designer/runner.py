@@ -87,9 +87,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
-
 {views_import}
+from bluesky_sandbox import zero_action
 from {pkg} import Env
 
 RENDER_MODE = {render_mode!r}
@@ -122,13 +121,7 @@ def main() -> None:
                 env.render()
                 continue
             if ACTION_MODE == "zero":
-                actions = {{
-                    acid: np.zeros(
-                        env.action_space(acid).shape,
-                        dtype=env.action_space(acid).dtype,
-                    )
-                    for acid in env.agents
-                }}
+                actions = {{acid: zero_action(env.action_space(acid)) for acid in env.agents}}
             else:
                 actions = {{acid: env.action_space(acid).sample() for acid in env.agents}}
             env.step(actions)
@@ -271,6 +264,8 @@ from __future__ import annotations
 import json
 import numpy as np
 
+from bluesky_sandbox import flatten_action, observation_layout
+from bluesky_sandbox.core.layout import slots
 from {pkg} import Env
 
 SEED = {seed!r}
@@ -279,26 +274,14 @@ MAX_INTRUDERS = {max_intruders!r}
 MARKER = {marker!r}
 
 
-def _output_size(field) -> int:
-    norm = getattr(field, "normalizer", None)
-    if norm is not None and hasattr(norm, "output_size"):
-        try:
-            return int(norm.output_size(field))
-        except Exception:
-            pass
-    size = getattr(field, "output_size", None)
-    return int(size()) if callable(size) else 1
-
-
-def _labels(fields) -> list[str]:
+def _labels(part) -> list[str]:
+    """One label per column: the field's name, indexed where it spans several."""
     out: list[str] = []
-    for f in fields or ():
-        name = getattr(getattr(f, "meta", None), "name", type(f).__name__)
-        n = _output_size(f)
-        if n == 1:
-            out.append(name)
+    for slot in part:
+        if slot.width == 1:
+            out.append(slot.name)
         else:
-            out.extend(f"{{name}}[{{i}}]" for i in range(n))
+            out.extend(f"{{slot.name}}[{{i}}]" for i in range(slot.width))
     return out
 
 
@@ -307,9 +290,11 @@ def main() -> None:
     try:
         obs, _ = env.reset(seed=SEED)
         cfg = env.unwrapped.config
-        own_labels = _labels(cfg.obs_fields)
-        intr_labels = _labels(cfg.intruder_obs_fields)
-        act_labels = _labels(cfg.action_fields)
+        layout = observation_layout(cfg)
+        own_labels = _labels(layout["ownship"])
+        intr_labels = _labels(layout.get("intruders", []))
+        # The sampled action is shown as one vector, its fields in config order.
+        act_labels = _labels(slots(cfg.action_fields))
         agents = []
         for acid in list(obs)[:MAX_AGENTS]:
             o = obs[acid]
@@ -320,9 +305,7 @@ def main() -> None:
             else:
                 ownship = np.asarray(o, dtype=float).reshape(-1).tolist()
                 intruders = []
-            action = np.asarray(
-                env.action_space(acid).sample(), dtype=float
-            ).reshape(-1).tolist()
+            action = flatten_action(cfg, env.action_space(acid).sample()).tolist()
             agents.append({{
                 "acid": acid,
                 "ownship": [

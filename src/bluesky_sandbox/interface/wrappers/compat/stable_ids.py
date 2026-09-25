@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from gymnasium.spaces import Box, Dict
+from gymnasium.spaces import Dict, Space
 from pettingzoo import ParallelEnv
 
 
@@ -93,9 +93,9 @@ class StableIDsParallelWrapper(ParallelEnv):
         # Pre-build a per-agent zero "obs" used to pad dead/unspawned slots.
         self._zero_obs = self._make_zero_obs(self._obs_space)
         # Probe the wrapped action space directly so mixed raw/normalized
-        # fields keep their declared bounds, e.g. [-1, 1] deltas plus [0, 1]
-        # switches.
-        self._act_space: Box = env.action_space(None)
+        # fields keep their declared bounds - a Box, or a Dict of the continuous
+        # and binary parts.
+        self._act_space: Space = env.action_space(None)
 
     @staticmethod
     def _make_zero_obs(space):
@@ -136,8 +136,14 @@ class StableIDsParallelWrapper(ParallelEnv):
     def observation_space(self, agent: str):
         return self._obs_space
 
-    def action_space(self, agent: str) -> Box:
+    def action_space(self, agent: str) -> Space:
         return self._act_space
+
+    def observation_layout(self, agent: str | None = None):
+        return self.env.observation_layout(agent)
+
+    def action_layout(self, agent: str | None = None):
+        return self.env.action_layout(agent)
 
     def _assign_slot(self, real: str) -> str:
         """Bind ``real`` to the next never-used stable slot and return it.
@@ -185,7 +191,7 @@ class StableIDsParallelWrapper(ParallelEnv):
 
     def step(
         self,
-        actions: dict[str, np.ndarray],
+        actions: dict[str, Any],
     ) -> tuple[
         dict[str, Any],
         dict[str, float],
@@ -193,10 +199,11 @@ class StableIDsParallelWrapper(ParallelEnv):
         dict[str, bool],
         dict[str, dict],
     ]:
-        real_actions: dict[str, np.ndarray] = {}
+        # Passed on as given - a vector or a dict of parts; the env checks it.
+        real_actions: dict[str, Any] = {}
         for stable, real in self._stable_to_real.items():
             if stable in actions:
-                real_actions[real] = np.asarray(actions[stable], dtype=np.float32)
+                real_actions[real] = actions[stable]
 
         base = self.env.unwrapped
         # Step the inner env when there's something to do: live aircraft to

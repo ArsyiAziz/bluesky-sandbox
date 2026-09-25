@@ -21,6 +21,12 @@ from bluesky_sandbox.config import (
     EnvConfig,
     resolve_spawn_aircraft_types,
 )
+from bluesky_sandbox.core.layout import (
+    Slot,
+    action_layout,
+    flatten_action,
+    observation_layout,
+)
 from bluesky_sandbox.interface.fields._common import reset_field_state
 from bluesky_sandbox.interface.fields._state import set_action_space_bounds
 from bluesky_sandbox.interface.fields.base import StepContext
@@ -269,13 +275,17 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._spawn_generator.bind_env(self)
         self._runtime.bind_env(self)
 
-        # Publish the (normalized) action-space bounds so a PrevActionNorm obs
-        # field can size itself to the real action space instead of assuming a
-        # range. Static per task (from the action fields' normalizers), so
-        # resolving once here - before any observation_space query - is enough.
+        # Publish the (normalized) action bounds, fields in config order - the
+        # order PrevActionNorm stores the action in - so it can size itself to
+        # the real action space instead of assuming a range. Static per task
+        # (from the action fields' normalizers), so resolving once here -
+        # before any observation_space query - is enough.
         try:
-            action_box = self._observation_assembler.action_space(None)
-            set_action_space_bounds(action_box.low, action_box.high)
+            set_action_space_bounds(
+                *self._observation_assembler.field_output_bounds(
+                    None, self.config.action_fields
+                )
+            )
         except Exception:
             pass  # leave PrevActionNorm on its [-1, 1] fallback
 
@@ -426,6 +436,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 is not AircraftControlState.CONTROLLED
             ):
                 continue
+            # One vector, fields in config order, whichever shape the action
+            # space gives it: what the fields and the hooks are applied from.
+            action = flatten_action(self.config, action)
             # Record the normalized action so PrevActionNorm can expose a_{t-1};
             # done before obs assembly this step so the returned obs carries a_t.
             for obs_field in self._stateful_fields:
@@ -634,6 +647,18 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
     def action_space(self, agent: str):
         return self._observation_assembler.action_space(agent)
+
+    def observation_layout(self, agent: str | None = None) -> dict[str, list[Slot]]:
+        """Which columns of each observation part belong to which field.
+
+        Fixed by the config, so the same for every agent; ``agent`` mirrors
+        :meth:`observation_space`.
+        """
+        return observation_layout(self.config)
+
+    def action_layout(self, agent: str | None = None) -> dict[str, list[Slot]]:
+        """Which columns of each action part belong to which field."""
+        return action_layout(self.config)
 
     # ------------------------------------------------------------------
     # PettingZoo helpers

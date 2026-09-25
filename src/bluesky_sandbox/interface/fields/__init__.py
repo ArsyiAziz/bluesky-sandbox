@@ -3,6 +3,7 @@ import sys as _sys
 from . import actions, observations
 from .base import (
     ActionField,
+    ActionKind,
     ActionMeta,
     ActionMode,
     ControlAxis,
@@ -29,6 +30,7 @@ _sys.modules.setdefault(f"{__name__}.queryables", queryables)
 
 __all__ = [
     "ActionField",
+    "ActionKind",
     "ActionMeta",
     "ActionMode",
     "ControlAxis",

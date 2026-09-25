@@ -8,11 +8,12 @@ import bluesky as bs
 import numpy as np
 from bluesky.tools.aero import ft, kts
 from bluesky.tools.geo import qdrdist
-from gymnasium.spaces import Box, Dict, Sequence
+from gymnasium.spaces import Box, Dict, MultiBinary, Sequence
 
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.aircraft_table import AircraftTable, Column
 from bluesky_sandbox.interface.fields.base import (
+    ActionKind,
     PairObsField,
     SwitchActionMixin,
 )
@@ -67,6 +68,14 @@ def _field_output_size(field) -> int:
             return int(output_size())
         return 1
     return normalizer.output_size(field)
+
+
+def _action_parts(fields) -> dict[ActionKind, list]:
+    """The action fields in each part of the action space, in config order."""
+    parts: dict[ActionKind, list] = {}
+    for field in fields:
+        parts.setdefault(field.kind, []).append(field)
+    return parts
 
 
 def _flatten_field_values(value) -> list[float]:
@@ -287,10 +296,24 @@ class ObservationAssembler:
         return Dict(spaces)
 
     def action_space(self, agent):
+        """A ``Box`` while every action is continuous; with any binary action, a
+        ``Dict`` of the parts: ``continuous`` a ``Box``, ``binary`` a
+        ``MultiBinary`` - each holding its actions in config order."""
         config = self._config()
         idx = None if agent is None else bs.traf.id.index(agent)
-        low, high = self.field_output_bounds(idx, config.action_fields)
-        return Box(low=low, high=high, dtype=np.float32)
+        parts = _action_parts(config.action_fields)
+        if set(parts) <= {ActionKind.CONTINUOUS}:
+            low, high = self.field_output_bounds(idx, config.action_fields)
+            return Box(low=low, high=high, dtype=np.float32)
+        spaces = {}
+        for kind, fields in parts.items():
+            if kind is ActionKind.CONTINUOUS:
+                low, high = self.field_output_bounds(idx, fields)
+                spaces[kind.value] = Box(low=low, high=high, dtype=np.float32)
+            else:
+                width = sum(_field_output_size(field) for field in fields)
+                spaces[kind.value] = MultiBinary(width)
+        return Dict(spaces)
 
     def get_obs(self, agent_ids=None) -> dict:
         config = self._config()

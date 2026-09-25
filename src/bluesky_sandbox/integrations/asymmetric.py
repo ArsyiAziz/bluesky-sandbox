@@ -16,6 +16,8 @@ take and return plain dicts and Gymnasium spaces:
     critic_obs(obs)                 fold them into ownship / intruders
     actor_observation_space(space)  the same, at the space level
     critic_observation_space(space)
+    actor_observation_layout(layout)  and at the layout level
+    critic_observation_layout(layout)
 
 Build the policy network from ``actor_observation_space`` and the value network
 from ``critic_observation_space``, then feed each the matching view. The policy
@@ -31,11 +33,15 @@ import numpy as np
 from gymnasium.spaces import Box, Sequence
 from gymnasium.spaces import Dict as DictSpace
 
+from bluesky_sandbox.core.slot import Slot, unique_names
+
 __all__ = [
     "CRITIC_OBS_KEYS",
     "actor_obs",
+    "actor_observation_layout",
     "actor_observation_space",
     "critic_obs",
+    "critic_observation_layout",
     "critic_observation_space",
     "has_privileged_obs",
 ]
@@ -155,3 +161,28 @@ def critic_observation_space(space: Any) -> Any:
         )
 
     return DictSpace(spaces)
+
+
+def actor_observation_layout(layout: dict[str, list[Slot]]) -> dict[str, list[Slot]]:
+    """The policy view's columns: ``layout`` minus the critic parts."""
+    return {k: v for k, v in layout.items() if k not in CRITIC_OBS_KEYS}
+
+
+def critic_observation_layout(layout: dict[str, list[Slot]]) -> dict[str, list[Slot]]:
+    """The value view's columns, mirroring :func:`critic_obs`: each critic part
+    placed after the columns of the part it is appended to."""
+    out = actor_observation_layout(layout)
+    for critic_key, key in zip(CRITIC_OBS_KEYS, ("ownship", "intruders")):
+        extra = layout.get(critic_key)
+        if extra is None:
+            continue
+        base = out.get(key, [])
+        shift = base[-1].columns.stop if base else 0
+        moved = [
+            Slot(
+                slot.name, slice(slot.columns.start + shift, slot.columns.stop + shift)
+            )
+            for slot in extra
+        ]
+        out[key] = unique_names([*base, *moved])
+    return out

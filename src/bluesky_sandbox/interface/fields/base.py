@@ -148,6 +148,14 @@ class ActionMode(StrEnum):
     SWITCH = "switch"
 
 
+class ActionKind(StrEnum):
+    """What values an action takes, which sets the part of the action space
+    it is in: ``continuous`` a range, ``binary`` 0 or 1."""
+
+    CONTINUOUS = "continuous"
+    BINARY = "binary"
+
+
 def _validate_bounds(
     owner: str,
     low: float,
@@ -732,11 +740,12 @@ class TaskContextPairObsField(EnvPairObsField, ABC, Generic[ContextT]):
 class SwitchActionMixin(ABC):
     """An ON/OFF action: 1 turns it on, 0 turns it off.
 
-    The bounds are fixed at ``(0, 1)`` and there is no normalizer, so the action
-    value reaches the field as the policy gives it; a value between reads as
-    the nearer of the two.
+    A binary action (:attr:`kind`): it sits in the ``binary`` part of the action
+    space, which holds only 0 and 1, so its bounds are fixed at ``(0, 1)`` and
+    there is no normalizer.
     """
 
+    kind: ClassVar[ActionKind] = ActionKind.BINARY
     low: float = dataclass_field(default=0.0, init=False)
     high: float = dataclass_field(default=1.0, init=False)
     normalizer: Any | None = dataclass_field(default=None, init=False)
@@ -753,8 +762,13 @@ class SwitchActionMixin(ABC):
         return 0.0, 1.0
 
     def switch_command(self, value: float) -> bool:
-        """Whether ``value`` turns the switch on."""
-        return value >= 0.5
+        """Whether ``value`` turns the switch on: 1 does, 0 does not."""
+        if value not in (0.0, 1.0):
+            raise ValueError(
+                f"{self.__class__.__name__} is a switch: it takes 0 or 1, "
+                f"got {value!r}."
+            )
+        return value == 1.0
 
     def switch_on_value(self) -> float:
         """The action value that turns this switch on."""
@@ -768,6 +782,8 @@ class SwitchActionMixin(ABC):
 @dataclass(frozen=True)
 class ActionField(_BoundedField, ABC):
     meta: ClassVar[ActionMeta]
+    #: The part of the action space this action is in.
+    kind: ClassVar[ActionKind] = ActionKind.CONTINUOUS
 
     def __post_init__(self) -> None:
         super().__post_init__()

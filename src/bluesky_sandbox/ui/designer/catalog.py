@@ -337,6 +337,7 @@ def action_fields() -> list[dict[str, Any]]:
             "name": cls.__name__,
             "doc": _doc(cls),
             **_category(cls),
+            "kind": cls.kind.value,
             "normalizable": _takes_normalizer(cls),
             "params": _field_params(cls),
             "profile": _profile(cls),

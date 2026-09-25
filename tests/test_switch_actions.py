@@ -1,9 +1,9 @@
 """Autopilot switches: 1 turns a mode on, 0 turns it off.
 
-A switch's bounds are fixed at (0, 1) and it has no normalizer, so the action
-value reaches it as given. These pin the commands a switch sends - only when
-its mode changes - and how the dispatcher orders switches around the actions
-they suppress or require.
+A switch is in the binary part of the action space, so its value is 0 or 1; its
+bounds are fixed at (0, 1) and it has no normalizer. These pin the commands a
+switch sends - only when its mode changes - and how the dispatcher orders
+switches around the actions they suppress or require.
 """
 
 from __future__ import annotations
@@ -125,13 +125,18 @@ def test_a_required_mode_that_is_off_is_turned_on(aircraft, sent):
     assert sorted(sent) == ["LNAV SW001 ON", "VNAV SW001 ON"]
 
 
-def test_the_action_space_gives_a_switch_zero_to_one(env):
+def test_a_switch_is_in_the_binary_part_of_the_action_space(env):
     env.config.action_fields.clear()
     env.config.action_fields.extend([act.HdgDeltaDeg(), act.AutopilotLnav()])
     try:
-        env.reset(seed=0)
-        assert bs.traf.cre("SW002", "B744", 52.0, 4.5, 90, 12_000 * ft, 250 * kts)
-        space = env.action_space("SW002")
-        assert (space.low[1], space.high[1]) == (0.0, 1.0)
+        space = env.action_space(None)
+        assert space["continuous"].shape == (1,)
+        assert space["binary"].n == 1
     finally:
         env.config.action_fields.clear()
+
+
+@pytest.mark.parametrize("value", [0.3, 0.5, -1.0, 2.0])
+def test_a_value_other_than_zero_or_one_is_refused(aircraft, value):
+    with pytest.raises(ValueError, match="0 or 1"):
+        act.AutopilotLnav().set(aircraft, value)

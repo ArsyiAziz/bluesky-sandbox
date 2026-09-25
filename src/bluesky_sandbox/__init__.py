@@ -3,11 +3,20 @@ __version__ = "0.1.0"
 import sys as _sys
 
 from bluesky_sandbox.core.base_environment import AircraftControlState
+from bluesky_sandbox.core.layout import (
+    Slot,
+    action_layout,
+    flatten_action,
+    observation_layout,
+    zero_action,
+)
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.integrations.asymmetric import (
     actor_obs,
+    actor_observation_layout,
     actor_observation_space,
     critic_obs,
+    critic_observation_layout,
     critic_observation_space,
     has_privileged_obs,
 )
@@ -15,6 +24,7 @@ from bluesky_sandbox.interface.fields import actions
 from bluesky_sandbox.interface.fields import observations as obs
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
+    ActionKind,
     ActionMeta,
     ActionMode,
     ControlAxis,
@@ -116,6 +126,7 @@ _sys.modules.setdefault(__name__ + ".driver", _drivers)
 __all__ = [
     "AchievedGoalFn",
     "ActionField",
+    "ActionKind",
     "ActionMeta",
     "ActionMode",
     "AgentStepContext",
@@ -174,6 +185,7 @@ __all__ = [
     "SeparationEvent",
     "SeparationEventInfo",
     "SeparationInfo",
+    "Slot",
     "SpawnConfig",
     "SpawnRegion",
     "StepEvent",
@@ -199,13 +211,19 @@ __all__ = [
     "WaypointRoute",
     "WaypointStep",
     "WaypointTarget",
+    "action_layout",
     "actions",
     "actor_obs",
+    "actor_observation_layout",
     "actor_observation_space",
     "critic_obs",
+    "critic_observation_layout",
     "critic_observation_space",
+    "flatten_action",
     "has_privileged_obs",
     "obs",
+    "observation_layout",
     "qobs",
     "waypoint_readouts",
+    "zero_action",
 ]
