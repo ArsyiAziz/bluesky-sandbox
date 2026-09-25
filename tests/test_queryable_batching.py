@@ -4,7 +4,7 @@ Observations read every aircraft's query result at once, as arrays
 (:class:`~bluesky_sandbox.core.services.QueryBatch`). Tasks and rewards read
 the same results one aircraft at a time, as objects, through
 ``agent_context(idx).query(name)``. Each field's batched value must be exactly
-the attribute its ``queryable_spec.path`` names on that object - including
+what its ``_expected`` reads off that object - including
 where the object raises, for temporal state a queryable does not track.
 
 Covers tracked and untracked waypoints and regions, route legs the monitor
@@ -111,38 +111,6 @@ def _instances(cls: type) -> list:
     return [cls(query_name=name) for name in ("sector", "zone")]
 
 
-def _one(field, idx: int):
-    """The field's value for one aircraft, read off the result object."""
-    if isinstance(field, Q.ActiveWaypointObsField):
-        active = field.active_waypoint(idx)
-        if isinstance(field, Q.ActiveWaypointAvailable):
-            return float(active is not None)
-        if isinstance(field, Q.ActiveWaypointOneHot):
-            values = np.zeros(field.output_size(), dtype=np.float32)
-            if active is not None:
-                values[field.query_names.index(active[0])] = 1.0
-            return values
-        if isinstance(field, Q.ActiveWaypointRouteIndex):
-            index = None if active is None else active[1].route.index
-            return -1.0 if index is None else float(index)
-        path = field.queryable_spec.path
-        value = active[1] if active is not None else None
-        for part in path.split("."):
-            value = None if value is None else getattr(value, part)
-        return 0.0 if value is None else float(value)
-    value = field.query_result(idx)
-    path = (
-        field.queryable_spec.path
-        if not isinstance(field, Q._WaypointRouteFlag)
-        else (f"route.{field.flag_name}")
-    )
-    for part in path.split("."):
-        value = getattr(value, part)
-    if value is None:  # an unrouted waypoint's route index
-        return -1.0
-    return float(value)
-
-
 @pytest.fixture(scope="module")
 def env():
     env = BlueskyEnv(
@@ -172,7 +140,7 @@ def test_the_batch_matches_each_aircrafts_result(env, cls):
         expected, raised = [], None
         for idx in every:
             try:
-                expected.append(_one(field, idx))
+                expected.append(field._expected(idx))
             except Exception as exc:  # noqa: BLE001 - compared by type below
                 raised = type(exc)
                 break
@@ -189,6 +157,13 @@ def test_the_batch_matches_each_aircrafts_result(env, cls):
                 np.asarray(field.get(idx), dtype=np.float64),
                 np.asarray(expected[idx], dtype=np.float64),
             )
+
+
+@pytest.mark.parametrize("cls", _field_classes(), ids=lambda c: c.__name__)
+def test_every_queryable_field_states_its_value(cls):
+    assert cls._expected is not Q.QueryableObsField._expected, (
+        f"{cls.__name__} has no _expected reference"
+    )
 
 
 def test_the_scenario_reaches_every_branch(env):

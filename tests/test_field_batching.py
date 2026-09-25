@@ -204,6 +204,72 @@ def test_get_pair_matrix_matches_get_pairs(fields, cls):
     _assert_same(field.get_pair_matrix(subset), matrix[1::3], "ownship subset")
 
 
+# The bulk path is checked against each field's own plain statement of its
+# value (``_expected`` / ``_expected_pair``), which does not share the bulk
+# code. Lag wrappers are exempt: their value is a PAST value, which a stateless
+# reference cannot compute; test_normalizers pins their semantics directly.
+_NO_REFERENCE = frozenset({"LaggedObs", "LaggedPair"})
+
+
+def _assert_matches_reference(bulk, reference, what: str) -> None:
+    bulk = np.asarray(bulk)
+    reference = np.asarray(reference, dtype=np.float64)
+    assert bulk.shape == reference.shape, (
+        f"{what}: shape {bulk.shape} vs {reference.shape}"
+    )
+    # Computed independently, so equal to rounding: tight for float64 results,
+    # to float32 precision for the fields that emit float32.
+    rtol = 1e-6 if bulk.dtype == np.float32 else 1e-9
+    np.testing.assert_allclose(
+        bulk.astype(np.float64), reference, rtol=rtol, atol=rtol, err_msg=what
+    )
+
+
+@pytest.mark.parametrize("cls", OWN_CLASSES, ids=lambda c: c.__name__)
+def test_every_ownship_field_states_its_value(cls):
+    if cls.__name__ in _NO_REFERENCE:
+        pytest.skip("a lagged value; see the lag tests in test_normalizers")
+    assert cls._expected is not ObsField._expected, (
+        f"{cls.__name__} has no _expected reference"
+    )
+
+
+@pytest.mark.parametrize("cls", PAIR_CLASSES, ids=lambda c: c.__name__)
+def test_every_pair_field_states_its_value(cls):
+    if cls.__name__ in _NO_REFERENCE:
+        pytest.skip("a lagged value; see the lag tests in test_normalizers")
+    assert cls._expected_pair is not PairObsField._expected_pair, (
+        f"{cls.__name__} has no _expected_pair reference"
+    )
+
+
+@pytest.mark.parametrize("cls", OWN_CLASSES, ids=lambda c: c.__name__)
+def test_the_bulk_values_match_the_reference(fields, cls):
+    if cls.__name__ in _NO_REFERENCE:
+        pytest.skip("a lagged value; see the lag tests in test_normalizers")
+    field = fields[cls.__name__]
+    every = _all_indices()
+    bulk = np.asarray(field.get_many(every))
+    for idx in every:
+        _assert_matches_reference(bulk[idx], field._expected(idx), f"aircraft {idx}")
+
+
+@pytest.mark.parametrize("cls", PAIR_CLASSES, ids=lambda c: c.__name__)
+def test_the_bulk_pairs_match_the_reference(fields, cls):
+    if cls.__name__ in _NO_REFERENCE:
+        pytest.skip("a lagged value; see the lag tests in test_normalizers")
+    field = fields[cls.__name__]
+    owns = np.array(_all_indices())
+    matrix = np.asarray(field.get_pair_matrix(owns))
+    for own in owns:
+        for other in _others(int(own)):
+            _assert_matches_reference(
+                matrix[own, other],
+                field._expected_pair(int(own), other),
+                f"own {own}, other {other}",
+            )
+
+
 def _normalized_field(field, normalizer):
     """The field with ``normalizer`` attached, or None if they don't pair."""
     if type(field).__name__ in _MULTI_OUTPUT:

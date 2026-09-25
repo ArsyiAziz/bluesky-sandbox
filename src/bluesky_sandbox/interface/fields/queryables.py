@@ -169,6 +169,10 @@ class QueryRegionInside(QueryableObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._column(indices, "current.inside")
 
+    def _expected(self, idx: int) -> Any:
+        result = self.query_result(idx)
+        return float(result.current.inside)
+
 
 @dataclass(frozen=True)
 class QueryRegionInsideDuringStep(QueryableObsField):
@@ -192,6 +196,10 @@ class QueryRegionInsideDuringStep(QueryableObsField):
 
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._column(indices, "step.inside")
+
+    def _expected(self, idx: int) -> Any:
+        result = self.query_result(idx)
+        return float(result.step.inside)
 
 
 @dataclass(frozen=True)
@@ -219,6 +227,10 @@ class QueryRegionInsideTimeTotalS(QueryableObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._column(indices, "time.total_s")
 
+    def _expected(self, idx: int) -> Any:
+        result = self.query_result(idx)
+        return float(result.time.total_s)
+
 
 @dataclass(frozen=True)
 class WaypointDistanceNm(WaypointResultObsField):
@@ -241,6 +253,10 @@ class WaypointDistanceNm(WaypointResultObsField):
 
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, "current.distance_nm")
+
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return float(result.current.distance_nm)
 
 
 @dataclass(frozen=True)
@@ -269,6 +285,10 @@ class WaypointBearingDeg(WaypointResultObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, "current.bearing_deg")
 
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return float(result.current.bearing_deg)
+
 
 @dataclass(frozen=True)
 class WaypointTrackErrorDeg(WaypointResultObsField):
@@ -296,6 +316,10 @@ class WaypointTrackErrorDeg(WaypointResultObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, "current.track_error_deg")
 
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return float(result.current.track_error_deg)
+
 
 @dataclass(frozen=True)
 class WaypointAltDiffFt(WaypointResultObsField):
@@ -319,6 +343,10 @@ class WaypointAltDiffFt(WaypointResultObsField):
 
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, "current.alt_diff_ft")
+
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return float(result.current.alt_diff_ft)
 
 
 @dataclass(frozen=True)
@@ -347,6 +375,10 @@ class WaypointRouteIndex(WaypointResultObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, "route.index")
 
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return -1.0 if result.route.index is None else float(result.route.index)
+
 
 @dataclass(frozen=True)
 class _WaypointRouteFlag(WaypointResultObsField):
@@ -362,6 +394,10 @@ class _WaypointRouteFlag(WaypointResultObsField):
 
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, f"route.{self.flag_name}")
+
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return float(getattr(result.route, self.flag_name))
 
 
 @dataclass(frozen=True)
@@ -432,6 +468,10 @@ class WaypointSatisfied(WaypointResultObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, "current.satisfied")
 
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return float(result.current.satisfied)
+
 
 @dataclass(frozen=True)
 class WaypointSatisfiedDuringStep(WaypointResultObsField):
@@ -458,6 +498,10 @@ class WaypointSatisfiedDuringStep(WaypointResultObsField):
 
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, "step.satisfied")
+
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return float(result.step.satisfied)
 
 
 @dataclass(frozen=True)
@@ -488,6 +532,10 @@ class WaypointSatisfiedTimeTotalS(WaypointResultObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, "time.total_s")
 
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return float(result.time.total_s)
+
 
 @dataclass(frozen=True)
 class WaypointMinDistanceNm(WaypointResultObsField):
@@ -512,6 +560,10 @@ class WaypointMinDistanceNm(WaypointResultObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._waypoint_column(indices, "step.min_distance_nm")
 
+    def _expected(self, idx: int) -> Any:
+        result = self.waypoint_result(idx)
+        return float(result.step.min_distance_nm)
+
 
 @dataclass(frozen=True)
 class ActiveWaypointAvailable(ActiveWaypointObsField):
@@ -533,6 +585,9 @@ class ActiveWaypointAvailable(ActiveWaypointObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         _names, chosen = self._active_choice(indices)
         return (chosen >= 0).astype(np.float64)
+
+    def _expected(self, idx: int) -> Any:
+        return float(self.active_waypoint(idx) is not None)
 
 
 @dataclass(frozen=True)
@@ -557,6 +612,11 @@ class ActiveWaypointRouteIndex(ActiveWaypointObsField):
 
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._active_values(indices, "route.index", missing=-1.0)
+
+    def _expected(self, idx: int) -> Any:
+        active = self.active_waypoint(idx)
+        index = None if active is None else active[1].route.index
+        return -1.0 if index is None else float(index)
 
 
 @dataclass(frozen=True)
@@ -600,6 +660,13 @@ class ActiveWaypointOneHot(ActiveWaypointObsField):
             values[k, self.query_names.index(names[chosen[k]])] = 1.0
         return values
 
+    def _expected(self, idx: int) -> Any:
+        values = np.zeros(self.output_size(), dtype=np.float32)
+        active = self.active_waypoint(idx)
+        if active is not None and active[0] in self.query_names:
+            values[self.query_names.index(active[0])] = 1.0
+        return values
+
 
 @dataclass(frozen=True)
 class ActiveWaypointDistanceNm(ActiveWaypointObsField):
@@ -619,6 +686,10 @@ class ActiveWaypointDistanceNm(ActiveWaypointObsField):
 
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._active_values(indices, "current.distance_nm")
+
+    def _expected(self, idx: int) -> Any:
+        active = self.active_waypoint(idx)
+        return 0.0 if active is None else float(active[1].current.distance_nm)
 
 
 @dataclass(frozen=True)
@@ -648,6 +719,10 @@ class ActiveWaypointBearingDeg(ActiveWaypointObsField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._active_values(indices, "current.bearing_deg")
 
+    def _expected(self, idx: int) -> Any:
+        active = self.active_waypoint(idx)
+        return 0.0 if active is None else float(active[1].current.bearing_deg)
+
 
 @dataclass(frozen=True)
 class ActiveWaypointAltDiffFt(ActiveWaypointObsField):
@@ -668,6 +743,10 @@ class ActiveWaypointAltDiffFt(ActiveWaypointObsField):
 
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._active_values(indices, "current.alt_diff_ft")
+
+    def _expected(self, idx: int) -> Any:
+        active = self.active_waypoint(idx)
+        return 0.0 if active is None else float(active[1].current.alt_diff_ft)
 
 
 @dataclass(frozen=True)
@@ -696,3 +775,7 @@ class ActiveWaypointTrackErrorDeg(ActiveWaypointObsField):
 
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return self._active_values(indices, "current.track_error_deg")
+
+    def _expected(self, idx: int) -> Any:
+        active = self.active_waypoint(idx)
+        return 0.0 if active is None else float(active[1].current.track_error_deg)

@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, ClassVar
 
 import bluesky as bs
 import numpy as np
-from bluesky.tools.aero import crossoveralt, g0, nm, vcas2tas
-from bluesky.tools.geo import kwikqdrdist
+from bluesky.tools.aero import crossoveralt, ft, g0, kts, nm, vcas2tas
+from bluesky.tools.geo import kwikqdrdist, qdrdist
 
+from bluesky_sandbox.sim.geometry.conflict import (
+    ConflictView,
+    predicted_tlos_s,
+    windowed_min_hsep_nm,
+    windowed_min_vsep_ft,
+    windowed_signed_vsep_at_entry_ft,
+)
 from bluesky_sandbox.sim.geometry.conflict import (
     cd_hpz_m as _cd_hpz_m,
 )
@@ -17,12 +25,6 @@ from bluesky_sandbox.sim.geometry.conflict import (
 )
 from bluesky_sandbox.sim.geometry.conflict import (
     cd_rpz_m as _cd_rpz_m,
-)
-from bluesky_sandbox.sim.geometry.conflict import (
-    predicted_tlos_s,
-    windowed_min_hsep_nm,
-    windowed_min_vsep_ft,
-    windowed_signed_vsep_at_entry_ft,
 )
 from bluesky_sandbox.sim.performance.envelope import (
     _warn_type_data_mismatch,
@@ -56,6 +58,12 @@ from ._pairs import (
     _per_own,
     _track_frame,
     _track_frame_at_cpa,
+)
+from ._reference import (
+    one_confpair_value,
+    one_pair_fix_projection,
+    one_pair_motion,
+    one_pair_track_frame,
 )
 from ._route import _active_route_waypoint, _route_along_distance_nm
 from ._state import (
@@ -126,6 +134,9 @@ class LatDeg(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.lat[_indices_array(indices)]
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.lat[idx])
+
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -146,6 +157,9 @@ class LonDeg(_BroadcastObs, ObsField):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.lon[_indices_array(indices)]
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.lon[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -169,6 +183,9 @@ class HdgDeg(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.hdg[_indices_array(indices)]
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.hdg[idx])
+
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -190,6 +207,9 @@ class TrkDeg(_BroadcastObs, ObsField):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.trk[_indices_array(indices)]
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.trk[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -271,6 +291,13 @@ class ActiveRouteWaypointDistanceNm(_ActiveRouteWaypointField):
         _qdr, dist = kwikqdrdist(lat, lon, wp_lat, wp_lon)
         return np.where(found, dist, 0.0)
 
+    def _expected(self, idx: int) -> Any:
+        wp = self._active_wp(idx)
+        if wp is None:
+            return 0.0
+        lat, lon = float(bs.traf.lat[idx]), float(bs.traf.lon[idx])
+        return float(kwikqdrdist(lat, lon, wp[0], wp[1])[1])
+
 
 @dataclass(frozen=True)
 class ActiveRouteWaypointBearingDeg(_ActiveRouteWaypointField):
@@ -285,6 +312,13 @@ class ActiveRouteWaypointBearingDeg(_ActiveRouteWaypointField):
         lat, lon = _traf_array("lat")[indices], _traf_array("lon")[indices]
         qdr, _dist = kwikqdrdist(lat, lon, wp_lat, wp_lon)
         return np.where(found, np.asarray(qdr, dtype=np.float64) % 360.0, 0.0)
+
+    def _expected(self, idx: int) -> Any:
+        wp = self._active_wp(idx)
+        if wp is None:
+            return 0.0
+        lat, lon = float(bs.traf.lat[idx]), float(bs.traf.lon[idx])
+        return float(kwikqdrdist(lat, lon, wp[0], wp[1])[0]) % 360.0
 
 
 @dataclass(frozen=True)
@@ -303,6 +337,14 @@ class ActiveRouteWaypointTrackErrorDeg(_ActiveRouteWaypointField):
             np.asarray(qdr, dtype=np.float64), _traf_array("trk")[indices]
         )
         return np.where(found, error, 0.0)
+
+    def _expected(self, idx: int) -> Any:
+        wp = self._active_wp(idx)
+        if wp is None:
+            return 0.0
+        lat, lon = float(bs.traf.lat[idx]), float(bs.traf.lon[idx])
+        bearing = float(kwikqdrdist(lat, lon, wp[0], wp[1])[0])
+        return (bearing - float(bs.traf.trk[idx]) + 180.0) % 360.0 - 180.0
 
 
 @dataclass(frozen=True)
@@ -329,6 +371,9 @@ class ActiveRouteWaypointValid(_ActiveRouteWaypointField):
         found, *_rest = self._waypoints(indices)
         return found.astype(np.float64)
 
+    def _expected(self, idx: int) -> Any:
+        return float(self._active_wp(idx) is not None)
+
 
 @dataclass(frozen=True)
 class ActiveRouteWaypointHasAltConstraint(_ActiveRouteWaypointField):
@@ -354,6 +399,10 @@ class ActiveRouteWaypointHasAltConstraint(_ActiveRouteWaypointField):
         _found, _lat, _lon, alt_m, _spd = self._waypoints(indices)
         return (~np.isnan(alt_m)).astype(np.float64)
 
+    def _expected(self, idx: int) -> Any:
+        wp = self._active_wp(idx)
+        return float(wp is not None and wp[2] is not None)
+
 
 @dataclass(frozen=True)
 class ActiveRouteWaypointHasSpdConstraint(_ActiveRouteWaypointField):
@@ -374,6 +423,10 @@ class ActiveRouteWaypointHasSpdConstraint(_ActiveRouteWaypointField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         _found, _lat, _lon, _alt, spd_ms = self._waypoints(indices)
         return (~np.isnan(spd_ms)).astype(np.float64)
+
+    def _expected(self, idx: int) -> Any:
+        wp = self._active_wp(idx)
+        return float(wp is not None and wp[3] is not None)
 
 
 @dataclass(frozen=True)
@@ -398,6 +451,12 @@ class ActiveRouteWaypointAltDiffFt(_ActiveRouteWaypointField):
         _found, _lat, _lon, alt_m, _spd = self._waypoints(indices)
         diff_ft = _traf_array("alt")[indices] * _M_TO_FT - alt_m * _M_TO_FT
         return np.where(np.isnan(alt_m), 0.0, diff_ft)
+
+    def _expected(self, idx: int) -> Any:
+        wp = self._active_wp(idx)
+        if wp is None or wp[2] is None:
+            return 0.0
+        return (float(bs.traf.alt[idx]) - wp[2]) / ft
 
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
@@ -444,6 +503,12 @@ class ActiveRouteWaypointSpdDiffKts(_ActiveRouteWaypointField):
         diff_kts = (_traf_array("cas")[indices] - spd_ms) * _MS_TO_KTS
         return np.where(np.isnan(spd_ms), 0.0, diff_kts)
 
+    def _expected(self, idx: int) -> Any:
+        wp = self._active_wp(idx)
+        if wp is None or wp[3] is None:
+            return 0.0
+        return (float(bs.traf.cas[idx]) - wp[3]) / kts
+
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
             wp = self._active_wp(idx)
@@ -487,6 +552,12 @@ class ActiveRouteWaypointSpdErrorCrossover(_ActiveRouteWaypointField):
             state = crossover_speed_state(int(indices[k]), float(spd_ms[k]))
             out[k] = float(state.normalized_error)
         return out
+
+    def _expected(self, idx: int) -> Any:
+        wp = self._active_wp(idx)
+        if wp is None or wp[3] is None:
+            return 0.0
+        return float(crossover_speed_state(idx, wp[3]).normalized_error)
 
 
 @dataclass(frozen=True)
@@ -542,6 +613,12 @@ class ActiveRouteWaypointEteS(_ActiveRouteWaypointField):
         )
         gs = np.maximum(_traf_array("gs")[indices], _MIN_GS_MS)
         return np.where(np.isnan(dist_nm), 0.0, dist_nm * nm / gs)
+
+    def _expected(self, idx: int) -> Any:
+        dist_nm = _route_along_distance_nm(idx, self.route_offset)
+        if dist_nm is None:
+            return 0.0
+        return dist_nm * nm / max(float(bs.traf.gs[idx]), _MIN_GS_MS)
 
 
 @dataclass(frozen=True)
@@ -638,6 +715,23 @@ class ActiveRouteWaypointVerticalEteS(_ActiveRouteWaypointField):
         # No altitude constraint, or already at it.
         return np.where(np.isnan(error_m) | (error_m == 0.0), 0.0, ete)
 
+    def _expected(self, idx: int) -> Any:
+        wp = self._active_wp(idx)
+        if wp is None or wp[2] is None:
+            return 0.0
+        error_m = wp[2] - float(bs.traf.alt[idx])  # + climb to the gate, - descend
+        if error_m == 0.0:
+            return 0.0
+        if self.vs_mode == "current":
+            rate_ms = float(bs.traf.vs[idx])
+        elif error_m > 0.0:
+            rate_ms = abs(float(bs.traf.perf.vsmax[idx]))
+        else:
+            rate_ms = -abs(float(bs.traf.perf.vsmin[idx]))
+        if rate_ms * error_m <= 0.0:  # level, or going the wrong way
+            return float(self.high)
+        return min(error_m / rate_ms, float(self.high))
+
 
 class _AltitudeEnvelopeBounds:
     """Bounds backed by BlueSky's aircraft altitude ceiling."""
@@ -713,6 +807,9 @@ class AltFt(_BroadcastObs, _AltitudeEnvelopeBounds, _AltitudeEnvelopeFt):
     def _values(self, indices: Any) -> Any:
         return bs.traf.alt[_indices_array(indices)] * _M_TO_FT
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.alt[idx]) / ft
+
 
 @dataclass(frozen=True)
 class AltM(_BroadcastObs, _AltitudeEnvelopeBounds, _AltitudeEnvelopeM):
@@ -732,6 +829,9 @@ class AltM(_BroadcastObs, _AltitudeEnvelopeBounds, _AltitudeEnvelopeM):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.alt[_indices_array(indices)]
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.alt[idx])
 
 
 class _CasEnvelopeBounds:
@@ -806,6 +906,9 @@ class CasKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
     def _values(self, indices: Any) -> Any:
         return bs.traf.cas[_indices_array(indices)] * _MS_TO_KTS
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.cas[idx]) / kts
+
 
 @dataclass(frozen=True)
 class CasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
@@ -826,6 +929,9 @@ class CasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
     def _values(self, indices: Any) -> Any:
         return bs.traf.cas[_indices_array(indices)]
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.cas[idx])
+
 
 @dataclass(frozen=True)
 class TasKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
@@ -843,6 +949,9 @@ class TasKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
     def _values(self, indices: Any) -> Any:
         return bs.traf.tas[_indices_array(indices)] * _MS_TO_KTS
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.tas[idx]) / kts
+
 
 @dataclass(frozen=True)
 class TasMs(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeMs):
@@ -859,6 +968,9 @@ class TasMs(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeMs):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.tas[_indices_array(indices)]
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.tas[idx])
 
 
 @dataclass(frozen=True)
@@ -889,6 +1001,9 @@ class VsFtMin(_BroadcastObs, ObsField):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.vs[_indices_array(indices)] * _MS_TO_FTMIN
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.vs[idx]) * 60.0 / ft
 
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
@@ -930,6 +1045,9 @@ class VsMs(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.vs[_indices_array(indices)]
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.vs[idx])
+
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
             vsmin = float(bs.traf.perf.vsmin[idx])
@@ -967,6 +1085,9 @@ class AxMs2(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return np.asarray(bs.traf.ax, dtype=np.float64)[_indices_array(indices)]
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.ax[idx])
+
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -994,6 +1115,9 @@ class MachNumber(_BroadcastObs, ObsField):
 
     def _values(self, indices: Any) -> Any:
         return np.asarray(bs.traf.M, dtype=np.float64)[_indices_array(indices)]
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.M[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1026,6 +1150,10 @@ class CrossoverAltMarginFt(_BroadcastObs, ObsField):
         alt = np.asarray(bs.traf.alt, dtype=np.float64)[i]
         mmo = np.asarray(bs.traf.perf.mmo, dtype=np.float64)[i]
         return (alt - np.asarray(crossoveralt(cas, mmo))) * _M_TO_FT
+
+    def _expected(self, idx: int) -> Any:
+        cas, mmo = float(bs.traf.cas[idx]), float(bs.traf.perf.mmo[idx])
+        return (float(bs.traf.alt[idx]) - float(crossoveralt(cas, mmo))) / ft
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1070,6 +1198,9 @@ class TimeInEnvS(_BroadcastObs, _TimeInEnvBacked, ObsField):
     def _values(self, indices: Any) -> Any:
         return np.asarray(_TIME_IN_ENV.read(indices), dtype=np.float64)
 
+    def _expected(self, idx: int) -> Any:
+        return float(_TIME_IN_ENV.read_one(idx))  # published by the env
+
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -1110,6 +1241,9 @@ class PerfVminKts(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vmin[_indices_array(indices)] * _MS_TO_KTS
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.perf.vmin[idx]) / kts
+
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -1134,6 +1268,9 @@ class PerfVmaxKts(_BroadcastObs, ObsField):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vmax[_indices_array(indices)] * _MS_TO_KTS
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.perf.vmax[idx]) / kts
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1161,6 +1298,9 @@ class PerfVsMaxFtMin(_BroadcastObs, ObsField):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vsmax[_indices_array(indices)] * _MS_TO_FTMIN
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.perf.vsmax[idx]) * 60.0 / ft
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1190,6 +1330,9 @@ class PerfVsMinFtMin(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vsmin[_indices_array(indices)] * _MS_TO_FTMIN
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.perf.vsmin[idx]) * 60.0 / ft
+
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -1217,6 +1360,9 @@ class PerfCeilingFt(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.hmax[_indices_array(indices)] * _M_TO_FT
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.perf.hmax[idx]) / ft
+
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -1241,6 +1387,9 @@ class PerfMassT(_BroadcastObs, ObsField):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.mass[_indices_array(indices)] / 1000.0
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.perf.mass[idx]) / 1000.0
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1276,6 +1425,12 @@ class TurnRadiusNm(_BroadcastObs, ObsField):
         # commanded bank inside flyturn legs and zero otherwise.
         phi = np.asarray(bs.traf.ap.bankdef)[indices]
         return (tas * tas) / (g0 * np.tan(phi)) / nm
+
+    def _expected(self, idx: int) -> Any:
+        # r = v^2 / (g tan(bank)), at the aircraft's bank limit.
+        tas = max(float(bs.traf.tas[idx]), 1e-6)
+        bank = float(bs.traf.ap.bankdef[idx])
+        return tas * tas / (g0 * math.tan(bank)) / nm
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1329,6 +1484,9 @@ class MtowT(_BroadcastObs, ObsField):
             [_mtow_kg(types[int(i)]) / 1000.0 for i in _indices_array(indices)],
             dtype=np.float64,
         )
+
+    def _expected(self, idx: int) -> Any:
+        return _mtow_kg(bs.traf.type[idx]) / 1000.0
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1387,6 +1545,16 @@ class FlightPhaseOneHot(_BroadcastObs, ObsField):
             else:
                 if self.unknown_index is not None:
                     values[row, self.unknown_index] = 1.0
+        return values
+
+    def _expected(self, idx: int) -> Any:
+        values = np.zeros(len(self.phase_values), dtype=np.float32)
+        phase = bs.traf.perf.phase[idx]
+        matches = [k for k, v in enumerate(self.phase_values) if _phase_matches(phase, v)]
+        if matches:
+            values[matches[0]] = 1.0
+        elif self.unknown_index is not None:
+            values[self.unknown_index] = 1.0
         return values
 
     def bounds(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
@@ -1648,6 +1816,14 @@ class PrevActionNorm(_BroadcastObs, _LastActionBacked, ObsField):
                 out[row, : src.shape[0]] = src
         return out
 
+    def _expected(self, idx: int) -> Any:
+        values = np.zeros(self.dim, dtype=np.float32)
+        stored = _LAST_NORM_ACTION.read_one(idx)
+        if stored is not None:
+            exposed = stored[self.offset : self.offset + self.dim]
+            values[: len(exposed)] = exposed
+        return values
+
 
 @dataclass(frozen=True)
 class GsKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
@@ -1668,6 +1844,9 @@ class GsKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.gs[_indices_array(indices)] * _MS_TO_KTS
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.gs[idx]) / kts
 
 
 @dataclass(frozen=True)
@@ -1690,6 +1869,9 @@ class GsMs(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeMs):
     def _values(self, indices: Any) -> Any:
         return bs.traf.gs[_indices_array(indices)]
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.gs[idx])
+
 
 @dataclass(frozen=True)
 class ApHdgDeg(_BroadcastObs, ObsField):
@@ -1708,6 +1890,9 @@ class ApHdgDeg(_BroadcastObs, ObsField):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.ap.trk[_indices_array(indices)]
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.ap.trk[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1729,6 +1914,9 @@ class ApCasKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
     def _values(self, indices: Any) -> Any:
         return bs.traf.selspd[_indices_array(indices)] * _MS_TO_KTS
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.selspd[idx]) / kts
+
 
 @dataclass(frozen=True)
 class ApCasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
@@ -1745,6 +1933,9 @@ class ApCasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
 
     def _values(self, indices: Any) -> Any:
         return bs.traf.selspd[_indices_array(indices)]
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.selspd[idx])
 
 
 @dataclass(frozen=True)
@@ -1763,6 +1954,9 @@ class ApAltFt(AltFt):
     def _values(self, indices: Any) -> Any:
         return bs.traf.selalt[_indices_array(indices)] * _M_TO_FT
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.selalt[idx]) / ft
+
 
 @dataclass(frozen=True)
 class ApAltM(AltM):
@@ -1780,6 +1974,9 @@ class ApAltM(AltM):
     def _values(self, indices: Any) -> Any:
         return bs.traf.selalt[_indices_array(indices)]
 
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.selalt[idx])
+
 
 @dataclass(frozen=True)
 class ApLnavVnavOn(_BroadcastObs, ObsField):
@@ -1792,6 +1989,9 @@ class ApLnavVnavOn(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         return np.logical_and(bs.traf.swlnav[indices], bs.traf.swvnav[indices])
+
+    def _expected(self, idx: int) -> Any:
+        return float(bool(bs.traf.swlnav[idx]) and bool(bs.traf.swvnav[idx]))
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1808,6 +2008,10 @@ class ApHdgErrorDeg(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         return (bs.traf.ap.trk[indices] - bs.traf.trk[indices] + 540.0) % 360.0 - 180.0
+
+    def _expected(self, idx: int) -> Any:
+        error = float(bs.traf.ap.trk[idx]) - float(bs.traf.trk[idx])
+        return (error + 180.0) % 360.0 - 180.0
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1827,6 +2031,9 @@ class ApCasErrorKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
     def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         return (bs.traf.selspd[indices] - bs.traf.cas[indices]) * _MS_TO_KTS
+
+    def _expected(self, idx: int) -> Any:
+        return (float(bs.traf.selspd[idx]) - float(bs.traf.cas[idx])) / kts
 
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
@@ -1864,6 +2071,9 @@ class ApAltErrorFt(_BroadcastObs, _AltitudeEnvelopeBounds, ObsField):
         indices = _indices_array(indices)
         return (bs.traf.selalt[indices] - bs.traf.alt[indices]) * _M_TO_FT
 
+    def _expected(self, idx: int) -> Any:
+        return (float(bs.traf.selalt[idx]) - float(bs.traf.alt[idx])) / ft
+
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
             current_ft = bs.traf.alt[idx] * _M_TO_FT
@@ -1899,6 +2109,9 @@ class ApAltErrorM(_BroadcastObs, _AltitudeEnvelopeBounds, ObsField):
     def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         return bs.traf.selalt[indices] - bs.traf.alt[indices]
+
+    def _expected(self, idx: int) -> Any:
+        return float(bs.traf.selalt[idx]) - float(bs.traf.alt[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
@@ -1961,6 +2174,11 @@ class Difference(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         left, right = self._fields()
         return _per_aircraft(left, other) - _per_aircraft(right, own)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        left, right = self._fields()
+        return left._expected(other_idx) - right._expected(own_idx)
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         if self.bounds_overridden:
             return self._configured_bounds()
@@ -2015,6 +2233,12 @@ class AngleDifference(Difference):
         left, right = self._fields()
         delta = _per_aircraft(left, other) - _per_aircraft(right, own)
         return (delta + 540.0) % 360.0 - 180.0
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        left, right = self._fields()
+        delta = left._expected(other_idx) - right._expected(own_idx)
+        return (delta + 180.0) % 360.0 - 180.0
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         if self.bounds_overridden:
             return self._configured_bounds()
@@ -2039,6 +2263,12 @@ class DistToOwnNm(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         _qdr, dist = _pair_qdr_dist(own, other)
         return dist
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        own = (float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx]))
+        other = (float(bs.traf.lat[other_idx]), float(bs.traf.lon[other_idx]))
+        return float(qdrdist(*own, *other)[1])
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2080,6 +2310,11 @@ class TcpaS(_BroadcastPairs, PairObsField):
         # high bound (the CD lookahead horizon), so the sentinel tracks config.
         fill = _per_own(own, lambda o: self.bounds(o)[1])
         return _cd_pair_values("tcpa", own, other, fill)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        value = one_confpair_value("tcpa", own_idx, other_idx)
+        return self.bounds(own_idx)[1] if value is None else value
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
             look = _cd_lookahead_s()
@@ -2127,6 +2362,11 @@ class TlosS(_BroadcastPairs, PairObsField):
         # high bound (the CD lookahead horizon).
         fill = _per_own(own, lambda o: self.bounds(o)[1])
         return _cd_pair_values("tLOS", own, other, fill)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        value = one_confpair_value("tLOS", own_idx, other_idx)
+        return self.bounds(own_idx)[1] if value is None else value
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_lookahead_s()))
 
@@ -2155,6 +2395,12 @@ class ClosingRateKts(_BroadcastPairs, PairObsField):
         dist_m = np.maximum(np.hypot(rel_east_m, rel_north_m), 1e-6)
         range_rate_ms = (rel_east_m * rel_east_ms + rel_north_m * rel_north_ms) / dist_m
         return -range_rate_ms * _MS_TO_KTS
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        east, north, v_east, v_north = one_pair_motion(own_idx, other_idx)
+        range_m = max(math.hypot(east, north), 1e-6)
+        return -(east * v_east + north * v_north) / range_m / kts
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2188,6 +2434,12 @@ class BearingRateDegPerSec(_BroadcastPairs, PairObsField):
         dist2_m = np.maximum(rel_east_m * rel_east_m + rel_north_m * rel_north_m, 1e-6)
         rate_rad_s = (rel_north_m * rel_east_ms - rel_east_m * rel_north_ms) / dist2_m
         return np.degrees(rate_rad_s)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        east, north, v_east, v_north = one_pair_motion(own_idx, other_idx)
+        range2 = max(east * east + north * north, 1e-6)
+        return math.degrees((north * v_east - east * v_north) / range2)
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2214,6 +2466,10 @@ class RelPosAlongTrackNm(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         along, _c, _va, _vc = _track_frame(own, other)
         return along / nm
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        return one_pair_track_frame(own_idx, other_idx)[0] / nm
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2238,6 +2494,10 @@ class RelPosCrossTrackNm(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         _a, cross, _va, _vc = _track_frame(own, other)
         return cross / nm
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        return one_pair_track_frame(own_idx, other_idx)[1] / nm
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2265,6 +2525,10 @@ class RelVelAlongTrackKts(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         _a, _c, v_along, _vc = _track_frame(own, other)
         return v_along * _MS_TO_KTS
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        return one_pair_track_frame(own_idx, other_idx)[2] / kts
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2289,6 +2553,10 @@ class RelVelCrossTrackKts(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         _a, _c, _va, v_cross = _track_frame(own, other)
         return v_cross * _MS_TO_KTS
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        return one_pair_track_frame(own_idx, other_idx)[3] / kts
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2314,6 +2582,13 @@ class RelPosAtCpaAlongTrackNm(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         along, _cross = _track_frame_at_cpa(own, other)
         return along / nm
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        along, cross, v_along, v_cross = one_pair_track_frame(own_idx, other_idx)
+        v2 = max(v_along * v_along + v_cross * v_cross, 1e-9)
+        tcpa = max(-(along * v_along + cross * v_cross) / v2, 0.0)  # future only
+        return (along + v_along * tcpa) / nm
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2339,6 +2614,13 @@ class RelPosAtCpaCrossTrackNm(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         _along, cross = _track_frame_at_cpa(own, other)
         return cross / nm
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        along, cross, v_along, v_cross = one_pair_track_frame(own_idx, other_idx)
+        v2 = max(v_along * v_along + v_cross * v_cross, 1e-9)
+        tcpa = max(-(along * v_along + cross * v_cross) / v2, 0.0)  # future only
+        return (cross + v_cross * tcpa) / nm
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2366,6 +2648,10 @@ class RelVsFtMin(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         vs = _traf_array("vs")
         return (vs[other] - vs[own]) * _MS_TO_FTMIN
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        return (float(bs.traf.vs[other_idx]) - float(bs.traf.vs[own_idx])) * 60.0 / ft
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2414,6 +2700,11 @@ class HorizontalDistAtCpaNm(_BroadcastPairs, PairObsField):
         # Non-conflict intruders take the high bound (the PZ radius).
         fill = _per_own(own, lambda o: self.bounds(o)[1])
         return _cd_pair_values("dcpa", own, other, fill, divisor=nm)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        value = one_confpair_value("dcpa", own_idx, other_idx)
+        return self.bounds(own_idx)[1] if value is None else value / nm
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_rpz_m() / nm))
 
@@ -2463,6 +2754,15 @@ class VerticalSepAtCpaFt(_BroadcastPairs, PairObsField):
         rel_alt_m = alt[other] - alt[own]
         rel_vs_ms = vs[other] - vs[own]
         return np.abs(rel_alt_m + rel_vs_ms * tcpa_s) * _M_TO_FT
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        east, north, v_east, v_north = one_pair_motion(own_idx, other_idx)
+        v2 = max(v_east * v_east + v_north * v_north, 1e-6)
+        tcpa = max(-(east * v_east + north * v_north) / v2, 0.0)
+        rel_alt = float(bs.traf.alt[other_idx]) - float(bs.traf.alt[own_idx])
+        rel_vs = float(bs.traf.vs[other_idx]) - float(bs.traf.vs[own_idx])
+        return abs(rel_alt + rel_vs * tcpa) / ft
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(
             lambda: (0.0, _cd_hpz_m() * _M_TO_FT)
@@ -2486,6 +2786,10 @@ class _ConflictGeomPairField(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         view = _GeomPairs(own, other)
         return np.asarray(getattr(view, self._geom_attr), dtype=np.float64)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        view = ConflictView(own_idx, others=np.array([other_idx]))
+        return float(getattr(view, self._geom_attr)[0])
 
 @dataclass(frozen=True)
 class _WindowedConflictPairField(_ConflictGeomPairField):
@@ -2603,6 +2907,11 @@ class ConflictVerticalSepAtCpaFt(_WindowedConflictPairField):
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         return windowed_min_vsep_ft(_GeomPairs(own, other), *self._window_zone())
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        view = ConflictView(own_idx, others=np.array([other_idx]))
+        return float(windowed_min_vsep_ft(view, *self._window_zone())[0])
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_hpz_m() * _M_TO_FT))
 
@@ -2659,6 +2968,11 @@ class ConflictHorizontalSepAtCpaNm(_WindowedConflictPairField):
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         return windowed_min_hsep_nm(_GeomPairs(own, other), *self._window_zone())
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        view = ConflictView(own_idx, others=np.array([other_idx]))
+        return float(windowed_min_hsep_nm(view, *self._window_zone())[0])
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_rpz_m() / nm))
 
@@ -2710,6 +3024,11 @@ class ConflictSignedVerticalSepAtEntryFt(_WindowedConflictPairField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         view = _GeomPairs(own, other)
         return windowed_signed_vsep_at_entry_ft(view, *self._window_zone())
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        view = ConflictView(own_idx, others=np.array([other_idx]))
+        return float(windowed_signed_vsep_at_entry_ft(view, *self._window_zone())[0])
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         hpz_ft = _cd_hpz_m() * _M_TO_FT
         return self._dynamic_or_configured_bounds(lambda: (-hpz_ft, hpz_ft))
@@ -2778,6 +3097,12 @@ class ConflictTlosS(_WindowedConflictPairField):
         tinconf = predicted_tlos_s(_GeomPairs(own, other), *self._window_zone())
         # +inf (no conflict) -> high bound (safe); <= 0 (already in LoS) -> 0.
         return np.clip(tinconf, 0.0, _per_own(own, lambda o: self.bounds(o)[1]))
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        view = ConflictView(own_idx, others=np.array([other_idx]))
+        tinconf = float(predicted_tlos_s(view, *self._window_zone())[0])
+        return min(max(tinconf, 0.0), self.bounds(own_idx)[1])
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_lookahead_s()))
 
@@ -2852,6 +3177,12 @@ class InConf(_WindowedConflictPairField):
         # horizon, so the horizon test alone is the full detection predicate.
         tinconf = predicted_tlos_s(_GeomPairs(own, other), *self._window_zone())
         return (tinconf <= self._horizon_s()).astype(np.float32)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        view = ConflictView(own_idx, others=np.array([other_idx]))
+        tinconf = float(predicted_tlos_s(view, *self._window_zone())[0])
+        return float(tinconf <= self._horizon_s())
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2908,6 +3239,13 @@ class InLosNow(_BroadcastPairs, PairObsField):
             view.dalt_now_ft < _cd_hpz_m() * _M_TO_FT
         )
         return in_los.astype(np.float32)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        view = ConflictView(own_idx, others=np.array([other_idx]))
+        horizontal = float(view.horiz_dist_now_nm[0]) < _cd_rpz_m() / nm
+        vertical = float(view.dalt_now_ft[0]) < _cd_hpz_m() / ft
+        return float(horizontal and vertical)
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2949,6 +3287,13 @@ class IntruderFixApproachDistNm(_BroadcastPairs, PairObsField):
             own, other, self.route_offset, self.own_eta_mode
         )
         return np.where(has_fix, cpa_nm, float(self.high))
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        projection = one_pair_fix_projection(
+            own_idx, other_idx, self.route_offset, self.own_eta_mode
+        )
+        return float(self.high) if projection is None else projection[0]
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -2991,6 +3336,13 @@ class IntruderFixArrivalDeltaS(_BroadcastPairs, PairObsField):
             own, other, self.route_offset, self.own_eta_mode
         )
         return np.where(has_fix, intr_eta - own_eta, 0.0)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        projection = one_pair_fix_projection(
+            own_idx, other_idx, self.route_offset, self.own_eta_mode
+        )
+        return 0.0 if projection is None else projection[1] - projection[2]
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -3038,6 +3390,13 @@ class IntruderFixVerticalSepFt(_BroadcastPairs, PairObsField):
             own, other, self.route_offset, self.own_eta_mode
         )
         return np.where(has_fix, vsep_ft, 0.0)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        projection = one_pair_fix_projection(
+            own_idx, other_idx, self.route_offset, self.own_eta_mode
+        )
+        return 0.0 if projection is None else projection[3]
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -3110,6 +3469,11 @@ class IntruderCommMessage(_CommBacked, PairObsField):
             np.clip(values, self.low, self.high, out=values)
         return values
 
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        # The message as sent; receiver noise (``noise_std``) is random on top.
+        del own_idx
+        return float(_state._COMM_MESSAGE.read_one(other_idx).get(self.channel, 0.0))
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         del own_idx
         return float(self.low), float(self.high)
@@ -3143,6 +3507,12 @@ class BrgFromOwnDeg(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         qdr, _dist = _pair_qdr_dist(own, other)
         return qdr
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        own = (float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx]))
+        other = (float(bs.traf.lat[other_idx]), float(bs.traf.lon[other_idx]))
+        return float(qdrdist(*own, *other)[0])
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -3180,6 +3550,13 @@ class BrgFromOwnRelTrkDeg(_BroadcastPairs, PairObsField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         qdr, _dist = _pair_qdr_dist(own, other)
         return (qdr - _traf_array("trk")[own] + 540.0) % 360.0 - 180.0
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        own = (float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx]))
+        other = (float(bs.traf.lat[other_idx]), float(bs.traf.lon[other_idx]))
+        relative = float(qdrdist(*own, *other)[0]) - float(bs.traf.trk[own_idx])
+        return (relative + 180.0) % 360.0 - 180.0
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -3217,5 +3594,13 @@ class ConflictRisk(_BroadcastPairs, PairObsField):
         tcpa = _cd_pair_values("tcpa", own, other, lookahead)
         risk = 1.0 - np.maximum(tcpa, 0.0) / lookahead
         return np.clip(risk, 0.0, 1.0).astype(np.float32)
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        lookahead = _cd_lookahead_s()
+        tcpa = one_confpair_value("tcpa", own_idx, other_idx)
+        if tcpa is None:
+            tcpa = lookahead
+        return min(max(1.0 - max(tcpa, 0.0) / lookahead, 0.0), 1.0)
+
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()

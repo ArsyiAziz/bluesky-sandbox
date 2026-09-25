@@ -436,6 +436,16 @@ class ObsField(_BoundedField, ABC):
         """
         return [self.get(int(idx)) for idx in indices]
 
+    def _expected(self, idx: int) -> Any:
+        """Test reference: this field's value for aircraft ``idx``, stated plainly.
+
+        Never called at runtime. Built-in fields compute in bulk, and each also
+        states its value here for one aircraft, independently of the bulk code;
+        ``tests/test_field_batching.py`` compares the two for every field.
+        Custom fields need not implement it.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def bounds(self, idx: int) -> tuple[float, float]:
         """Return the low/high bounds for this field at a traffic index."""
@@ -559,6 +569,14 @@ class PairObsField(_BoundedField, ABC):
     def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
         """Return pair observations for one ownship and multiple intruders."""
         return [self.get_pair(own_idx, int(other_idx)) for other_idx in other_indices]
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        """Test reference: this field's value for one ownship/intruder pair.
+
+        The pair-field counterpart of :meth:`ObsField._expected` - never called
+        at runtime, compared against the bulk result by the tests.
+        """
+        raise NotImplementedError
 
     def get_pair_matrix(self, own_indices: Any) -> np.ndarray:
         """Pair observations for several ownships against EVERY live aircraft.
