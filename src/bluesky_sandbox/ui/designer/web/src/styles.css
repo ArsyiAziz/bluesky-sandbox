@@ -277,37 +277,116 @@ button:disabled {
 }
 
 /* ---- Route tab: graph editor (top) over a read-only map (bottom) -------- */
+/* Route tab: the routes listed on the left; the picked one's header, its
+   graph beside the inspector, and the map preview beneath. */
 .route-tab {
   display: flex;
-  flex-direction: column;
   height: 100%;
   width: 100%;
 }
 
-.route-top {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 60%;
-  min-height: 0;
-  border-bottom: 1px solid var(--border);
+.route-list {
+  width: 220px;
+  flex: none;
+  overflow: auto;
+  padding: 8px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
 }
 
-.route-toolbar {
+.route-list-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.route-list-head button {
+  text-transform: none;
+}
+
+.route-list-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 8px;
+  margin-bottom: 4px;
+  border: 1px solid #363638;
+  border-radius: 4px;
+  background: #1f1f20;
+  cursor: pointer;
+}
+
+.route-list-row:hover {
+  border-color: #5a5a5c;
+}
+
+.route-list-row.on {
+  border-color: var(--accent);
+  background: #1d2a3d;
+}
+
+.route-list-name {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.route-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
 
-.route-toolbar .route-select {
+.route-name {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  width: 200px;
+}
+
+.route-from {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.route-from .picker {
   min-width: 160px;
+}
+
+.danger-btn {
+  color: #f87171;
+}
+
+.route-delete-step {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.danger-btn:not(:disabled):hover {
+  border-color: #f87171;
+  background: #3a1f1f;
 }
 
 .route-graph-area {
   display: flex;
-  flex: 1;
+  flex: 1 1 58%;
   min-height: 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .route-graph {
@@ -324,7 +403,7 @@ button:disabled {
 }
 
 .route-inspector {
-  width: 260px;
+  width: 280px;
   border-left: 1px solid var(--border);
   background: var(--panel);
   overflow: auto;
@@ -349,7 +428,7 @@ button:disabled {
 
 .route-bottom {
   position: relative;
-  flex: 1 1 40%;
+  flex: 1 1 42%;
   min-height: 0;
 }
 

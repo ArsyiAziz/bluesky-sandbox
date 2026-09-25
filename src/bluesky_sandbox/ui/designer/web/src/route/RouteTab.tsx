@@ -37,6 +37,7 @@ import {
   branchAfter,
   canSkip,
   deleteAt,
+  isChoice,
   dropIndex,
   insertOnEdge,
   moveWithin,
@@ -281,36 +282,66 @@ export default function RouteTab({
     appendStep(name);
   };
 
+  // Steps in a route, counted through its branches.
+  const stepCount = (list: RouteStep[]): number =>
+    list.reduce((n: number, st) => n + (isChoice(st) ? st.choice.reduce((m, o) => m + stepCount(o), 0) : 1), 0);
+  const usedBy = (name: string) => spawnRegions.filter((r) => r.route === name).length;
+
   return (
     <div className="route-tab">
-      <div className="route-top">
-        <div className="route-toolbar">
-          <Picker
-            className="route-select"
-            placeholder={routeNames.length ? "select route…" : "no routes"}
-            value={current ?? ""}
-            onChange={(v) => { setActive(v); setSelId(null); }}
-            options={routeNames.map((n) => ({ value: n }))}
-          />
-          <button onClick={addRoute}>+ route</button>
-          {current && (
-            <>
-              <input className="name-input" key={current} defaultValue={current} onBlur={(e) => renameRoute(current, e.target.value)} />
-              <button className="link danger" title="delete route" onClick={() => deleteRoute(current)}>✕</button>
-              <span className="spacer" />
-              <label className="numfield inline" title="which spawn region this route is viewed from">
-                <span>from spawn</span>
-                <Picker
-                  searchable={spawnNames.length > 6}
-                  placeholder={spawnNames.length ? "spawn region…" : "no spawn regions"}
-                  value={spawnName ?? ""}
-                  onChange={(v) => setSpawnSel(v || null)}
-                  options={spawnNames.map((n) => ({ value: n }))}
-                />
-              </label>
-            </>
-          )}
+      <aside className="route-list">
+        <div className="route-list-head">
+          <span>routes</span>
+          <button onClick={addRoute} title="add a route">
+            + route
+          </button>
         </div>
+        {routeNames.map((n) => (
+          <div
+            key={n}
+            className={n === current ? "route-list-row on" : "route-list-row"}
+            onClick={() => {
+              setActive(n);
+              setSelId(null);
+            }}
+          >
+            <span className="route-list-name">{n}</span>
+            <span className="muted small">
+              {stepCount(routes[n] ?? [])} step{stepCount(routes[n] ?? []) === 1 ? "" : "s"}
+              {usedBy(n) ? ` · ${usedBy(n)} spawn${usedBy(n) === 1 ? "" : "s"}` : ""}
+            </span>
+          </div>
+        ))}
+        {routeNames.length === 0 && <p className="muted small">No routes yet.</p>}
+      </aside>
+
+      <div className="route-main">
+        {current && (
+          <div className="route-head">
+            <input
+              className="route-name"
+              key={current}
+              defaultValue={current}
+              title="route name"
+              onBlur={(e) => renameRoute(current, e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+            />
+            <label className="route-from" title="which spawn region this route is viewed from">
+              <span className="muted">from</span>
+              <Picker
+                searchable={spawnNames.length > 6}
+                placeholder={spawnNames.length ? "spawn region…" : "no spawn regions"}
+                value={spawnName ?? ""}
+                onChange={(v) => setSpawnSel(v || null)}
+                options={spawnNames.map((n) => ({ value: n }))}
+              />
+            </label>
+            <span className="spacer" />
+            <button className="danger-btn" title="delete this route" onClick={() => deleteRoute(current)}>
+              Delete route
+            </button>
+          </div>
+        )}
 
         <div className="route-graph-area">
           {current ? (
@@ -371,9 +402,8 @@ export default function RouteTab({
             </div>
           )}
         </div>
-      </div>
 
-      <div className="route-bottom">
+        <div className="route-bottom">
         <RouteMap
           spec={spec}
           highlightRoute={current}
@@ -381,6 +411,7 @@ export default function RouteTab({
           routeWaypoints={routeWaypoints}
           onPickWaypoint={onPickWaypoint}
         />
+        </div>
       </div>
     </div>
   );
@@ -436,7 +467,9 @@ function RouteStepInspector({
             <span>branch</span>
             <Picker placeholder="+ split to…" onChange={onBranch} options={addOptions} />
           </label>
-          <button className="link danger" onClick={onDelete}>✕ delete step</button>
+          <button className="danger-btn route-delete-step" onClick={onDelete}>
+            Delete step
+          </button>
         </>
       )}
 

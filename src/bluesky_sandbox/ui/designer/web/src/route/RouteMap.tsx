@@ -7,10 +7,11 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import { LineLayer } from "@deck.gl/layers";
 import { api, type SpecDict, type PreviewResult, type ValidateResult } from "../api";
 import type { CategoryVisibility, EditTarget } from "../map/types";
-import { centroid, frontendBoundsGeometry, routePaths } from "../map/geometry";
+import { centroid, frontendBoundsGeometry, routePaths, waypointPositions } from "../map/geometry";
 import { deckLayers, getTooltip } from "../map/deckLayers";
 import { basemapById, DEFAULT_BASEMAP } from "../map/basemaps";
 import { useRefresh } from "../refresh";
+import { useEpisode } from "../episode";
 
 // Extra connector layers for the route view: spawn region → the route's first
 // waypoint(s), and any sampled waypoint → the region it draws its position from.
@@ -134,6 +135,36 @@ export default function RouteMap({
     );
     const links = connectorLayers(previewRef.current, specRef.current, highlightRef.current, spawnRef.current, wpRef.current);
     overlayRef.current.setProps({ layers: [...base, ...links] });
+    frame();
+  };
+
+  // Frame the highlighted route once per route: on picking another, not on
+  // every edit to this one, so editing does not keep moving the view.
+  const framedRef = useRef<string | null>(null);
+  const frame = () => {
+    const map = mapRef.current;
+    const name = highlightRef.current;
+    if (!map || !name || framedRef.current === name || !previewRef.current) return;
+    // The route's waypoints - a one-step route draws no path - and the spawn
+    // region it is viewed from.
+    const positions = waypointPositions(specRef.current, previewRef.current);
+    const points: [number, number][] = wpRef.current
+      .filter((w) => positions.has(w))
+      .map((w) => [positions.get(w)![0], positions.get(w)![1]]);
+    const region = previewRef.current.spawn_regions[spawnRef.current];
+    // Region vertices are [lat, lon]; the map takes [lon, lat].
+    if (region) points.push(...region.vertices.map(([lat, lon]) => [lon, lat] as [number, number]));
+    if (points.length === 0) return;
+    const lons = points.map((q) => q[0]);
+    const lats = points.map((q) => q[1]);
+    map.fitBounds(
+      [
+        [Math.min(...lons), Math.min(...lats)],
+        [Math.max(...lons), Math.max(...lats)],
+      ],
+      { padding: 48, maxZoom: 9, duration: 300 },
+    );
+    framedRef.current = name;
   };
 
   // Create the map once.
@@ -167,11 +198,12 @@ export default function RouteMap({
 
   // Re-fetch the preview when the spec changes; redraw when ready/highlight change.
   const refreshKey = useRefresh();
+  const { seed } = useEpisode();
   useEffect(() => {
     if (!ready || !spec) return;
     let canceled = false;
     api
-      .preview(spec, 0)
+      .preview(spec, seed)
       .then((preview: PreviewResult) => {
         if (canceled) return;
         previewRef.current = preview;
@@ -182,7 +214,7 @@ export default function RouteMap({
       canceled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spec, ready, refreshKey]);
+  }, [spec, ready, refreshKey, seed]);
 
   useEffect(() => {
     if (ready) refresh();
