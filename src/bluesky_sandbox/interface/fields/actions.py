@@ -1119,7 +1119,7 @@ class CommBroadcast(ActionField):
     high: Annotated[float, "message value"] = 1.0
 
     def set(self, idx: int, value: float) -> None:
-        record_comm_message(str(bs.traf.id[idx]), self.channel, float(value))
+        record_comm_message(idx, self.channel, float(value))
 
     def bounds(self, idx: int) -> tuple[float, float]:
         del idx

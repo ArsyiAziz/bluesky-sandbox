@@ -5,7 +5,7 @@ from __future__ import annotations
 import bluesky as bs
 import numpy as np
 
-from bluesky_sandbox.sim.aircraft_uids import live_aircraft_uids
+from bluesky_sandbox.sim.aircraft_uids import aircraft_keys
 
 # Per-process ring buffers of past raw field values, so ``field.lagged(k)`` can
 # report the value from ``k`` steps ago. Same lifecycle as the stores in
@@ -46,15 +46,6 @@ _LAG_DEPTH: dict[str, int] = {}
 def _register_lag_depth(key: str, steps: int) -> None:
     """Record that ``key``'s history must reach at least ``steps`` back."""
     _LAG_DEPTH[key] = max(_LAG_DEPTH.get(key, 0), int(steps))
-
-
-def _lag_row_keys() -> tuple:
-    """Each live aircraft's uid, or its callsign when there is no runtime."""
-    ids = bs.traf.id
-    uids = live_aircraft_uids()
-    if uids is not None and len(uids) == len(ids):
-        return tuple(uids.tolist())
-    return tuple(ids)
 
 
 class _LagRing:
@@ -176,5 +167,5 @@ def _lag_ring(kind: str, key: str, steps: int) -> _LagRing:
     if ring is None:
         depth = _LAG_DEPTH.get(key, int(steps)) + 1
         ring = _LAG_HISTORY[(kind, key)] = _LagRing(depth, pair=kind == "pair")
-    ring.sync(_lag_row_keys())
+    ring.sync(aircraft_keys(bs.traf.id))
     return ring

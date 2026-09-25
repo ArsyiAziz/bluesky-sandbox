@@ -60,12 +60,12 @@ from ._pairs import (
 from ._route import _active_route_waypoint, _route_along_distance_nm
 from ._state import (
     _LAST_NORM_ACTION,
+    _TIME_IN_ENV,
     _CommBacked,
     _LagHistoryBacked,
     _LastActionBacked,
     _TimeInEnvBacked,
-    get_comm_message,
-    get_time_in_env,
+    comm_messages,
 )
 from .base import ObsField, ObsMeta, ObsQuantity, PairObsField, Unit
 
@@ -1069,11 +1069,7 @@ class TimeInEnvS(_BroadcastObs, _TimeInEnvBacked, ObsField):
     high: Annotated[float, "seconds upper bound; set to the task's time budget"] = 3600.0
 
     def _values(self, indices: Any) -> Any:
-        indices = _indices_array(indices)
-        ids = bs.traf.id
-        return np.asarray(
-            [get_time_in_env(ids[int(i)]) for i in indices], dtype=np.float64
-        )
+        return np.asarray(_TIME_IN_ENV.read(indices), dtype=np.float64)
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1622,13 +1618,6 @@ class PrevActionNorm(_BroadcastObs, _LastActionBacked, ObsField):
     def output_size(self) -> int:
         return self.dim
 
-    def _lookup(self, acid: str) -> np.ndarray:
-        out = np.zeros(self.dim, dtype=np.float32)
-        stored = _LAST_NORM_ACTION.get(acid)
-        if stored is not None:
-            src = stored[self.offset : self.offset + self.dim]
-            out[: src.shape[0]] = src
-        return out
 
     def bounds(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
         size = self.output_size()
@@ -1653,8 +1642,12 @@ class PrevActionNorm(_BroadcastObs, _LastActionBacked, ObsField):
         indices = _indices_array(indices)
         if indices.size == 0:
             return np.zeros((0, self.dim), dtype=np.float32)
-        ids = bs.traf.id
-        return np.stack([self._lookup(ids[int(i)]) for i in indices])
+        out = np.zeros((indices.size, self.dim), dtype=np.float32)
+        for row, stored in enumerate(_LAST_NORM_ACTION.read(indices)):
+            if stored is not None:
+                src = stored[self.offset : self.offset + self.dim]
+                out[row, : src.shape[0]] = src
+        return out
 
 
 @dataclass(frozen=True)
@@ -3109,10 +3102,7 @@ class IntruderCommMessage(_CommBacked, PairObsField):
         ``get_pairs`` call per ownship would.
         """
         del owns
-        ids = bs.traf.id
-        sent = np.array(
-            [get_comm_message(acid, self.channel) for acid in ids], dtype=np.float64
-        )
+        sent = comm_messages(self.channel)
         values = sent[cols]
         if self.noise_std > 0.0 and values.size:
             values = values + _state._COMM_NOISE_RNG.normal(

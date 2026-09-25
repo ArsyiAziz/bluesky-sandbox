@@ -189,3 +189,52 @@ def test_a_reused_callsign_starts_with_no_lag_history():
         assert lag == live
     finally:
         env.close()
+
+
+def test_a_reused_callsign_starts_with_no_memory(env):
+    # Last action, age and broadcast all live in AircraftMemory: a new aircraft
+    # given a deleted one's callsign must not read what the old one left.
+    from bluesky_sandbox.interface.fields import _state  # noqa: PLC0415
+
+    _cre("AAA001")
+    idx = _index("AAA001")
+    _state.record_comm_message(idx, 0, 0.7)
+    _state._LAST_NORM_ACTION.write(idx, np.array([0.5], dtype=np.float32))
+    assert _state.comm_messages(0)[idx] == 0.7
+
+    bs.traf.delete(idx)
+    _cre("AAA001")  # nothing told the memory: no step ran in between
+    idx = _index("AAA001")
+    assert _state.comm_messages(0)[idx] == 0.0
+    assert _state._LAST_NORM_ACTION.read_one(idx) is None
+
+
+def test_memory_follows_its_aircraft_when_others_leave(env):
+    from bluesky_sandbox.interface.fields import _state  # noqa: PLC0415
+
+    for callsign in ("AAA001", "AAA002", "AAA003"):
+        _cre(callsign)
+    memory = _state.AircraftMemory(default=-1.0)
+    for callsign, value in (("AAA001", 1.0), ("AAA003", 3.0)):
+        memory.write(_index(callsign), value)
+    bs.traf.delete(_index("AAA002"))
+    assert memory.read([_index("AAA001"), _index("AAA003")]) == [1.0, 3.0]
+    _state.reset_all_field_state()
+    assert memory.read([_index("AAA001")]) == [-1.0]
+
+
+def test_without_a_runtime_memory_falls_back_to_callsigns(monkeypatch):
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from bluesky_sandbox.interface.fields import _state  # noqa: PLC0415
+    from bluesky_sandbox.sim import aircraft_uids  # noqa: PLC0415
+
+    monkeypatch.setattr(aircraft_uids, "_ATTACHED", [])
+    monkeypatch.setattr(
+        _state, "bs", SimpleNamespace(traf=SimpleNamespace(id=["A", "B"]))
+    )
+    memory = _state.AircraftMemory(default=0.0)
+    memory.write(1, 2.0)
+    assert memory.read([0, 1]) == [0.0, 2.0]
+    memory.forget("B")  # the despawn hook: callsign keys must be dropped
+    assert memory.read([1]) == [0.0]

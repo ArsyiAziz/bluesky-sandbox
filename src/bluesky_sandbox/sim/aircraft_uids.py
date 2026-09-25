@@ -25,6 +25,21 @@ def live_aircraft_uids() -> np.ndarray | None:
     return _ATTACHED[-1].uid if _ATTACHED else None
 
 
+def aircraft_keys(ids) -> tuple:
+    """A key per aircraft in ``ids`` (``bs.traf.id``) for state that must follow
+    the aircraft: its uid, or its callsign when there is no tracker.
+
+    Callsigns are the fallback only - BlueSky reuses one once its aircraft is
+    deleted, so callsign-keyed state must be forgotten on despawn. ``ids`` is
+    passed in rather than read here so a caller standing in for BlueSky keeps
+    the two consistent.
+    """
+    uids = live_aircraft_uids()
+    if uids is not None and len(uids) == len(ids):
+        return tuple(uids.tolist())
+    return tuple(ids)
+
+
 class AircraftUids(TrafficArrays):
     """A serial number per aircraft, never reused, that BlueSky keeps aligned.
 

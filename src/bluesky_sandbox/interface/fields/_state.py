@@ -7,12 +7,74 @@ entries on despawn through their ``on_aircraft_removed`` hooks.
 
 from __future__ import annotations
 
+from collections.abc import Hashable, Mapping
 from typing import Any
 
+import bluesky as bs
 import numpy as np
+
+from bluesky_sandbox.sim.aircraft_uids import aircraft_keys
 
 from ._lag import _LAG_HISTORY
 from ._pairs import _CD_PAIR_CACHE
+
+# Every AircraftMemory, so a reset clears them all without a list to maintain.
+_MEMORIES: list[AircraftMemory] = []
+
+
+class AircraftMemory:
+    """One remembered value per aircraft that follows the aircraft, not its
+    callsign.
+
+    Keyed by the aircraft's uid (:mod:`~bluesky_sandbox.sim.aircraft_uids`):
+    BlueSky reuses a deleted aircraft's callsign, and a store keyed by callsign
+    hands the new aircraft the old one's value - its last action, its age, its
+    last broadcast. Without a runtime it falls back to callsigns, which
+    :meth:`forget` drops on despawn.
+
+    Written and read by BlueSky traffic index, while the aircraft is live;
+    ``default`` is what an aircraft with nothing recorded reads. Cleared by
+    :func:`reset_all_field_state`.
+    """
+
+    def __init__(self, default: Any = None) -> None:
+        self.default = default
+        # key -> (callsign when written, value); the callsign lets a despawn
+        # forget the entry even once its uid can no longer be looked up.
+        self._entries: dict[Hashable, tuple[str, Any]] = {}
+        _MEMORIES.append(self)
+
+    def write(self, idx: int, value: Any) -> None:
+        ids = bs.traf.id
+        self._entries[aircraft_keys(ids)[int(idx)]] = (str(ids[int(idx)]), value)
+
+    def write_callsigns(self, values: Mapping[str, Any]) -> None:
+        """Write by callsign, for values the environment keeps by callsign."""
+        ids = bs.traf.id
+        keys = aircraft_keys(ids)
+        for idx, acid in enumerate(ids):
+            if acid in values:
+                self._entries[keys[idx]] = (str(acid), values[acid])
+
+    def read(self, indices) -> list[Any]:
+        """Each aircraft's value, or ``default``, in the order of ``indices``."""
+        keys = aircraft_keys(bs.traf.id)
+        entries, default = self._entries, self.default
+        return [
+            entry[1] if (entry := entries.get(keys[int(i)])) is not None else default
+            for i in np.asarray(indices, dtype=np.intp).ravel()
+        ]
+
+    def read_one(self, idx: int) -> Any:
+        return self.read([int(idx)])[0]
+
+    def forget(self, acid: str) -> None:
+        """Drop what despawned aircraft ``acid`` left behind."""
+        for key in [k for k, (owner, _v) in self._entries.items() if owner == acid]:
+            del self._entries[key]
+
+    def clear(self) -> None:
+        self._entries.clear()
 
 
 def reset_all_field_state(seed: int | None = None) -> None:
@@ -27,11 +89,10 @@ def reset_all_field_state(seed: int | None = None) -> None:
     without reintroducing a per-store list for anyone to forget to update.
     """
     global _COMM_NOISE_RNG
-    _LAST_NORM_ACTION.clear()
+    for memory in _MEMORIES:
+        memory.clear()
     _LAG_HISTORY.clear()
     _CD_PAIR_CACHE.clear()
-    _TIME_IN_ENV.clear()
-    _COMM_MESSAGE.clear()
     _COMM_NOISE_RNG = np.random.default_rng(seed)
 
 
@@ -44,10 +105,10 @@ class _LastActionBacked:
     """
 
     def on_action_applied(self, acid: str, action) -> None:
-        _LAST_NORM_ACTION[acid] = np.asarray(action, dtype=np.float32)
+        _LAST_NORM_ACTION.write_callsigns({acid: np.asarray(action, dtype=np.float32)})
 
     def on_aircraft_removed(self, acid: str) -> None:
-        _LAST_NORM_ACTION.pop(acid, None)
+        _LAST_NORM_ACTION.forget(acid)
 
 
 class _LagHistoryBacked:
@@ -73,26 +134,25 @@ class _TimeInEnvBacked:
     """
 
     def on_step(self, ctx) -> None:
-        _TIME_IN_ENV.update(ctx.age_s)
+        _TIME_IN_ENV.write_callsigns(ctx.age_s)
 
     def on_aircraft_removed(self, acid: str) -> None:
-        _TIME_IN_ENV.pop(acid, None)
+        _TIME_IN_ENV.forget(acid)
 
 
 class _CommBacked:
     """State hooks for the comm-message channel field."""
 
     def on_aircraft_removed(self, acid: str) -> None:
-        _COMM_MESSAGE.pop(acid, None)
+        _COMM_MESSAGE.forget(acid)
 
 
-# Per-process store of each aircraft's most recent *normalized* action, keyed by
-# callsign. The environment writes it when actions are applied (one BlueSky sim
+# Each aircraft's most recent *normalized* action. The environment writes it when actions are applied (one BlueSky sim
 # per process, so this is per-env), and :class:`PrevActionNorm` reads it. Exposing
 # the previous action keeps an action-rate reward penalty (``|a_t - a_{t-1}|``)
 # Markovian w.r.t. the observation - otherwise that reward depends on unobserved
 # history, which the value function cannot predict.
-_LAST_NORM_ACTION: dict[str, np.ndarray] = {}
+_LAST_NORM_ACTION = AircraftMemory()
 
 
 # The environment's flat normalized action-space bounds, published so
@@ -117,35 +177,36 @@ def clear_action_space_bounds() -> None:
     _ACTION_SPACE_BOUNDS = None
 
 
-# Per-process store of each aircraft's seconds since it entered the environment.
+# Each aircraft's seconds since it entered the environment.
 # Published by the environment each step from its own spawn-time bookkeeping
 # (``BaseEnvironment.aircraft_spawn_time``), which an ObsField cannot reach: it
 # sees only ``bs.traf``, and BlueSky keeps no per-aircraft age. Read by
 # TimeInEnvS. 0.0 if unknown.
-_TIME_IN_ENV: dict[str, float] = {}
+_TIME_IN_ENV = AircraftMemory(default=0.0)
 
 
-def get_time_in_env(acid: str) -> float:
-    """Return the stored seconds-since-spawn for ``acid``, or 0.0 if unknown."""
-    return _TIME_IN_ENV.get(acid, 0.0)
-
-
-# Per-process store of each aircraft's broadcast communication message - a
+# Each aircraft's broadcast communication message - a
 # small learned signal emitted through a CommBroadcast action channel and read
 # back by other agents through IntruderCommMessage. No physical effect on the
 # aircraft; purely an information channel between agents, one step delayed
-# (emitted at step t, observed by others at t+1). Keyed ``acid -> channel``.
-_COMM_MESSAGE: dict[str, dict[int, float]] = {}
+# (emitted at step t, observed by others at t+1). Values are ``{channel: value}``.
+_COMM_MESSAGE = AircraftMemory(default={})
 
 
-def record_comm_message(acid: str, channel: int, value: float) -> None:
+def record_comm_message(idx: int, channel: int, value: float) -> None:
     """Store one channel of an aircraft's broadcast message (for IntruderCommMessage)."""
-    _COMM_MESSAGE.setdefault(acid, {})[int(channel)] = float(value)
+    message = dict(_COMM_MESSAGE.read_one(idx))
+    message[int(channel)] = float(value)
+    _COMM_MESSAGE.write(idx, message)
 
 
-def get_comm_message(acid: str, channel: int) -> float:
-    """Return an aircraft's stored message channel, or 0.0 (silence) if unset."""
-    return _COMM_MESSAGE.get(acid, {}).get(int(channel), 0.0)
+def comm_messages(channel: int) -> np.ndarray:
+    """Every live aircraft's message on ``channel``, 0.0 (silence) if unset."""
+    channel = int(channel)
+    return np.array(
+        [m.get(channel, 0.0) for m in _COMM_MESSAGE.read(range(int(bs.traf.ntraf)))],
+        dtype=np.float64,
+    )
 
 
 # RNG for receiver-side communication-channel noise (IntruderCommMessage's

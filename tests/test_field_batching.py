@@ -290,8 +290,8 @@ def test_comm_noise_is_drawn_in_the_same_order_either_way(fields, monkeypatch):
     from bluesky_sandbox.interface.fields import _state  # noqa: PLC0415
 
     field = observations.IntruderCommMessage(noise_std=0.3)
-    for i, acid in enumerate(bs.traf.id):
-        _state.record_comm_message(acid, 0, 0.1 * (i % 7) - 0.3)
+    for i in range(bs.traf.ntraf):
+        _state.record_comm_message(i, 0, 0.1 * (i % 7) - 0.3)
     owns = np.array(_all_indices()[::2])
 
     monkeypatch.setattr(_state, "_COMM_NOISE_RNG", np.random.default_rng(5))
