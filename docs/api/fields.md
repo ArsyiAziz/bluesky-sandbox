@@ -116,14 +116,68 @@ from bluesky_sandbox import qobs
 
 ## `bluesky_sandbox.interface.fields.actions`
 
-The built-in action fields. Imported as `actions` from the top level:
+The built-in action fields, one module per kind of command. Every action is importable from the package itself, whichever module defines it. Imported as `actions` from the top level:
 
 ```python
 from bluesky_sandbox import actions
 ```
 
+### `actions.heading`
+
+An absolute heading, or a turn from the current heading or track.
+
 ```{eval-rst}
-.. automodule:: bluesky_sandbox.interface.fields.actions
+.. automodule:: bluesky_sandbox.interface.fields.actions.heading
+   :members:
+   :show-inheritance:
+```
+
+### `actions.speed`
+
+A calibrated airspeed target, absolute or a delta from the current CAS.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.interface.fields.actions.speed
+   :members:
+   :show-inheritance:
+```
+
+### `actions.altitude`
+
+An altitude target, absolute or a delta from the current altitude.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.interface.fields.actions.altitude
+   :members:
+   :show-inheritance:
+```
+
+### `actions.route`
+
+A deviation from the active route waypoint's guidance, so a zero action flies the nominal.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.interface.fields.actions.route
+   :members:
+   :show-inheritance:
+```
+
+### `actions.autopilot`
+
+LNAV and VNAV mode switches.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.interface.fields.actions.autopilot
+   :members:
+   :show-inheritance:
+```
+
+### `actions.comm`
+
+A learned message, with no effect on the aircraft.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.interface.fields.actions.comm
    :members:
    :show-inheritance:
 ```

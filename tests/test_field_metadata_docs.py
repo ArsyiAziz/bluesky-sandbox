@@ -25,12 +25,10 @@ from bluesky_sandbox.interface.fields.base import (
     _render_metadata,
 )
 
-_MODULES = (
-    *(
-        importlib.import_module(f"{observations.__name__}.{info.name}")
-        for info in pkgutil.iter_modules(observations.__path__)
-    ),
-    actions,
+_MODULES = tuple(
+    importlib.import_module(f"{package.__name__}.{info.name}")
+    for package in (observations, actions)
+    for info in pkgutil.iter_modules(package.__path__)
 )
 _DOCUMENTED = [
     cls
