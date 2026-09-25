@@ -1,11 +1,12 @@
 // The Geometry tab, rebuilt as a master–detail view:
 //   - an OUTLINE (compact, one row per element, grouped by kind) for navigation
 //     and add/visibility, kept in sync with the map selection; and
-//   - an INSPECTOR that edits only the currently-selected element.
+//   - an INSPECTOR that edits only the currently-selected element, in place of
+//     the outline while one is picked (back returns to it).
 // The spec object is the source of truth; every edit yields a new spec via
 // onChange (which App also re-serializes into the code editor).
 import { Hint } from "./Hint";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type SpecDict } from "../../api";
 import BoundsEditor from "../BoundsEditor";
 import {
@@ -265,8 +266,16 @@ export default function GeometryTab({
   // when the user opts in). Single-use bounds are edited inline on their element.
   const boundsRows = namedRegionNames.filter((n) => showAllBounds || boundsRefCount(n) > 1);
 
+  // Open a picked element's editor at its top, not wherever the list was.
+  const tabRef = useRef<HTMLDivElement | null>(null);
+  const pickedKey = selKey(sel);
+  useEffect(() => {
+    if (pickedKey) tabRef.current?.closest(".design-panel")?.scrollTo({ top: 0 });
+  }, [pickedKey]);
+
   return (
-    <div className="geo-tab">
+    // With an element picked, its editor takes the panel; back returns to the list.
+    <div className={sel ? "geo-tab drilled" : "geo-tab"} ref={tabRef}>
       <div className="geo-outline">
         <input
           className="sec-search geo-search"
@@ -336,220 +345,225 @@ export default function GeometryTab({
         </GeoGroup>
 
         <GeoGroup title="Spawn" hint="Where aircraft appear and how many. Each spawn region draws a count per episode and samples positions, types, and entry states inside its bounds." onAdd={addSpawn} addLabel="spawn">
-          <label className="checkbox-row" style={{ padding: "2px 8px" }}>
-            <input
-              type="checkbox"
-              checked={spec.spawn?.conflict_free_spawn === true}
-              onChange={(e) =>
-                edit((s) => {
-                  s.spawn = s.spawn ?? emptySpawn();
-                  s.spawn.conflict_free_spawn = e.target.checked;
-                })
-              }
-            />
-            <span>conflict-free spawn</span>
-          </label>
-          {spec.spawn?.conflict_free_spawn === true && (
-            <div style={{ padding: "0 8px 4px 24px" }}>
-              <div className="value-field">
-                <div className="vf-head">
-                  <span className="vf-label">buffer horiz nm</span>
-                  <span className="vf-spacer" />
-                  <NumInput
-                    className="vf-input"
-                    step="any"
-                    placeholder="none"
-                    value={
-                      (spec.spawn?.conflict_free_margin_nm as
-                        | number
-                        | undefined) ?? Number.NaN
-                    }
-                    onChange={(n) =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        s.spawn.conflict_free_margin_nm = n;
-                      })
-                    }
-                    onClear={() =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        delete s.spawn.conflict_free_margin_nm;
-                      })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="value-field">
-                <div className="vf-head">
-                  <span className="vf-label">buffer vert ft</span>
-                  <span className="vf-spacer" />
-                  <NumInput
-                    className="vf-input"
-                    step="any"
-                    placeholder="none"
-                    value={
-                      (spec.spawn?.conflict_free_margin_ft as
-                        | number
-                        | undefined) ?? Number.NaN
-                    }
-                    onChange={(n) =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        s.spawn.conflict_free_margin_ft = n;
-                      })
-                    }
-                    onClear={() =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        delete s.spawn.conflict_free_margin_ft;
-                      })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="value-field">
-                <div className="vf-head">
-                  <span className="vf-label">buffer time s</span>
-                  <span className="vf-spacer" />
-                  <NumInput
-                    className="vf-input"
-                    step="any"
-                    placeholder="none"
-                    value={
-                      (spec.spawn?.conflict_free_margin_s as
-                        | number
-                        | undefined) ?? Number.NaN
-                    }
-                    onChange={(n) =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        s.spawn.conflict_free_margin_s = n;
-                      })
-                    }
-                    onClear={() =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        delete s.spawn.conflict_free_margin_s;
-                      })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="muted small">
-                reject spawns whose predicted CPA comes within zone + buffer
-                ({sepZone}), so clearance holds as aircraft maneuver; blank adds
-                none ↑
-              </div>
-            </div>
-          )}
-          {/* Only meaningful while some maintain area actually uses the
-              distance guard - i.e. is not (effectively) conflict-free. */}
-          {spawnRegions.some(
-            (r) =>
-              r.maintain === true &&
-              (r.conflict_free_spawn === undefined ||
-              r.conflict_free_spawn === null
-                ? spec.spawn?.conflict_free_spawn !== true
-                : r.conflict_free_spawn !== true),
-          ) && (
-            <div style={{ padding: "0 8px 4px 8px" }}>
-              <div className="value-field">
-                <div className="vf-head">
-                  <span className="vf-label">respawn min sep nm</span>
-                  <span className="vf-spacer" />
-                  <NumInput
-                    className="vf-input"
-                    step="any"
-                    placeholder="protected zone"
-                    value={
-                      (spec.spawn?.maintain_min_sep_nm as number | undefined) ??
-                      Number.NaN
-                    }
-                    onChange={(n) =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        s.spawn.maintain_min_sep_nm = n;
-                      })
-                    }
-                    onClear={() =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        delete s.spawn.maintain_min_sep_nm;
-                      })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="muted small">
-                steady-density top-ups must be this far from live traffic; empty
-                uses the protected zone, 0 disables. Areas spawning
-                conflict-free use the predicted-conflict check instead ↑
-              </div>
-            </div>
-          )}
-          <div style={{ padding: "0 8px 4px 8px" }}>
-              <div className="value-field">
-                <div className="vf-head">
-                  <span className="vf-label">spawn max tries</span>
-                  <span className="vf-spacer" />
-                  <NumInput
-                    className="vf-input"
-                    int
-                    step={1}
-                    placeholder={`${spawnDefaults.spawn_max_tries ?? ""} (default)`}
-                    value={(spec.spawn?.spawn_max_tries as number | undefined) ?? Number.NaN}
-                    onChange={(n) =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        s.spawn.spawn_max_tries = Math.max(1, Math.round(n));
-                      })
-                    }
-                    onClear={() =>
-                      edit((s) => {
-                        s.spawn = s.spawn ?? emptySpawn();
-                        delete s.spawn.spawn_max_tries;
-                      })
-                    }
-                  />
-                </div>
-              </div>
-            <div className="muted small">
-              clear spawn states to try before deferring to the next step
-            </div>
-            {spawnRegions.some((r) => r.maintain === true) && (
-              <>
+          {/* Settings for every spawn region at once, folded away so the
+              regions themselves stay in view. */}
+          <details className="geo-settings">
+            <summary>spawn settings</summary>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={spec.spawn?.conflict_free_spawn === true}
+                onChange={(e) =>
+                  edit((s) => {
+                    s.spawn = s.spawn ?? emptySpawn();
+                    s.spawn.conflict_free_spawn = e.target.checked;
+                  })
+                }
+              />
+              <span>conflict-free spawn</span>
+            </label>
+            {spec.spawn?.conflict_free_spawn === true && (
+              <div>
                 <div className="value-field">
                   <div className="vf-head">
-                    <span className="vf-label">warn after failed top-ups</span>
+                    <span className="vf-label">buffer horiz nm</span>
                     <span className="vf-spacer" />
                     <NumInput
                       className="vf-input"
-                      int
-                      step={1}
-                      placeholder={`${spawnDefaults.spawn_warn_after ?? ""} (default)`}
-                      value={(spec.spawn?.spawn_warn_after as number | undefined) ?? Number.NaN}
+                      step="any"
+                      placeholder="none"
+                      value={
+                        (spec.spawn?.conflict_free_margin_nm as
+                          | number
+                          | undefined) ?? Number.NaN
+                      }
                       onChange={(n) =>
                         edit((s) => {
                           s.spawn = s.spawn ?? emptySpawn();
-                          s.spawn.spawn_warn_after = Math.max(1, Math.round(n));
+                          s.spawn.conflict_free_margin_nm = n;
                         })
                       }
                       onClear={() =>
                         edit((s) => {
                           s.spawn = s.spawn ?? emptySpawn();
-                          delete s.spawn.spawn_warn_after;
+                          delete s.spawn.conflict_free_margin_nm;
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="value-field">
+                  <div className="vf-head">
+                    <span className="vf-label">buffer vert ft</span>
+                    <span className="vf-spacer" />
+                    <NumInput
+                      className="vf-input"
+                      step="any"
+                      placeholder="none"
+                      value={
+                        (spec.spawn?.conflict_free_margin_ft as
+                          | number
+                          | undefined) ?? Number.NaN
+                      }
+                      onChange={(n) =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          s.spawn.conflict_free_margin_ft = n;
+                        })
+                      }
+                      onClear={() =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          delete s.spawn.conflict_free_margin_ft;
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="value-field">
+                  <div className="vf-head">
+                    <span className="vf-label">buffer time s</span>
+                    <span className="vf-spacer" />
+                    <NumInput
+                      className="vf-input"
+                      step="any"
+                      placeholder="none"
+                      value={
+                        (spec.spawn?.conflict_free_margin_s as
+                          | number
+                          | undefined) ?? Number.NaN
+                      }
+                      onChange={(n) =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          s.spawn.conflict_free_margin_s = n;
+                        })
+                      }
+                      onClear={() =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          delete s.spawn.conflict_free_margin_s;
                         })
                       }
                     />
                   </div>
                 </div>
                 <div className="muted small">
-                  warn once when a maintain area misses its count this many times
-                  in a row
+                  reject spawns whose predicted CPA comes within zone + buffer
+                  ({sepZone}), so clearance holds as aircraft maneuver; blank adds
+                  none ↑
                 </div>
-              </>
+              </div>
             )}
-          </div>
+            {/* Only meaningful while some maintain area actually uses the
+                distance guard - i.e. is not (effectively) conflict-free. */}
+            {spawnRegions.some(
+              (r) =>
+                r.maintain === true &&
+                (r.conflict_free_spawn === undefined ||
+                r.conflict_free_spawn === null
+                  ? spec.spawn?.conflict_free_spawn !== true
+                  : r.conflict_free_spawn !== true),
+            ) && (
+              <div>
+                <div className="value-field">
+                  <div className="vf-head">
+                    <span className="vf-label">respawn min sep nm</span>
+                    <span className="vf-spacer" />
+                    <NumInput
+                      className="vf-input"
+                      step="any"
+                      placeholder="protected zone"
+                      value={
+                        (spec.spawn?.maintain_min_sep_nm as number | undefined) ??
+                        Number.NaN
+                      }
+                      onChange={(n) =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          s.spawn.maintain_min_sep_nm = n;
+                        })
+                      }
+                      onClear={() =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          delete s.spawn.maintain_min_sep_nm;
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="muted small">
+                  steady-density top-ups must be this far from live traffic; empty
+                  uses the protected zone, 0 disables. Areas spawning
+                  conflict-free use the predicted-conflict check instead ↑
+                </div>
+              </div>
+            )}
+            <div>
+                <div className="value-field">
+                  <div className="vf-head">
+                    <span className="vf-label">spawn max tries</span>
+                    <span className="vf-spacer" />
+                    <NumInput
+                      className="vf-input"
+                      int
+                      step={1}
+                      placeholder={`${spawnDefaults.spawn_max_tries ?? ""} (default)`}
+                      value={(spec.spawn?.spawn_max_tries as number | undefined) ?? Number.NaN}
+                      onChange={(n) =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          s.spawn.spawn_max_tries = Math.max(1, Math.round(n));
+                        })
+                      }
+                      onClear={() =>
+                        edit((s) => {
+                          s.spawn = s.spawn ?? emptySpawn();
+                          delete s.spawn.spawn_max_tries;
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              <div className="muted small">
+                clear spawn states to try before deferring to the next step
+              </div>
+              {spawnRegions.some((r) => r.maintain === true) && (
+                <>
+                  <div className="value-field">
+                    <div className="vf-head">
+                      <span className="vf-label">warn after failed top-ups</span>
+                      <span className="vf-spacer" />
+                      <NumInput
+                        className="vf-input"
+                        int
+                        step={1}
+                        placeholder={`${spawnDefaults.spawn_warn_after ?? ""} (default)`}
+                        value={(spec.spawn?.spawn_warn_after as number | undefined) ?? Number.NaN}
+                        onChange={(n) =>
+                          edit((s) => {
+                            s.spawn = s.spawn ?? emptySpawn();
+                            s.spawn.spawn_warn_after = Math.max(1, Math.round(n));
+                          })
+                        }
+                        onClear={() =>
+                          edit((s) => {
+                            s.spawn = s.spawn ?? emptySpawn();
+                            delete s.spawn.spawn_warn_after;
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="muted small">
+                    warn once when a maintain area misses its count this many times
+                    in a row
+                  </div>
+                </>
+              )}
+            </div>
+          </details>
           {spawnRegions
             .map((r, i): [SpecDict, number] => [r, i])
             .filter(([r, i]) => has(r.name || `spawn_${i + 1}`))
@@ -612,10 +626,10 @@ export default function GeometryTab({
       </div>
 
       <div className="geo-inspector">
-        {sel == null && (
-          <div className="geo-inspector-empty muted small">
-            Select an element on the map or in the list to edit it.
-          </div>
+        {sel != null && (
+          <button className="geo-back" onClick={() => onSelect(null)}>
+            ← all elements
+          </button>
         )}
 
         {sel?.scope === "routes" && (
