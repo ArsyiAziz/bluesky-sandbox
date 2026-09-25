@@ -98,6 +98,7 @@ def test_a_switch_puts_the_action_in_a_dict_with_a_binary_part():
     assert action["space"] == "Dict"
     parts = {p["part"]: p for p in action["parts"]}
     (switch,) = parts["binary"]["fields"]
+    assert switch["binary"] and not parts["continuous"]["fields"][0]["binary"]
     assert switch["normalizer"] is None
     assert (switch["raw"]["low"], switch["raw"]["high"]) == (0.0, 1.0)
 

@@ -13,6 +13,7 @@ type Field = {
   class: string;
   doc: string;
   columns: [number, number];
+  binary: boolean;
   lag: { steps: number; of: string | null; inner: string } | null;
   raw: { width: number; unit: string; low: number | null; high: number | null; per_aircraft: boolean };
   normalizer: { name: string; params: Record<string, unknown> } | null;
@@ -46,9 +47,13 @@ function number(v: number | null | undefined, open = "∞"): string {
 
 const range = (low: number | null, high: number | null) => `[${number(low, "−∞")}, ${number(high)}]`;
 const rawText = (f: Field) =>
-  `${f.raw.per_aircraft ? "per aircraft" : range(f.raw.low, f.raw.high)}${f.raw.unit ? ` ${f.raw.unit}` : ""}`;
+  f.binary
+    ? "{0, 1}"
+    : `${f.raw.per_aircraft ? "per aircraft" : range(f.raw.low, f.raw.high)}${f.raw.unit ? ` ${f.raw.unit}` : ""}`;
 const outputText = (f: Field) =>
-  !f.normalizer && f.raw.per_aircraft
+  f.binary
+    ? "{0, 1}"
+    : !f.normalizer && f.raw.per_aircraft
     ? "per aircraft"
     : f.output.low.length > 1
       ? `${f.output.low.length} × ${range(f.output.low[0], f.output.high[0])}`

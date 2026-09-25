@@ -20,6 +20,7 @@ import numpy as np
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.layout import action_layout, observation_parts, slots
 from bluesky_sandbox.core.services import _action_parts, _field_normalizer
+from bluesky_sandbox.interface.fields.base import ActionKind
 from bluesky_sandbox.interface.fields.observations import LaggedObs, LaggedPair
 
 from .builder import build_design_config
@@ -91,6 +92,8 @@ def _field(
         "class": type(field).__name__,
         "doc": (inspect.getdoc(type(field)) or "").split("\n\n", 1)[0],
         "columns": [slot.columns.start, slot.columns.stop],
+        # A binary action takes the set {0, 1}; everything else a range.
+        "binary": getattr(field, "kind", None) is ActionKind.BINARY,
         "lag": _lag(field, part, part_slots),
         "raw": raw,
         "normalizer": None,
