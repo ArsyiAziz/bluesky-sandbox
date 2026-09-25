@@ -14,14 +14,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import bluesky as bs
 import numpy as np
 
 from bluesky_sandbox.interface.fields.base import PairObsField
+from bluesky_sandbox.interface.task import AgentStepContext, DesignKeys
 
 from .step_values import ACID, StepValues, unique_names_of
+
+if TYPE_CHECKING:
+    from .services import QueryBatch
 
 __all__ = ["RawBatch", "StepBatch"]
 
@@ -39,11 +43,7 @@ class RawBatch(Mapping[str, Mapping[str, np.ndarray]]):
         self, values: StepValues, parts: Mapping[str, Any], acidx: np.ndarray
     ) -> None:
         self._values = values
-        self._parts = {
-            key: list(fields or ())
-            for key, fields in parts.items()
-            if fields or key == "ownship"
-        }
+        self._parts = dict(parts)
         self._acidx = acidx
         self._traffic = values.traffic()
         self._built: dict[str, dict[str, np.ndarray]] = {}
@@ -114,8 +114,8 @@ class StepBatch:
     acids: tuple[str, ...]
     acidx: np.ndarray
     obs: dict[str, np.ndarray]
-    raw_obs: RawBatch
-    raw_action: dict[str, np.ndarray]
+    raw_obs: Annotated[RawBatch, DesignKeys("observation", batched=True)]
+    raw_action: Annotated[dict[str, np.ndarray], DesignKeys("action", batched=True)]
     has_action: np.ndarray
     intruder_idx: np.ndarray
     infos: list[dict[str, Any]]
@@ -128,11 +128,13 @@ class StepBatch:
     def __len__(self) -> int:
         return len(self.acids)
 
-    def query(self, name: str) -> Any:
+    def query(
+        self, name: Annotated[str, DesignKeys("queryable", batched=True)]
+    ) -> QueryBatch:
         """Queryable ``name`` for every agent at once, as arrays."""
         return self._query(name, self.acidx)
 
-    def context(self, k: int) -> Any:
+    def context(self, k: int) -> AgentStepContext:
         """Agent ``k``'s :class:`~bluesky_sandbox.interface.task.AgentStepContext`."""
         return self._context(int(self.acidx[k]))
 

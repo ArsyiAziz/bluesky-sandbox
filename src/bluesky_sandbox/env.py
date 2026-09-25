@@ -22,8 +22,10 @@ from bluesky_sandbox.interface.fields.base import (
     PairObsField,
 )
 from bluesky_sandbox.interface.task import (
+    AgentStepContext,
     AircraftReadoutItem,
     BaseAgentInfo,
+    BaseObs,
     TaskInfoProvider,
     WaypointReadoutItem,
 )
@@ -223,24 +225,38 @@ class BlueskyEnv(BlueskyBaseEnvironment):
     @overridable
     def reward(
         self,
-        _obs,
-        _action,
-        _terminated,
-        _truncated,
-        _context,
-        _info,
-        _rng,
+        _obs: BaseObs,
+        _action: np.ndarray | None,
+        _terminated: bool,
+        _truncated: bool,
+        _context: AgentStepContext,
+        _info: BaseAgentInfo,
+        _rng: np.random.Generator,
     ) -> float:
         """Per-agent reward for one aircraft this step."""
         return 0.0
 
     @overridable
-    def terminated(self, _obs, _action, _context, _info, _rng) -> bool:
+    def terminated(
+        self,
+        _obs: BaseObs,
+        _action: np.ndarray | None,
+        _context: AgentStepContext,
+        _info: BaseAgentInfo,
+        _rng: np.random.Generator,
+    ) -> bool:
         """Per-agent termination (goal reached / out of bounds / ...)."""
         return False
 
     @overridable
-    def truncated(self, _obs, _action, _context, _info, _rng) -> bool:
+    def truncated(
+        self,
+        _obs: BaseObs,
+        _action: np.ndarray | None,
+        _context: AgentStepContext,
+        _info: BaseAgentInfo,
+        _rng: np.random.Generator,
+    ) -> bool:
         """Per-agent truncation (time limit / give-up condition)."""
         return False
 

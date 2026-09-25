@@ -1,0 +1,545 @@
+"""What a design's code can use - types, scopes and design keys - by introspection.
+
+The designer's code editor completes, colors, explains and checks code from what
+this returns. Nothing here names a library member:
+
+- a type's members come from the class - its annotations, properties and
+  signatures - with names only type checkers import resolved the same way;
+- the keys a design fixes (observation parts and fields, action fields,
+  queryables) come from ``DesignKeys`` annotations, filled from the design;
+- each code block's names come from what runs there: a hook's signature, the
+  setup module the builder runs, a custom code module.
+
+``types`` maps a key to ``{"doc", "attrs", "items"}``; a member names its
+``type`` by key, so the editor resolves ``context.raw_obs["intruders"]["acid"]``
+one step at a time. ``scopes`` maps each code block to its ``params`` and the
+key of its ``names`` in ``names`` - blocks sharing a module share one list.
+"""
+
+from __future__ import annotations
+
+import ast
+import functools
+import inspect
+import sys
+import types as pytypes
+import typing
+from collections.abc import Callable, Iterable
+from typing import Annotated, Any, Union, get_args, get_origin
+
+import numpy as np
+
+from bluesky_sandbox.config import EnvConfig
+from bluesky_sandbox.core.layout import observation_parts
+from bluesky_sandbox.core.step_values import ACID, unique_names_of
+from bluesky_sandbox.env import BlueskyEnv
+from bluesky_sandbox.interface.fields.base import ActionKind
+from bluesky_sandbox.interface.task import DesignKeys, TaskInfoProvider
+
+from . import setup_code
+from .builder import build_design_config, build_scenario, run_setup_module
+from .spec import SCENARIO_HOOKS, DesignSpec
+
+__all__ = ["code_intel", "hints"]
+
+#: Values whose members say nothing a task needs: numbers, strings, containers.
+_OPAQUE = (int, float, complex, str, bytes, bool, type(None), object, type, Any)
+
+#: How deep member types are followed from a scope's names; deeper types are
+#: named but not described.
+_DEPTH = 4
+
+
+def code_intel(spec: DesignSpec) -> dict[str, Any]:
+    """Types and scopes for every code block of ``spec``."""
+    config = build_design_config(spec)
+    support = build_scenario(spec).support()
+    table = TypeTable(config, support)
+    names: dict[str, list[dict[str, Any]]] = {}
+    scopes = _scopes(spec, config, table, names)
+    return {"ok": True, "scopes": scopes, "names": names, "types": table.types}
+
+
+# --------------------------------------------------------------------------- #
+# Annotations                                                                 #
+# --------------------------------------------------------------------------- #
+def hints(obj: Any) -> dict[str, Any]:
+    """``obj``'s type hints with ``Annotated`` kept, names that only type
+    checkers import (``if TYPE_CHECKING:``) resolved as they would be."""
+    try:
+        return typing.get_type_hints(obj, include_extras=True)
+    except Exception:
+        pass
+    owners = inspect.getmro(obj) if inspect.isclass(obj) else (obj,)
+    localns: dict[str, Any] = {}
+    for owner in owners:
+        module = sys.modules.get(getattr(owner, "__module__", None) or "")
+        if module is not None:
+            localns.update(_type_checking_names(module))
+    try:
+        return typing.get_type_hints(obj, localns=localns, include_extras=True)
+    except Exception:
+        return {}
+
+
+@functools.cache
+def _type_checking_names(module: pytypes.ModuleType) -> dict[str, Any]:
+    """The names ``module`` imports under ``if TYPE_CHECKING:``."""
+    try:
+        tree = ast.parse(inspect.getsource(module))
+    except (OSError, TypeError, SyntaxError):
+        return {}
+    namespace: dict[str, Any] = {
+        "__name__": module.__name__,
+        "__package__": module.__package__,
+    }
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.If) and _is_type_checking(node.test)):
+            continue
+        for statement in node.body:
+            if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                code = compile(ast.Module([statement], []), module.__name__, "exec")
+                try:
+                    exec(code, namespace)
+                except Exception:
+                    continue
+    return {k: v for k, v in namespace.items() if not k.startswith("__")}
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _unwrap(annotation: Any) -> tuple[Any, DesignKeys | None]:
+    """``annotation`` without ``Annotated`` or ``| None``, and its DesignKeys."""
+    marker = None
+    if get_origin(annotation) is Annotated:
+        annotation, *extras = get_args(annotation)
+        marker = next((e for e in extras if isinstance(e, DesignKeys)), None)
+    if get_origin(annotation) in (Union, pytypes.UnionType):
+        options = [a for a in get_args(annotation) if a is not type(None)]
+        if len(options) == 1:
+            inner, inner_marker = _unwrap(options[0])
+            return inner, marker or inner_marker
+    return annotation, marker
+
+
+def label(annotation: Any) -> str:
+    """A short, readable name for a type annotation."""
+    if annotation is None or annotation is inspect.Signature.empty:
+        return ""
+    annotation, _marker = _unwrap(annotation)
+    if isinstance(annotation, str):
+        return annotation
+    if inspect.isclass(annotation) and not get_args(annotation):
+        return annotation.__qualname__
+    text = inspect.formatannotation(annotation)
+    for prefix in ("typing.", "collections.abc.", "numpy.random._generator.", "numpy."):
+        text = text.replace(prefix, "np." if prefix.startswith("numpy") else "")
+    return text
+
+
+def _doc(obj: Any) -> str:
+    """The first paragraph of ``obj``'s docstring."""
+    doc = inspect.getdoc(obj) or ""
+    return doc.split("\n\n", 1)[0].strip()
+
+
+# --------------------------------------------------------------------------- #
+# Types                                                                       #
+# --------------------------------------------------------------------------- #
+class TypeTable:
+    """Types by key, described from classes and from the design's keys."""
+
+    def __init__(self, config: EnvConfig, support: Any) -> None:
+        self.types: dict[str, dict[str, Any]] = {}
+        self._depth: dict[str, int] = {}
+        self._config = config
+        self._support = support
+
+    # --- references -----------------------------------------------------------
+    def ref(self, annotation: Any, depth: int = _DEPTH) -> str | None:
+        """The key of ``annotation``'s type, described down to ``depth``."""
+        annotation, marker = _unwrap(annotation)
+        if marker is not None:
+            return self.design(marker, depth)
+        cls = get_origin(annotation) or annotation
+        # A union of several types names no single type to describe.
+        if (
+            cls in (Union, pytypes.UnionType)
+            or not inspect.isclass(cls)
+            or cls in _OPAQUE
+        ):
+            return None
+        key = f"{cls.__module__}.{cls.__qualname__}"
+        if self._depth.get(key, -1) >= depth:
+            return key
+        self._depth[key] = depth
+        self.types[key] = {"name": cls.__qualname__, "doc": _doc(cls), "attrs": []}
+        if depth > 0:
+            self.types[key].update(self._members(cls, depth - 1))
+        return key
+
+    def function(self, name: str, fn: Callable[..., Any], depth: int) -> dict[str, Any]:
+        """A callable as a member: its parameters, return type and doc."""
+        try:
+            signature = inspect.signature(fn)
+        except (TypeError, ValueError):
+            return _member(name, "function", detail=f"{name}(...)", doc=_doc(fn))
+        fn_hints = hints(fn)
+        params = []
+        keyed = None
+        for param in signature.parameters.values():
+            if param.name in ("self", "cls") or param.kind in (
+                param.VAR_POSITIONAL,
+                param.VAR_KEYWORD,
+            ):
+                continue
+            annotation = fn_hints.get(param.name, param.annotation)
+            base, marker = _unwrap(annotation)
+            entry = {
+                "name": param.name,
+                "detail": label(annotation),
+                "type": self.ref(base, depth),
+            }
+            if param.default is not param.empty:
+                entry["default"] = repr(param.default)
+            if marker is not None:
+                entry["keys"] = keyed = self.design(marker, depth)
+            params.append(entry)
+        returns = fn_hints.get("return", signature.return_annotation)
+        member = _member(
+            name,
+            "function",
+            detail=f"{name}({', '.join(_param_text(p) for p in params)})"
+            + (f" -> {label(returns)}" if label(returns) else ""),
+            doc=_doc(fn),
+            type=self.ref(returns, depth),
+            params=params,
+        )
+        # A keyed argument picks the result when the return type does not say.
+        if keyed is not None and _unwrap(returns)[0] in (
+            Any,
+            None,
+            inspect.Signature.empty,
+        ):
+            member["returns_by_key"] = keyed
+        return member
+
+    def _members(self, cls: type, depth: int) -> dict[str, Any]:
+        cls_hints = hints(cls)
+        attrs: dict[str, dict[str, Any]] = {}
+        items = None
+        if _is_typed_dict(cls):
+            items = [
+                _member(n, "field", detail=label(a), type=self.ref(a, depth))
+                for n, a in cls_hints.items()
+            ]
+        else:
+            for name, annotation in cls_hints.items():
+                if (
+                    not name.startswith("_")
+                    and get_origin(annotation) is not typing.ClassVar
+                ):
+                    attrs[name] = _member(
+                        name,
+                        "property",
+                        detail=label(annotation),
+                        type=self.ref(annotation, depth),
+                    )
+        for name in dir(cls):
+            if name.startswith("_") or name in attrs:
+                continue
+            try:
+                raw = inspect.getattr_static(cls, name)
+            except AttributeError:
+                continue
+            if isinstance(raw, property):
+                returns = hints(raw.fget).get("return") if raw.fget else None
+                attrs[name] = _member(
+                    name,
+                    "property",
+                    detail=label(returns),
+                    doc=_doc(raw),
+                    type=self.ref(returns, depth),
+                )
+            elif isinstance(raw, (staticmethod, classmethod)) or inspect.isroutine(raw):
+                attrs[name] = self.function(name, getattr(cls, name), depth)
+            elif not inspect.isclass(raw):
+                attrs[name] = _member(name, "property", detail=type(raw).__name__)
+        described: dict[str, Any] = {"attrs": sorted(attrs.values(), key=_by_name)}
+        if items is not None:
+            described["items"] = items
+        return described
+
+    # --- the design's keys ----------------------------------------------------
+    def design(self, marker: DesignKeys, depth: int) -> str:
+        """The key of a synthetic type whose items are the design's keys."""
+        suffix = ":batched" if marker.batched else ""
+        key = f"design:{marker.source}{suffix}"
+        if key in self.types:
+            return key
+        self.types[key] = {"name": marker.source, "doc": "", "attrs": []}
+        build = getattr(self, f"_design_{marker.source}")
+        self.types[key]["items"] = build(marker.batched, depth)
+        return key
+
+    def _design_observation(self, batched: bool, depth: int) -> list[dict[str, Any]]:
+        items = []
+        for part, fields in observation_parts(self._config).items():
+            key = f"design:observation:{part}{':batched' if batched else ''}"
+            per_intruder = part.endswith("intruders")
+            leaves = [
+                self._field_item(name, field, batched, per_intruder, depth)
+                for name, field in zip(unique_names_of(fields), fields)
+            ]
+            if per_intruder:
+                shape = _shape(batched, True, 1)
+                leaves.insert(
+                    0,
+                    _member(
+                        ACID,
+                        "field",
+                        detail=f"{shape} str",
+                        doc="Each intruder row's callsign.",
+                        type=self.ref(np.ndarray, depth),
+                    ),
+                )
+            self.types[key] = {"name": part, "doc": "", "attrs": [], "items": leaves}
+            items.append(
+                _member(part, "field", detail=f"{len(fields)} fields", type=key)
+            )
+        return items
+
+    def _design_action(self, batched: bool, depth: int) -> list[dict[str, Any]]:
+        fields = list(self._config.action_fields)
+        items = []
+        for name, field in zip(unique_names_of(fields), fields):
+            values = "0 or 1" if field.kind is ActionKind.BINARY else _unit(field)
+            shape = "ndarray (n_agents,)" if batched else "float"
+            items.append(
+                _member(
+                    name,
+                    "field",
+                    detail=" · ".join(p for p in (shape, values) if p),
+                    doc=_field_doc(field),
+                    type=self.ref(np.ndarray, depth) if batched else None,
+                )
+            )
+        return items
+
+    def _design_queryable(self, batched: bool, depth: int) -> list[dict[str, Any]]:
+        return self._queryables(depth, lambda q: type(q))
+
+    def _design_queryable_result(
+        self, batched: bool, depth: int
+    ) -> list[dict[str, Any]]:
+        return self._queryables(depth, lambda q: getattr(q, "result_type", None))
+
+    def _queryables(
+        self, depth: int, value: Callable[[Any], Any]
+    ) -> list[dict[str, Any]]:
+        items = []
+        for name, queryable in self._support.queryables.items():
+            result = value(queryable)
+            item = _member(
+                name,
+                "field",
+                detail=label(result),
+                doc=_doc(type(queryable)),
+                type=self.ref(result, depth),
+            )
+            color = getattr(queryable, "color", None)
+            if color:
+                item["color"] = color
+            items.append(item)
+        return items
+
+    def _field_item(
+        self, name: str, field: Any, batched: bool, per_intruder: bool, depth: int
+    ) -> dict[str, Any]:
+        width = (
+            field.output_size() if callable(getattr(field, "output_size", None)) else 1
+        )
+        shape = _shape(batched, per_intruder, width)
+        array = batched or per_intruder or width > 1
+        return _member(
+            name,
+            "field",
+            detail=" · ".join(p for p in (shape, _unit(field)) if p),
+            doc=_field_doc(field),
+            type=self.ref(np.ndarray, depth) if array else None,
+        )
+
+
+def _shape(batched: bool, per_intruder: bool, width: int) -> str:
+    axes = (["n_agents"] if batched else []) + (["n_intruders"] if per_intruder else [])
+    axes += [str(width)] if width > 1 else []
+    if not axes:
+        return "float"
+    return f"ndarray ({', '.join(axes)}{',' if len(axes) == 1 else ''})"
+
+
+def _unit(field: Any) -> str:
+    unit = str(getattr(getattr(field, "meta", None), "unit", "") or "")
+    return "" if unit in ("", "unitless") else unit
+
+
+def _field_doc(field: Any) -> str:
+    doc = f"`{type(field).__name__}`: {_doc(type(field))}"
+    normalizer = getattr(field, "normalizer", None)
+    if normalizer is not None:
+        observed = type(normalizer).__name__
+        doc += f"\n\nObserved through `{observed}`; this is the raw value."
+    return doc
+
+
+def _is_typed_dict(cls: type) -> bool:
+    return isinstance(cls, type) and issubclass(cls, dict) and hasattr(cls, "__total__")
+
+
+def _member(name: str, kind: str, **info: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "kind": kind,
+        **{k: v for k, v in info.items() if v not in (None, "")},
+    }
+
+
+def _param_text(param: dict[str, Any]) -> str:
+    text = param["name"]
+    if param.get("detail"):
+        text += f": {param['detail']}"
+    if "default" in param:
+        text += f" = {param['default']}"
+    return text
+
+
+def _by_name(member: dict[str, Any]) -> str:
+    return member["name"]
+
+
+# --------------------------------------------------------------------------- #
+# Scopes                                                                      #
+# --------------------------------------------------------------------------- #
+def _scopes(
+    spec: DesignSpec,
+    config: EnvConfig,
+    table: TypeTable,
+    names: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Each code block's parameters, and the key of its module's names."""
+    env = spec.env
+    module = run_setup_module(env, config)
+    setup_source = setup_code.setup_source(
+        env.task_info_setup, env.task_info, env.hook_setup
+    )
+    names["setup"] = _module_names(
+        module, ["CONFIG", *sorted(setup_code.setup_names(setup_source))], table
+    )
+    setup = "setup"
+    task = BlueskyEnv
+    scopes: dict[str, Any] = {
+        "hook_setup": {"params": [], "names": setup},
+        "task_info_setup": {"params": [], "names": setup},
+        "task_info": {
+            "params": _params(TaskInfoProvider.__call__, table),
+            "names": setup,
+        },
+    }
+    for name, hook in _hooks(task):
+        params = _params(hook, table, clean=True)
+        params.insert(
+            0, _member("self", "parameter", detail=task.__name__, type=table.ref(task))
+        )
+        scopes[f"hook:{name}"] = {"params": params, "names": setup}
+    names["scenario"] = _source_names(spec.scenario_setup or "")
+    scenario_names = "scenario"
+    scopes["scenario_setup"] = {"params": [], "names": scenario_names}
+    for name, (args, *_rest) in SCENARIO_HOOKS.items():
+        params = [_member(arg, "parameter") for arg in args]
+        scopes[f"scenario:{name}"] = {"params": params, "names": scenario_names}
+    for filename, source in (spec.code or {}).items():
+        stem = filename.removesuffix(".py")
+        code_module = sys.modules.get(stem)
+        defined = sorted(setup_code.setup_names(source)) if source.strip() else []
+        names[f"code:{filename}"] = (
+            _module_names(code_module, defined, table) if code_module else []
+        )
+        scopes[f"code:{filename}"] = {"params": [], "names": f"code:{filename}"}
+    return scopes
+
+
+def _hooks(task: type) -> Iterable[tuple[str, Callable[..., Any]]]:
+    """The task's overridable hooks, by name."""
+    seen = set()
+    for cls in inspect.getmro(task):
+        for name, fn in vars(cls).items():
+            if getattr(fn, "__overridable__", False) and name not in seen:
+                seen.add(name)
+                yield name, fn
+
+
+def _params(
+    fn: Callable[..., Any], table: TypeTable, clean: bool = False
+) -> list[dict[str, Any]]:
+    """``fn``'s parameters as a scope's names - hooks name theirs without the
+    leading underscore that marks them unused in the base class."""
+    params = table.function("", fn, _DEPTH)["params"] if fn else []
+    out = []
+    for param in params:
+        name = param["name"].removeprefix("_") if clean else param["name"]
+        out.append({**param, "name": name, "kind": "parameter"})
+    return out
+
+
+def _module_names(
+    module: Any, names: list[str], table: TypeTable
+) -> list[dict[str, Any]]:
+    """Members for ``names`` in ``module``, described from the objects themselves."""
+    out = []
+    namespace = vars(module) if module is not None else {}
+    for name in names:
+        if name not in namespace:
+            continue
+        out.append(_describe_value(name, namespace[name], table))
+    return out
+
+
+def _describe_value(name: str, value: Any, table: TypeTable) -> dict[str, Any]:
+    if inspect.ismodule(value):
+        return _member(
+            name,
+            "module",
+            detail=value.__name__,
+            module=value.__name__,
+            doc=_doc(value),
+        )
+    if inspect.isclass(value):
+        member = table.function(name, value, _DEPTH)
+        return {
+            **member,
+            "kind": "class",
+            "type": table.ref(value),
+            "returns": table.ref(value),
+        }
+    if inspect.isroutine(value):
+        return table.function(name, value, _DEPTH)
+    return _member(
+        name,
+        "variable",
+        detail=type(value).__qualname__,
+        type=table.ref(type(value)),
+        doc=_doc(type(value)) if not isinstance(value, _OPAQUE) else "",
+    )
+
+
+def _source_names(source: str) -> list[dict[str, Any]]:
+    """Names a source defines, without running it."""
+    try:
+        names = setup_code.setup_names(source)
+    except SyntaxError:
+        return []
+    return [_member(name, "variable") for name in sorted(names)]

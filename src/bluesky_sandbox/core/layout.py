@@ -33,6 +33,7 @@ __all__ = [
     "action_layout",
     "flatten_action",
     "observation_layout",
+    "observation_parts",
     "zero_action",
 ]
 
@@ -47,8 +48,9 @@ def slots(fields: Iterable[Any], start: int = 0) -> list[Slot]:
     return unique_names(out)
 
 
-def observation_layout(config: EnvConfig) -> dict[str, list[Slot]]:
-    """The columns of each observation part, keyed as the observation is."""
+def observation_parts(config: EnvConfig) -> dict[str, list[Any]]:
+    """Each observation part and its fields, keyed as the observation is:
+    ``ownship`` always, the intruder and critic parts when configured."""
     parts = {
         "ownship": config.obs_fields,
         "intruders": config.intruder_obs_fields,
@@ -56,10 +58,15 @@ def observation_layout(config: EnvConfig) -> dict[str, list[Slot]]:
         "critic_intruders": config.critic_intruder_obs_fields,
     }
     return {
-        key: slots(fields or ())
+        key: list(fields or ())
         for key, fields in parts.items()
         if fields or key == "ownship"
     }
+
+
+def observation_layout(config: EnvConfig) -> dict[str, list[Slot]]:
+    """The columns of each observation part, keyed as the observation is."""
+    return {key: slots(fields) for key, fields in observation_parts(config).items()}
 
 
 def action_layout(config: EnvConfig) -> dict[str, list[Slot]]:

@@ -1,33 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
-import { api, type CompletionContext, type CompletionSymbol, type PythonMember, type SpecDict, type ValidateResult } from "../api";
+import { api, type SpecDict, type ValidateResult } from "../api";
+import type { Intel } from "../code/intel";
+import { registerPythonIntel, useIntel } from "../code/pythonEditor";
 import { Picker } from "./panel/Picker";
-
-// Module-level so the Monaco completion provider (registered once) always reads
-// the latest env components even after the Code tab remounts.
-let latestCompletionContext: CompletionContext | null = null;
-let completionsRegistered = false;
-let semanticTokensDidChange: any = null;
-const moduleMemberCache = new Map<string, Promise<PythonMember[]>>();
-
-const CUSTOM_FIELDS_TEMPLATE = `"""Custom observation/action fields for this design.
-
-Classes in this module are referenced as import strings, e.g.
-\`custom_fields:MyField\`. Use the designer's field configuration modal to set
-constructor bounds and normalizers for each referenced class.
-"""
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-
-import bluesky as bs
-
-from bluesky_sandbox.fields.base import (
-    ActionField, ActionMeta, ActionMode, ControlAxis,
-    ObsField, ObsMeta, ObsQuantity, Unit,
-)
-`;
 
 const TASK_INFO_BODY_TEMPLATE = `task = info["task"]
 task["metric"] = 0.0
@@ -50,362 +26,6 @@ type TaskInfoType = {
     body: string;
   };
 };
-
-type ExpressionInfo = {
-  symbol?: CompletionSymbol;
-  members: CompletionSymbol[];
-  nestedMembers?: Record<string, CompletionSymbol[]>;
-};
-
-function moduleMembers(moduleName: string): Promise<PythonMember[]> {
-  const cached = moduleMemberCache.get(moduleName);
-  if (cached) return cached;
-  const promise = api
-    .pythonModuleMembers(moduleName)
-    .then((result) => result.members)
-    .catch(() => {
-      moduleMemberCache.delete(moduleName);
-      return [];
-    });
-  moduleMemberCache.set(moduleName, promise);
-  return promise;
-}
-
-function editorContext(path: string): "hook_setup" | "hook" | "task_info_setup" | "task_info" | "custom_code" | "other" {
-  if (path.includes("hook_setup")) return "hook_setup";
-  if (path.includes("hook_")) return "hook";
-  if (path.includes("task_info_setup")) return "task_info_setup";
-  if (path.includes("task_info_")) return "task_info";
-  if (path.endsWith("custom_fields.py") || path.includes("custom_field_")) return "custom_code";
-  return "other";
-}
-
-function setupScope(context: ReturnType<typeof editorContext>): { symbols: CompletionSymbol[]; imports: Record<string, string> } {
-  const completionContext = latestCompletionContext?.ok ? latestCompletionContext : null;
-  if (context === "hook" || context === "hook_setup") {
-    return completionContext?.hook_setup ?? { symbols: [], imports: {} };
-  }
-  if (context === "task_info" || context === "task_info_setup") {
-    return completionContext?.task_info_setup ?? { symbols: [], imports: {} };
-  }
-  return { symbols: [], imports: {} };
-}
-
-function hookNameFromPath(path: string): string | null {
-  const match = path.match(/hook_([^/]+)\.py$/);
-  if (!match || match[1] === "setup") return null;
-  return match[1];
-}
-
-function completionKind(symbolKind: string | undefined, K: any): number {
-  if (symbolKind === "function") return K.Function;
-  if (symbolKind === "class") return K.Class;
-  if (symbolKind === "module") return K.Module;
-  if (symbolKind === "property") return K.Property;
-  if (symbolKind === "field") return K.Field;
-  if (symbolKind === "variable") return K.Variable;
-  return K.Value;
-}
-
-function semanticTokenType(symbolKind: string | undefined): string {
-  if (symbolKind === "module") return "namespace";
-  if (symbolKind === "class") return "class";
-  if (symbolKind === "function") return "function";
-  if (symbolKind === "property" || symbolKind === "field") return "property";
-  return "variable";
-}
-
-function semanticSymbolsForModel(model: any): Map<string, string> {
-  const completionContext = latestCompletionContext?.ok ? latestCompletionContext : null;
-  const catalog = expressionCatalog(completionContext);
-  const path = String(model.uri?.path ?? model.uri?.toString?.() ?? "");
-  const context = editorContext(path);
-  const symbols = new Map<string, string>();
-  const addSymbol = (symbol: CompletionSymbol | undefined, fallbackType?: string) => {
-    if (!symbol?.name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(symbol.name)) return;
-    symbols.set(symbol.name, fallbackType ?? semanticTokenType(symbol.kind));
-  };
-  const scope = setupScope(context);
-  scope.symbols.forEach((symbol) => addSymbol(symbol));
-  Object.keys(scope.imports).forEach((name) => symbols.set(name, "namespace"));
-
-  const hookName = context === "hook" ? hookNameFromPath(path) : null;
-  const activeHookContext = hookName ? completionContext?.hooks?.[hookName] : undefined;
-  const params = context === "task_info"
-    ? completionContext?.task_info?.params
-    : activeHookContext?.params;
-  (params ?? []).forEach((symbol) => addSymbol(symbol, "parameter"));
-
-  const activeMembers = context === "task_info"
-    ? completionContext?.task_info?.members
-    : activeHookContext?.members;
-  Object.keys(activeMembers ?? {}).forEach((name) => {
-    symbols.set(name, name === "self" ? "variable" : "parameter");
-  });
-  expressionAliasesForModel(model, catalog).forEach((_, name) => {
-    symbols.set(name, "variable");
-  });
-
-  return symbols;
-}
-
-function activeMembersForModel(model: any, completionContext: CompletionContext | null): Record<string, CompletionSymbol[]> {
-  if (!completionContext) return {};
-  const path = String(model.uri?.path ?? model.uri?.toString?.() ?? "");
-  const context = editorContext(path);
-  if (context === "task_info") return completionContext.task_info?.members ?? {};
-  if (context !== "hook") return {};
-  const hookName = hookNameFromPath(path);
-  return hookName ? completionContext.hooks?.[hookName]?.members ?? {} : {};
-}
-
-function symbolTokenType(symbols: CompletionSymbol[] | undefined, name: string): string | null {
-  const symbol = symbolByName(symbols, name);
-  return symbol ? semanticTokenType(symbol.kind) : null;
-}
-
-function expressionCatalog(completionContext: CompletionContext | null): Map<string, ExpressionInfo> {
-  const catalog = new Map<string, ExpressionInfo>();
-  if (!completionContext) return catalog;
-  const addExpression = (expression: string, info: ExpressionInfo) => {
-    catalog.set(expression, info);
-    catalog.set(expression.split('"').join("'"), info);
-  };
-  if (completionContext.airspace_result_members) {
-    addExpression("context.airspace", {
-      symbol: {
-        name: "context.airspace",
-        kind: "property",
-        detail: "RegionResult",
-        doc: "Airspace query result for this aircraft.",
-        insert: "context.airspace",
-      },
-      members: completionContext.airspace_result_members,
-      nestedMembers: completionContext.airspace_result_nested_members,
-    });
-  }
-  Object.entries(completionContext.query_result_members ?? {}).forEach(([name, members]) => {
-    addExpression(`context.query("${name}")`, {
-      symbol: symbolByName(completionContext.query_calls, `context.query("${name}")`),
-      members,
-      nestedMembers: completionContext.query_result_nested_members?.[name],
-    });
-  });
-  Object.entries(completionContext.queryable_members ?? {}).forEach(([name, members]) => {
-    addExpression(`context.queryable("${name}")`, {
-      symbol: symbolByName(completionContext.queryables, `"${name}"`),
-      members,
-    });
-  });
-  return catalog;
-}
-
-function expressionAliasesFromText(text: string, catalog: Map<string, ExpressionInfo>): Map<string, string> {
-  const aliases = new Map<string, string>();
-  const assignment = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*(?:#.*)?$/gm;
-  for (const match of text.matchAll(assignment)) {
-    const rhs = match[2].trim();
-    if (catalog.has(rhs)) aliases.set(match[1], rhs);
-  }
-  return aliases;
-}
-
-function modelTextBefore(model: any, lineNumber: number, column: number): string {
-  const lines: string[] = [];
-  for (let line = 1; line <= lineNumber; line += 1) {
-    const content = String(model.getLineContent(line));
-    lines.push(line === lineNumber ? content.slice(0, column - 1) : content);
-  }
-  return lines.join("\n");
-}
-
-function expressionAliasesForModel(model: any, catalog: Map<string, ExpressionInfo>): Map<string, string> {
-  return expressionAliasesFromText(String(model.getValue?.() ?? ""), catalog);
-}
-
-function expressionAliasesBefore(model: any, position: any, catalog: Map<string, ExpressionInfo>): Map<string, string> {
-  return expressionAliasesFromText(modelTextBefore(model, position.lineNumber, position.column), catalog);
-}
-
-function expressionEndingAt(source: string): string | null {
-  const match = source.match(/([A-Za-z_][A-Za-z0-9_]*(?:(?:\.[A-Za-z_][A-Za-z0-9_]*)|(?:\(\s*["'][^"']+["']\s*\)))*)$/);
-  return match?.[1] ?? null;
-}
-
-function completionExpression(linePrefix: string): string | null {
-  const beforePartial = linePrefix.replace(/[A-Za-z_][A-Za-z0-9_]*$/, "");
-  if (!beforePartial.endsWith(".")) return null;
-  return expressionEndingAt(beforePartial.slice(0, -1).trimEnd());
-}
-
-function resolveExpressionInfo(
-  expression: string,
-  catalog: Map<string, ExpressionInfo>,
-  aliases: Map<string, string>,
-): ExpressionInfo | undefined {
-  const aliasedExpression = aliases.get(expression);
-  if (aliasedExpression) return catalog.get(aliasedExpression);
-  return catalog.get(expression);
-}
-
-function resolveExpressionMembers(
-  expression: string,
-  catalog: Map<string, ExpressionInfo>,
-  aliases: Map<string, string>,
-): CompletionSymbol[] {
-  const direct = resolveExpressionInfo(expression, catalog, aliases);
-  if (direct) return attributeSymbols(direct.members);
-  const dot = expression.lastIndexOf(".");
-  if (dot < 0) return [];
-  const base = expression.slice(0, dot);
-  const member = expression.slice(dot + 1);
-  const baseInfo = resolveExpressionInfo(base, catalog, aliases);
-  return attributeSymbols(baseInfo?.nestedMembers?.[member]);
-}
-
-function dottedSemanticTokenType(
-  line: string,
-  startColumn: number,
-  name: string,
-  activeMembers: Record<string, CompletionSymbol[]>,
-  importedMembers: Map<string, Map<string, string>>,
-  catalog: Map<string, ExpressionInfo>,
-  aliases: Map<string, string>,
-): string | null {
-  const prefix = line.slice(0, startColumn);
-  if (!prefix.endsWith(".")) return null;
-  const expression = expressionEndingAt(prefix.slice(0, -1).trimEnd());
-  if (expression) {
-    const expressionTokenType = symbolTokenType(
-      resolveExpressionMembers(expression, catalog, aliases),
-      name,
-    );
-    if (expressionTokenType) return expressionTokenType;
-  }
-
-  const objectMember = prefix.match(/([A-Za-z_][A-Za-z0-9_]*)\.$/);
-  if (!objectMember) return null;
-  const root = objectMember[1];
-  return symbolTokenType(activeMembers[root], name) ?? importedMembers.get(root)?.get(name) ?? null;
-}
-
-function definitionSemanticTokenType(line: string, startColumn: number, name: string): string | null {
-  const before = line.slice(0, startColumn);
-  if (new RegExp(`^\\s*class\\s+$`).test(before)) return "class";
-  if (new RegExp(`^\\s*(?:async\\s+)?def\\s+$`).test(before)) return "function";
-  if (new RegExp(`^\\s*class\\s+${name}\\b`).test(line) && line.indexOf(name) === startColumn) return "class";
-  if (new RegExp(`^\\s*(?:async\\s+)?def\\s+${name}\\b`).test(line) && line.indexOf(name) === startColumn) return "function";
-  return null;
-}
-
-function safeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function markdownCode(value: string): string {
-  return value.replace(/`/g, "\\`");
-}
-
-function colorHint(color: string | undefined): string | null {
-  if (!color) return null;
-  const safe = safeHtml(color);
-  return `<span style="display:inline-block;width:0.8em;height:0.8em;border-radius:999px;border:1px solid #7f8da3;background:${safe};vertical-align:-0.1em;margin-right:0.35em;"></span><code>${safe}</code>`;
-}
-
-function symbolMarkdown(symbol: CompletionSymbol, title = symbol.name): { value: string; supportHtml: boolean } {
-  const lines = [`**${safeHtml(title)}**`];
-  if (symbol.detail) lines.push(`\`${markdownCode(symbol.detail)}\``);
-  const color = colorHint(symbol.color);
-  if (color) lines.push(color);
-  if (symbol.doc) lines.push(symbol.doc);
-  return { value: lines.join("\n\n"), supportHtml: true };
-}
-
-function memberMarkdown(member: PythonMember): { value: string; supportHtml: boolean } {
-  const lines = [`**${safeHtml(member.name)}**`];
-  if (member.detail || member.kind) lines.push(`\`${markdownCode(member.detail || member.kind)}\``);
-  if (member.doc) lines.push(member.doc);
-  return { value: lines.join("\n\n"), supportHtml: true };
-}
-
-function symbolByName(symbols: CompletionSymbol[] | undefined, name: string): CompletionSymbol | undefined {
-  return (symbols ?? []).find((symbol) =>
-    symbol.name === name || symbol.insert === name || symbol.name === `"${name}"` || symbol.insert === `"${name}"`,
-  );
-}
-
-function attributeSymbols(symbols: CompletionSymbol[] | undefined): CompletionSymbol[] {
-  return (symbols ?? []).filter((symbol) => symbol.access !== "item");
-}
-
-function itemSymbols(symbols: CompletionSymbol[] | undefined): CompletionSymbol[] {
-  return (symbols ?? []).filter((symbol) => symbol.access === "item");
-}
-
-function bracketTarget(linePrefix: string): { target: string; quote: string | null } | null {
-  const quoted = linePrefix.match(/([A-Za-z_][A-Za-z0-9_]*)\[\s*(["'])[^"']*$/);
-  if (quoted) return { target: quoted[1], quote: quoted[2] };
-  const unquoted = linePrefix.match(/([A-Za-z_][A-Za-z0-9_]*)\[\s*$/);
-  if (unquoted) return { target: unquoted[1], quote: null };
-  return null;
-}
-
-function itemHoverMarkdownForPosition(
-  model: any,
-  position: any,
-  activeMembers: Record<string, CompletionSymbol[]> | undefined,
-): { value: string; supportHtml: boolean } | null {
-  const line = String(model.getLineContent(position.lineNumber));
-  const pattern = /([A-Za-z_][A-Za-z0-9_]*)\[\s*(["'])([^"']+)\2\s*\]/g;
-  for (const match of line.matchAll(pattern)) {
-    const start = match.index ?? 0;
-    const end = start + match[0].length;
-    if (position.column - 1 < start || position.column - 1 > end) continue;
-    const [, target, , key] = match;
-    const symbol = symbolByName(itemSymbols(activeMembers?.[target]), key);
-    return symbol ? symbolMarkdown(symbol, `${target}[${JSON.stringify(key)}]`) : null;
-  }
-  return null;
-}
-
-function hoverMarkdownForPosition(
-  model: any,
-  position: any,
-  completionContext: CompletionContext,
-  catalog: Map<string, ExpressionInfo>,
-  aliases: Map<string, string>,
-): { value: string; supportHtml: boolean } | null {
-  const line = String(model.getLineContent(position.lineNumber));
-  const word = model.getWordAtPosition(position);
-  const wordText = word?.word ?? "";
-  const wordStart = word ? word.startColumn - 1 : position.column - 1;
-  const prefix = line.slice(0, wordStart);
-
-  const expression = expressionEndingAt(prefix.trimEnd().replace(/\.$/, ""));
-  if (expression && wordText) {
-    const symbol = symbolByName(resolveExpressionMembers(expression, catalog, aliases), wordText);
-    if (symbol) return symbolMarkdown(symbol, `${expression}.${wordText}`);
-  }
-
-  for (const [candidate, info] of catalog) {
-    const index = line.indexOf(candidate);
-    if (index >= 0 && position.column - 1 >= index && position.column - 1 <= index + candidate.length) {
-      return info.symbol ? symbolMarkdown(info.symbol, candidate) : null;
-    }
-  }
-
-  const aliasedExpression = wordText ? aliases.get(wordText) : undefined;
-  const aliasInfo = aliasedExpression ? catalog.get(aliasedExpression) : undefined;
-  if (aliasInfo?.symbol) {
-    return symbolMarkdown(aliasInfo.symbol, `${wordText}: ${aliasedExpression}`);
-  }
-
-  return null;
-}
 
 function pythonIdentifier(name: string): string {
   const cleaned = name.replace(/[^A-Za-z0-9_]/g, "_");
@@ -454,289 +74,21 @@ function specializeTaskInfoScaffold(type: TaskInfoType, providerName: string): {
   };
 }
 
-function isTaskInfoProviderReference(entry: TaskInfoEntry | null): boolean {
+// The setup value a task-info entry names, when its body is only that name -
+// then the entry is that provider object, as the builder reads it.
+function taskInfoProvider(entry: TaskInfoEntry | null, intel: Intel | null) {
   const body = entry?.body.trim() ?? "";
-  return /^[A-Z][A-Z0-9_]*_TASK_INFO_PROVIDER$/.test(body);
+  return intel?.names.setup?.find((member) => member.name === body);
 }
 
-function taskInfoTypeForEntry(entry: TaskInfoEntry | null, types: TaskInfoType[]): TaskInfoType | undefined {
-  const body = entry?.body.trim() ?? "";
-  if (body.startsWith("AUTO_COST")) return types.find((type) => type.name === "AutoCostConstraintTaskInfoProvider");
-  if (body.startsWith("CONSTRAINT")) return types.find((type) => type.name === "ConstraintTaskInfoProvider");
-  if (body.startsWith("GOAL")) return types.find((type) => type.name === "GoalTaskInfoProvider");
-  return undefined;
-}
-
-// Semantic tokens in Monaco's encoding: five integers per token - line and start
-// column, each relative to the previous token, then length, type index and
-// modifier bits. (VS Code has a builder for this; Monaco does not.)
-class SemanticTokens {
-  private data: number[] = [];
-  private line = 0;
-  private column = 0;
-  constructor(private readonly types: string[]) {}
-
-  // Tokens must be pushed in document order.
-  push(line: number, column: number, length: number, type: string) {
-    const index = this.types.indexOf(type);
-    if (index < 0) return;
-    const deltaLine = line - this.line;
-    const deltaColumn = deltaLine === 0 ? column - this.column : column;
-    this.data.push(deltaLine, deltaColumn, length, index, 0);
-    this.line = line;
-    this.column = column;
-  }
-
-  build() {
-    return { data: new Uint32Array(this.data) };
-  }
-}
-
-function registerCompletions(monaco: any) {
-  if (completionsRegistered) return;
-  completionsRegistered = true;
-  const tokenLegend = {
-    tokenTypes: ["namespace", "class", "function", "variable", "property", "parameter"],
-    tokenModifiers: [],
-  };
-  const semanticEmitter = new monaco.Emitter();
-  semanticTokensDidChange = semanticEmitter;
-  // Monaco styles a semantic token through the theme rule named after its type.
-  const semanticColors: Record<string, string> = {
-    namespace: "4EC9B0",
-    class: "4EC9B0",
-    function: "DCDCAA",
-    property: "9CDCFE",
-    parameter: "C586C0",
-    variable: "D4D4D4",
-  };
-  monaco.editor.defineTheme("vs-dark", {
-    base: "vs-dark",
-    inherit: true,
-    rules: Object.entries(semanticColors).map(([token, foreground]) => ({ token, foreground })),
-    colors: {},
-    semanticHighlighting: true,
-  });
-  monaco.languages.registerDocumentSemanticTokensProvider("python", {
-    getLegend: () => tokenLegend,
-    onDidChange: semanticEmitter.event,
-    provideDocumentSemanticTokens: async (model: any) => {
-      const completionContext = latestCompletionContext?.ok ? latestCompletionContext : null;
-      const symbols = semanticSymbolsForModel(model);
-      const activeMembers = activeMembersForModel(model, completionContext);
-      const scope = setupScope(editorContext(String(model.uri?.path ?? model.uri?.toString?.() ?? "")));
-      const importedMembers = new Map<string, Map<string, string>>();
-      await Promise.all(
-        Object.entries(scope.imports).map(([alias, moduleName]) =>
-          moduleMembers(moduleName)
-            .then((members) => {
-              importedMembers.set(
-                alias,
-                new Map(members.map((member) => [member.name, semanticTokenType(member.kind)])),
-              );
-            })
-            .catch(() => undefined),
-        ),
-      );
-      const tokens = new SemanticTokens(tokenLegend.tokenTypes);
-      const catalog = expressionCatalog(completionContext);
-      const aliases = expressionAliasesForModel(model, catalog);
-      const identifier = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
-      for (let lineNumber = 1; lineNumber <= model.getLineCount(); lineNumber += 1) {
-        const line = String(model.getLineContent(lineNumber));
-        for (const match of line.matchAll(identifier)) {
-          const startColumn = match.index ?? 0;
-          const tokenType = definitionSemanticTokenType(line, startColumn, match[0]) ?? dottedSemanticTokenType(
-            line,
-            startColumn,
-            match[0],
-            activeMembers,
-            importedMembers,
-            catalog,
-            aliases,
-          ) ?? symbols.get(match[0]);
-          if (!tokenType) continue;
-          tokens.push(lineNumber - 1, startColumn, match[0].length, tokenType);
-        }
-      }
-      return tokens.build();
-    },
-    releaseDocumentSemanticTokens: () => undefined,
-  });
-  monaco.languages.registerCompletionItemProvider("python", {
-    triggerCharacters: ['"', "'", "."],
-    provideCompletionItems: async (model: any, position: any) => {
-      const completionContext = latestCompletionContext?.ok ? latestCompletionContext : null;
-      const word = model.getWordUntilPosition(position);
-      const range = {
-        startLineNumber: position.lineNumber,
-        endLineNumber: position.lineNumber,
-        startColumn: word.startColumn,
-        endColumn: word.endColumn,
-      };
-      const K = monaco.languages.CompletionItemKind;
-      const items: any[] = [];
-      const add = (label: string, detail: string, kind: number, insert?: string) =>
-        items.push({ label, kind, insertText: insert ?? label, detail, range });
-      const addSymbol = (symbol: CompletionSymbol) => {
-        items.push({
-          label: symbol.name,
-          kind: completionKind(symbol.kind, K),
-          insertText: symbol.insert ?? symbol.name,
-          detail: symbol.detail ?? "",
-          documentation: symbolMarkdown(symbol),
-          range,
-        });
-      };
-      const addMember = (member: PythonMember) => {
-        items.push({
-          label: member.name,
-          kind: completionKind(member.kind, K),
-          insertText: member.name,
-          detail: member.detail || member.kind,
-          documentation: memberMarkdown(member),
-          range,
-        });
-      };
-
-      const path = String(model.uri?.path ?? model.uri?.toString?.() ?? "");
-      const context = editorContext(path);
-      const scope = setupScope(context);
-      const hookName = context === "hook" ? hookNameFromPath(path) : null;
-      const activeHookContext = hookName ? completionContext?.hooks?.[hookName] : undefined;
-      const activeMembers = context === "task_info"
-        ? completionContext?.task_info?.members
-        : activeHookContext?.members;
-      const linePrefix = String(model.getLineContent(position.lineNumber)).slice(0, position.column - 1);
-      const itemTarget = bracketTarget(linePrefix);
-      if (itemTarget && activeMembers?.[itemTarget.target]) {
-        itemSymbols(activeMembers[itemTarget.target]).forEach((symbol) => {
-          addSymbol({
-            ...symbol,
-            insert: itemTarget.quote ? symbol.name : `"${symbol.name}"`,
-          });
-        });
-        return { suggestions: items };
-      }
-
-      const catalog = expressionCatalog(completionContext);
-      const aliases = expressionAliasesBefore(model, position, catalog);
-      const expression = completionExpression(linePrefix);
-      if (completionContext && expression) {
-        const members = resolveExpressionMembers(expression, catalog, aliases);
-        if (members.length > 0) {
-          members.forEach(addSymbol);
-          return { suggestions: items };
-        }
-      }
-
-      const memberTarget = linePrefix.match(/([A-Za-z_][A-Za-z0-9_]*)\.[A-Za-z_][A-Za-z0-9_]*$/)?.[1]
-        ?? linePrefix.match(/([A-Za-z_][A-Za-z0-9_]*)\.$/)?.[1];
-      if (memberTarget && scope.imports[memberTarget]) {
-        const moduleName = scope.imports[memberTarget];
-        const members = await moduleMembers(moduleName);
-        members.forEach(addMember);
-        return { suggestions: items };
-      }
-      if (memberTarget && activeMembers?.[memberTarget]) {
-        attributeSymbols(activeMembers[memberTarget]).forEach(addSymbol);
-        return { suggestions: items };
-      }
-      if (memberTarget) {
-        return { suggestions: items };
-      }
-
-      if (context === "custom_code") {
-        [
-          "ObsField", "PairObsField", "ActionField", "ObsMeta", "ActionMeta",
-          "ObsQuantity", "Unit", "ControlAxis", "ActionMode",
-          "MinMaxNormalizer", "SymmetricNormalizer", "CircularNormalizer",
-          "PowerNormalizer", "SignedPowerNormalizer",
-        ].forEach((name) => add(name, "bluesky-sandbox field API", K.Class));
-        [
-          "Unit.DEG", "Unit.FT", "Unit.KTS", "Unit.NM", "Unit.UNITLESS", "Unit.SWITCH",
-          "ObsQuantity.LATITUDE", "ObsQuantity.LONGITUDE", "ObsQuantity.ALTITUDE",
-          "ObsQuantity.SPEED", "ObsQuantity.DISTANCE", "ObsQuantity.HEADING",
-          "ControlAxis.HEADING", "ControlAxis.SPEED", "ControlAxis.ALTITUDE",
-          "ActionMode.ABSOLUTE", "ActionMode.DELTA", "ActionMode.SWITCH",
-        ].forEach((name) => add(name, "metadata enum", K.EnumMember));
-        [
-          "bs.traf.lat[idx]", "bs.traf.lon[idx]", "bs.traf.alt[idx] / ft",
-          "bs.traf.cas[idx] / kts", "bs.traf.hdg[idx]", "bs.traf.trk[idx]",
-          "bs.traf.id[idx]", "self._configured_bounds()",
-        ].forEach((expr) => add(expr, "custom field helper", K.Value));
-
-      }
-
-      if (context !== "custom_code" && context !== "other") {
-        const importNames = new Set(Object.keys(scope.imports));
-        scope.symbols.forEach((symbol) => addSymbol({
-          ...symbol,
-          kind: importNames.has(symbol.name) ? "module" : symbol.kind,
-        }));
-        Object.entries(scope.imports).forEach(([name]) => {
-          if (!scope.symbols.some((symbol) => symbol.name === name)) add(name, "", K.Module);
-        });
-      }
-      if (context === "hook_setup" || context === "task_info_setup") {
-        return { suggestions: items };
-      }
-      if (context === "hook" || context === "task_info") {
-        const insideContextQuery = /context\.query(?:able)?\(\s*["'][^"']*$/.test(linePrefix);
-        if (completionContext && insideContextQuery) {
-          (completionContext.queryables ?? []).forEach(addSymbol);
-        }
-      }
-      if (context === "hook" || context === "task_info") {
-        const params = context === "task_info"
-          ? completionContext?.task_info?.params
-          : activeHookContext?.params;
-        (params ?? []).forEach(addSymbol);
-      }
-      if (context === "hook" && activeMembers?.self) {
-        addSymbol({ name: "self", kind: "variable", detail: "environment instance" });
-      }
-      return { suggestions: items };
-    },
-  });
-  monaco.languages.registerHoverProvider("python", {
-    provideHover: (model: any, position: any) => {
-      const completionContext = latestCompletionContext?.ok ? latestCompletionContext : null;
-      if (!completionContext) return null;
-      const catalog = expressionCatalog(completionContext);
-      const contextHover = hoverMarkdownForPosition(
-        model,
-        position,
-        completionContext,
-        catalog,
-        expressionAliasesBefore(model, position, catalog),
-      );
-      if (contextHover) return { contents: [contextHover] };
-
-      const word = model.getWordAtPosition(position)?.word;
-      const path = String(model.uri?.path ?? model.uri?.toString?.() ?? "");
-      const context = editorContext(path);
-      const hookName = context === "hook" ? hookNameFromPath(path) : null;
-      const activeHookContext = hookName ? completionContext.hooks?.[hookName] : undefined;
-      const activeMembers = context === "task_info"
-        ? completionContext.task_info?.members
-        : activeHookContext?.members;
-      const itemHover = itemHoverMarkdownForPosition(model, position, activeMembers);
-      if (itemHover) return { contents: [itemHover] };
-
-      if (!word) return null;
-      const scope = setupScope(context);
-      const scopeSymbol = symbolByName(scope.symbols, word);
-      if (scopeSymbol) return { contents: [symbolMarkdown(scopeSymbol)] };
-
-      const activeParams = context === "task_info"
-        ? completionContext.task_info?.params
-        : activeHookContext?.params;
-      const param = symbolByName(activeParams, word);
-      if (param) return { contents: [symbolMarkdown(param)] };
-      return null;
-    },
-  });
+// The provider type of such an entry: the class of the object it names.
+function taskInfoTypeForEntry(
+  entry: TaskInfoEntry | null,
+  types: TaskInfoType[],
+  intel: Intel | null,
+): TaskInfoType | undefined {
+  const provider = taskInfoProvider(entry, intel);
+  return provider ? types.find((type) => type.name === provider.detail) : undefined;
 }
 
 // VS Code-like view of the task's *code structure* (not raw JSON). Editable
@@ -781,6 +133,8 @@ export default function CodeTab({
   // server-side surfaces it in the editor with no frontend change.
   const [scenarioHookCatalog, setScenarioHookCatalog] = useState<any[]>([]);
   const [taskInfoTypes, setTaskInfoTypes] = useState<TaskInfoType[]>([]);
+  // The header a new custom code module starts with (catalog.scaffolds).
+  const [moduleHeader, setModuleHeader] = useState<string>("");
 
   useEffect(() => {
     api
@@ -789,6 +143,7 @@ export default function CodeTab({
         setHookCatalog(c?.hooks ?? []);
         setScenarioHookCatalog(c?.scenario_hooks ?? []);
         setTaskInfoTypes(c?.task_info_types ?? []);
+        setModuleHeader(c?.scaffolds?.module_header ?? "");
       })
       .catch(() => {
         setHookCatalog([]);
@@ -797,33 +152,7 @@ export default function CodeTab({
       });
   }, []);
 
-  useEffect(() => {
-    if (!spec) {
-      latestCompletionContext = null;
-      return;
-    }
-    let canceled = false;
-    const handle = setTimeout(() => {
-      api
-        .completions(spec)
-        .then((ctx) => {
-          if (!canceled) {
-            latestCompletionContext = ctx;
-            semanticTokensDidChange?.fire?.();
-          }
-        })
-        .catch((error) => {
-          if (!canceled) {
-            latestCompletionContext = { ok: false, error: String(error) };
-            semanticTokensDidChange?.fire?.();
-          }
-        });
-    }, 250);
-    return () => {
-      canceled = true;
-      clearTimeout(handle);
-    };
-  }, [spec]);
+  const intel = useIntel();
 
   const codeFiles = useMemo(() => Object.keys(spec?.code ?? {}), [spec]);
   const hooks: Record<string, string> = spec?.env?.hooks ?? {};
@@ -857,8 +186,8 @@ export default function CodeTab({
     selectedTaskInfo != null && Number.isInteger(selectedTaskInfo)
       ? taskInfo[selectedTaskInfo]
       : null;
-  const selectedTaskInfoProviderReference = isTaskInfoProviderReference(selectedTaskInfoEntry);
-  const selectedTaskInfoType = taskInfoTypeForEntry(selectedTaskInfoEntry, taskInfoTypes);
+  const selectedTaskInfoProviderReference = Boolean(taskInfoProvider(selectedTaskInfoEntry, intel));
+  const selectedTaskInfoType = taskInfoTypeForEntry(selectedTaskInfoEntry, taskInfoTypes, intel);
   const hookMeta = (name: string) => hookCatalog.find((h) => h.name === name);
   const hookBody = (name: string) => hooks[name] ?? DEFAULT_BODIES[name] ?? "";
 
@@ -1046,7 +375,7 @@ export default function CodeTab({
   const addFile = () => {
     const name = window.prompt("new module filename", "custom_fields.py");
     if (!name || !name.endsWith(".py") || !spec) return;
-    const initial = name === "custom_fields.py" ? CUSTOM_FIELDS_TEMPLATE : `# ${name}\n`;
+    const initial = name === "custom_fields.py" && moduleHeader ? moduleHeader : `# ${name}\n`;
     onSpecChange({ ...spec, code: { ...spec.code, [name]: initial } });
     setSelected(name);
   };
@@ -1337,7 +666,7 @@ export default function CodeTab({
           path={editorPath}
           language={editorLanguage}
           value={value}
-          beforeMount={registerCompletions}
+          beforeMount={registerPythonIntel}
           onChange={(v) => {
             if (selectedHook) setHook(selectedHook, v ?? "");
             else if (selectedHookSetup) setHookSetup(v ?? "");

@@ -1,3 +1,5 @@
+import type { Intel } from "./code/intel";
+
 // Typed client for the designer API. Paths are relative so the Vite dev proxy
 // (and the static-served production build) both work without configuration.
 
@@ -138,34 +140,6 @@ export interface PythonMember {
   doc?: string;
 }
 
-export interface CompletionSymbol {
-  name: string;
-  kind: "module" | "class" | "function" | "value" | "variable" | "property" | "field" | string;
-  detail?: string;
-  doc?: string;
-  insert?: string;
-  color?: string;
-  access?: "attribute" | "item" | string;
-}
-
-export interface CompletionContext {
-  ok: boolean;
-  error?: string;
-  hook_setup?: { symbols: CompletionSymbol[]; imports: Record<string, string> };
-  task_info_setup?: { symbols: CompletionSymbol[]; imports: Record<string, string> };
-  queryables?: CompletionSymbol[];
-  query_calls?: CompletionSymbol[];
-  airspace_result_members?: CompletionSymbol[];
-  airspace_result_nested_members?: Record<string, CompletionSymbol[]>;
-  query_result_members?: Record<string, CompletionSymbol[]>;
-  query_result_nested_members?: Record<string, Record<string, CompletionSymbol[]>>;
-  queryable_members?: Record<string, CompletionSymbol[]>;
-  obs_fields?: CompletionSymbol[];
-  intruder_obs_fields?: CompletionSymbol[];
-  action_fields?: CompletionSymbol[];
-  hooks?: Record<string, { params: CompletionSymbol[]; members: Record<string, CompletionSymbol[]> }>;
-  task_info?: { params: CompletionSymbol[]; members: Record<string, CompletionSymbol[]> };
-}
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -277,12 +251,13 @@ export const api = {
       jsonOrThrow<{ module: string; members: PythonMember[] }>(r),
     ),
 
-  completions: (spec: SpecDict) =>
-    fetch("/api/spec/completions", {
+  // What the design's code can use: types, scopes and design keys.
+  codeIntel: (spec: SpecDict) =>
+    fetch("/api/spec/code-intel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec }),
-    }).then((r) => jsonOrThrow<CompletionContext>(r)),
+    }).then((r) => jsonOrThrow<Intel | { ok: false; error: string }>(r)),
 
   listSpecs: () => fetch("/api/specs").then((r) => jsonOrThrow<{ name: string; title: string }[]>(r)),
 

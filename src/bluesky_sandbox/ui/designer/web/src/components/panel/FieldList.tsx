@@ -5,7 +5,7 @@ import { Fragment, useEffect, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { SpecDict } from "../../api";
 import { scaffoldClass, type Scaffolds } from "../../specHelpers";
-import { registerModalCompletions } from "./monacoCompletions";
+import { registerPythonIntel } from "../../code/pythonEditor";
 import { FieldPicker } from "./FieldPicker";
 import { Picker } from "./Picker";
 
@@ -459,7 +459,7 @@ function FieldConfigModal({
                   path={editorPath}
                   language="python"
                   value={source}
-                  beforeMount={registerModalCompletions}
+                  beforeMount={registerPythonIntel}
                   onChange={(value) => {
                     const nextSource = value ?? "";
                     // Renaming the class here renames the field, as the name

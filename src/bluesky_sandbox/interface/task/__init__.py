@@ -11,6 +11,7 @@ from __future__ import annotations
 from .types import (
     AchievedGoalFn,
     AgentStepContext,
+    DesignKeys,
     AircraftReadoutItem,
     AircraftRenderState,
     BaseAgentInfo,
@@ -42,6 +43,7 @@ from .types import (
 __all__ = [
     "AchievedGoalFn",
     "AgentStepContext",
+    "DesignKeys",
     "AircraftReadoutItem",
     "AircraftRenderState",
     "BaseAgentInfo",

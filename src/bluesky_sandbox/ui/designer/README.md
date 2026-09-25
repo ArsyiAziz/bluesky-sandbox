@@ -187,9 +187,15 @@ validate and preview against the backend live.
 The whole design is emitted as `design.py` (constructing the bounds / queryables /
 spawn / fields directly); editable helper modules such as `custom_fields.py`
 live in `spec.code`; `scenario.py` / `env.py` / `__main__.py` are read-only.
-Editing reward/termination hooks gets **completions** for the design's
-observation/action/queryable names. (`spec.json` is still available for raw
-edits.)
+Every code editor - hooks, task info, setup, custom code - completes, colors,
+explains on hover and shows the signature of what the code can use, following a
+chain one step at a time: `context.raw_obs["intruders"]["dist_to_own_nm"]`,
+`context.query("goal").current`, or a name assigned from one. It is read from the
+code, not listed: types from annotations, each block's names from what runs
+there (a hook's signature, the setup module, a custom module), and the keys a
+design fixes - observation parts and fields, action fields, queryables - from
+`DesignKeys` annotations, filled from the design (`ui/designer/code_intel.py`).
+(`spec.json` is still available for raw edits.)
 
 **Custom fields** — add an observation/action field by import path, or
 **+ scaffold** a starter class into `custom_fields.py` and edit it in the Code
@@ -249,8 +255,7 @@ the object itself. Other fields: `context.acid` (callsign), `context.acidx`
 You **define** `context.data` by overriding the `define_agent_context(acid,
 acidx)` hook (its return value becomes `context.data`); everything else on the
 context is wired from the episode's queryables automatically. The Code editor
-offers completions for your design's queryable / observation / action names and
-this context surface.
+completes and explains this context surface and your design's keys.
 
 ### How code plugs in
 

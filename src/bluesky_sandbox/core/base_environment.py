@@ -33,6 +33,7 @@ from bluesky_sandbox.core.layout import (
     action_layout,
     flatten_action,
     observation_layout,
+    observation_parts,
 )
 from bluesky_sandbox.core.step_values import (
     RawObservation,
@@ -707,15 +708,8 @@ class BlueskyBaseEnvironment(ParallelEnv):
             self._step_values, self._observation_parts(), acidx, self._agent_indices
         )
 
-    def _observation_parts(self) -> dict[str, Any]:
-        """The observation's parts and the fields in each, keyed as it is."""
-        config = self.config
-        return {
-            "ownship": config.obs_fields,
-            "intruders": config.intruder_obs_fields,
-            "critic_ownship": config.critic_obs_fields,
-            "critic_intruders": config.critic_intruder_obs_fields,
-        }
+    def _observation_parts(self) -> dict[str, list[Any]]:
+        return observation_parts(self.config)
 
     def _step_batch(
         self,
@@ -929,7 +923,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
             query_state=self._query_state_monitor,
             raw_obs=self._raw_observation(acidx),
             raw_action=self._step_values.action(acid),
-            step_values=self._step_values,
+            _step_values=self._step_values,
             airspace=self._build_airspace_context(acidx),
             separation=self._traffic_monitor.build_separation_context(acid, acidx),
         )

@@ -141,12 +141,7 @@ class RawObservation(Mapping[str, Mapping[str, Any]]):
         owns: Callable[[], np.ndarray],
     ) -> None:
         self._values = values
-        # Keyed as the observation is: ownship always, the rest when configured.
-        self._parts = {
-            key: list(fields or ())
-            for key, fields in parts.items()
-            if fields or key == "ownship"
-        }
+        self._parts = dict(parts)
         self._acidx = acidx
         self._owns = owns
         self._traffic = values.traffic()

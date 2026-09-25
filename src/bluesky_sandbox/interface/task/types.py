@@ -13,12 +13,24 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal, NoReturn, NotRequired, Protocol, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    NoReturn,
+    NotRequired,
+    Protocol,
+    TypedDict,
+)
 
 import bluesky as bs
 import numpy as np
 
 from bluesky_sandbox.sim.geometry.conflict import ConflictView
+
+if TYPE_CHECKING:
+    from bluesky_sandbox.sim.queryables import RegionResult
 
 #: Flat array (no intruder obs) or dict with "ownship" / "intruders" keys.
 BaseObs = np.ndarray | dict[str, np.ndarray | tuple[np.ndarray, ...]]
@@ -239,6 +251,23 @@ class WaypointReadoutItem:
 
 
 @dataclass(frozen=True)
+class DesignKeys:
+    """Marks a value whose keys the design fixes, for tools reading annotations.
+
+    ``Annotated[Mapping[str, Any], DesignKeys("observation")]`` says the keys
+    are the observation's parts, each keyed by its fields' names; ``"action"``
+    the action fields' names; ``"queryable"`` / ``"queryable_result"`` the
+    configured queryables' names, each giving the queryable or its result. On a
+    parameter, the argument is one of those keys. ``batched`` marks values
+    stacked over agents. The designer's code editor completes, colors and
+    checks these keys against the design.
+    """
+
+    source: Literal["observation", "action", "queryable", "queryable_result"]
+    batched: bool = False
+
+
+@dataclass(frozen=True)
 class AgentStepContext:
     """Agent-bound task/development context for the current step.
 
@@ -255,26 +284,28 @@ class AgentStepContext:
     data: Any = None
     queryables: Mapping[str, Any] = field(default_factory=dict, repr=False)
     query_state: Any = field(default=None, repr=False)
-    airspace: Any = field(default=None, repr=False)
+    airspace: RegionResult | None = field(default=None, repr=False)
     separation: SeparationContext = field(default_factory=SeparationContext)
-    raw_obs: Mapping[str, Mapping[str, Any]] = field(
+    raw_obs: Annotated[
+        Mapping[str, Mapping[str, Any]], DesignKeys("observation")
+    ] = field(default_factory=dict, repr=False)
+    raw_action: Annotated[Mapping[str, Any], DesignKeys("action")] = field(
         default_factory=dict, repr=False
     )
-    raw_action: Mapping[str, Any] = field(default_factory=dict, repr=False)
     # The step's shared raw values (core.step_values.StepValues), when the
     # environment built this context; own_value / intruder_values read them.
-    step_values: Any = field(default=None, repr=False)
+    _step_values: Any = field(default=None, repr=False)
     _query_result_cache: dict[str, Any] = field(default_factory=dict, repr=False)
     _obs_value_cache: dict[int, Any] = field(default_factory=dict, repr=False)
 
-    def queryable(self, name: str) -> Any:
+    def queryable(self, name: Annotated[str, DesignKeys("queryable")]) -> Any:
         try:
             return self.queryables[name]
         except KeyError as exc:
             raise KeyError(f"queryable {name!r} is not configured") from exc
 
     @property
-    def conflicts(self) -> Any:
+    def conflicts(self) -> ConflictView:
         """The ownship's shared per-step conflict geometry view.
 
         A :class:`~bluesky_sandbox.sim.geometry.conflict.ConflictView` over the other
@@ -289,7 +320,7 @@ class AgentStepContext:
 
         return ConflictView(self.acidx)
 
-    def query(self, name: str) -> Any:
+    def query(self, name: Annotated[str, DesignKeys("queryable_result")]) -> Any:
         if name in self._query_result_cache:
             return self._query_result_cache[name]
         queryable = self.queryable(name)
@@ -307,8 +338,8 @@ class AgentStepContext:
         - use this in cost/reward code instead of slicing the observation vector.
         Computed lazily and cached for the step.
         """
-        if self.step_values is not None:
-            value = np.asarray(self.step_values.values(field)[self.acidx])
+        if self._step_values is not None:
+            value = np.asarray(self._step_values.values(field)[self.acidx])
             return value.item() if value.ndim == 0 else value
         key = id(field)
         cached = self._obs_value_cache.get(key)
@@ -326,10 +357,10 @@ class AgentStepContext:
         field are free. Returns an empty array when the agent is alone.
         """
         others = tuple(i for i in range(bs.traf.ntraf) if i != self.acidx)
-        if self.step_values is not None:
+        if self._step_values is not None:
             if not others:
                 return np.empty(0, dtype=np.float64)
-            row = self.step_values.pair_row(
+            row = self._step_values.pair_row(
                 field, self.acidx, lambda: np.array([self.acidx], dtype=np.intp)
             )
             return np.asarray(row, dtype=np.float64)[list(others)]

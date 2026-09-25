@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type SpecDict, type ValidateResult } from "./api";
+import { useCodeIntel } from "./code/pythonEditor";
 import { DEFAULT_SPEC } from "./defaultSpec";
 import { migrateRewardHooks, migrateRotationGroups, normalizeToRegions } from "./specHelpers";
 import MapTab from "./components/MapTab";
@@ -39,6 +40,8 @@ export default function App() {
       return { spec: null, parseError: (e as Error).message };
     }
   }, [specText]);
+  // What the design's code can use, for every code editor.
+  useCodeIntel(spec);
 
   // The spec object is the source of truth; structured edits (the properties
   // panel) re-serialize it back into the editor text so both views stay in sync.

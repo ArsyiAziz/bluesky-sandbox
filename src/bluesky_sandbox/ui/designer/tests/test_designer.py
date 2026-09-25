@@ -68,7 +68,6 @@ from bluesky_sandbox.sim.spawn import (
 )
 from bluesky_sandbox.ui.designer import catalog, codegen, nav
 from bluesky_sandbox.ui.designer import spec as S
-from bluesky_sandbox.ui.designer.api import _spec_completion_context
 from bluesky_sandbox.ui.designer.builder import (
     BuildError,
     build_design_config,
@@ -897,60 +896,7 @@ def test_env_hooks_catalog_and_codegen():
     print("  env hooks: introspected catalog + customized-only codegen OK")
 
 
-def test_completion_context_uses_built_config_and_hook_protocols():
-    spec = _example_design_spec()
-    spec.queryables["wp"] = S.dump(Waypoint(lat=52.0, lon=4.5, alt_ft=3000, color="magenta"))
-    spec.env.hook_setup = "import numpy as np\nSCALE = np.ones(1)"
-    spec.env.task_info_setup = "from math import sqrt as root\nLIMIT = root(4)"
-    ctx = _spec_completion_context(spec)
-    assert ctx["ok"] is True
-    assert ctx["hook_setup"]["imports"]["np"] == "numpy"
-    assert {symbol["name"] for symbol in ctx["hook_setup"]["symbols"]} >= {"np", "SCALE"}
-    assert ctx["task_info_setup"]["imports"]["root"] == "math.sqrt"
-    assert {symbol["name"] for symbol in ctx["task_info_setup"]["symbols"]} >= {"root", "LIMIT"}
-    assert [field["name"] for field in ctx["obs_fields"]] == ["lat_deg", "lon_deg", "alt_ft"]
-    assert [field["name"] for field in ctx["action_fields"]] == ["hdg_deg", "spd_kts"]
-    reward_params = {param["name"]: param["detail"] for param in ctx["hooks"]["reward"]["params"]}
-    assert "numpy.ndarray" in reward_params["obs"]
-    assert reward_params["terminated"] == "bool"
-    assert reward_params["truncated"] == "bool"
-    context_members = {member["name"] for member in ctx["task_info"]["members"]["context"]}
-    assert {"acid", "acidx", "airspace", "query", "queryable"} <= context_members
-    airspace_members = {member["name"] for member in ctx["airspace_result_members"]}
-    assert {"current", "step", "time"} <= airspace_members
-    airspace_current_members = {
-        member["name"]
-        for member in ctx["airspace_result_nested_members"]["current"]
-    }
-    assert "inside" in airspace_current_members
-    info_members = {member["name"]: member for member in ctx["task_info"]["members"]["info"]}
-    assert info_members["acid"]["access"] == "item"
-    rng_members = {member["name"] for member in ctx["task_info"]["members"]["rng"]}
-    assert {"normal", "uniform"} <= rng_members
-    wp_queryable = next(symbol for symbol in ctx["queryables"] if symbol["insert"] == '"wp"')
-    assert wp_queryable["color"] == "magenta"
-    waypoint_members = {member["name"] for member in ctx["query_result_members"]["wp"]}
-    assert {
-        "current",
-        "route",
-        "target",
-        "step",
-        "time",
-        "aircraft_altitude_ceiling_ft",
-        "altitude_error_scale_ft",
-        "speed_error_scale_kts",
-    } <= waypoint_members
-    waypoint_current_members = {
-        member["name"]
-        for member in ctx["query_result_nested_members"]["wp"]["current"]
-    }
-    assert {"distance_nm", "bearing_deg", "satisfied"} <= waypoint_current_members
-    queryable_members = {member["name"] for member in ctx["queryable_members"]["wp"]}
-    assert "target_for" not in queryable_members
-    assert "current" not in queryable_members
-    assert "query" not in queryable_members
-    assert "_current_result" not in queryable_members
-    assert "_assigned_targets" not in queryable_members
+def test_task_info_types_offer_the_auto_cost_scaffold():
     task_info_types = {item["name"] for item in catalog.task_info_types()}
     # Only the auto-cost provider is offered; the others were removed from the
     # library because a task defines its own against the protocols.
@@ -960,6 +906,8 @@ def test_completion_context_uses_built_config_and_hook_protocols():
     assert "def auto_cost_constraint_extrinsic_cost" in autocost_scaffold["setup"]
     assert "def auto_cost_constraint_intrinsic_cost" in autocost_scaffold["setup"]
     assert "AutoCostConstraintTaskInfoProvider(" in autocost_scaffold["setup"]
+
+
 def test_codegen_task_info_provider_object_scaffold():
     spec = _example_design_spec()
     scaffold = {
