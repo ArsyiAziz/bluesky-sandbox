@@ -1613,7 +1613,7 @@ def test_an_unknown_template_is_refused():
 
 def test_an_sb3_package_trains_with_ppo_and_flags_what_sb3_cannot_do():
     plain = _templated("sb3")["train.py"]
-    assert "PPO(" in plain and "pettingzoo_env_to_vec_env_v1" in plain
+    assert "PPO(" in plain and "sb3_vec_env(make_env, n_processes)" in plain
     assert "ActorView" not in plain and "raise NotImplementedError" not in plain
     ast.parse(plain)
 

@@ -634,35 +634,20 @@ agent, the multi-agent env made a vector env by SuperSuit.
 
     pip install stable-baselines3 supersuit
     python -m {pkg}.train
+
+``train(n_processes=4)`` runs four copies of the env at once, one simulator
+per process.
 {notes_block}"""
 
 from __future__ import annotations
 
 import gymnasium as gym
-import supersuit as ss
 {view_imports}from stable_baselines3 import PPO
-from supersuit.vector.sb3_vector_wrapper import SB3VecEnvWrapper
 
-from bluesky_sandbox.integrations import wrap_parallel_env
+from bluesky_sandbox.integrations import sb3_vec_env, wrap_parallel_env
 
 from .env import {class_stem}Env
 {actor_view}
-
-class OneEnvVec(SB3VecEnvWrapper):
-    """SuperSuit's SB3 wrapper around one env, rather than the concatenated
-    envs it expects: the seed SB3 sets is kept for the next reset."""
-
-    _seed = None
-
-    def seed(self, seed=None):
-        self._seed = seed
-        return [seed]
-
-    def reset(self, seed=None, options=None):
-        seed, self._seed = (self._seed if seed is None else seed), None
-        observations, self.reset_infos = self.venv.reset(seed=seed, options=options)
-        return observations
-
 
 def make_env(render_mode=None):
     """The env as SB3 needs it: a fixed pool of agent IDs, intruders padded to
@@ -672,11 +657,11 @@ def make_env(render_mode=None):
     return wrap_parallel_env(env, max_agents=max_agents)
 
 
-def train(total_timesteps: int = 100_000, seed: int = 0) -> PPO:{guard}
-    # BlueSky is one simulator per process: one env, its agents the vector's
-    # entries. (SuperSuit's concat_vec_envs would copy the env, and a live
-    # simulator cannot be copied.)
-    vec = OneEnvVec(ss.pettingzoo_env_to_vec_env_v1(make_env()))
+def train(total_timesteps: int = 100_000, seed: int = 0, n_processes: int = 1) -> PPO:
+    """Train, the episodes run in ``n_processes`` processes at once - BlueSky
+    is one simulator per process - every agent of each an entry of SB3's
+    vector env."""{guard}
+    vec = sb3_vec_env(make_env, n_processes)
     policy = "MultiInputPolicy" if isinstance(vec.observation_space, gym.spaces.Dict) else "MlpPolicy"
     model = PPO(policy, vec, seed=seed, verbose=1)
     model.learn(total_timesteps=total_timesteps)

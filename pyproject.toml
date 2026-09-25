@@ -59,6 +59,10 @@ qtgl = ["bluesky-guidata>=1.0", "PyOpenGL>=3.1", "PyQt6>=6.7", "PyQt6-WebEngine>
 panda3d = ["Panda3D>=1.10"]
 # video recording in the pygame driver
 recording = ["imageio>=2.37", "imageio-ffmpeg>=0.6"]
+# episodes in parallel processes (bluesky_sandbox.integrations.vec_env)
+parallel = ["supersuit>=3.9"]
+# Stable-Baselines3 training (integrations.sb3_vec_env, the designer's SB3 template)
+sb3 = ["bluesky-sandbox[parallel]", "stable-baselines3>=2.3"]
 all = ["bluesky-sandbox[designer,pygame,qtgl,panda3d,recording]"]
 # httpx2 backs starlette.testclient (starlette >=1.3 imports `httpx2 as httpx`);
 # without it the designer API tests fail at import, not at assertion.
