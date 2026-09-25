@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import { api, type SpecDict, type ValidateResult } from "../api";
 import type { Intel } from "../code/intel";
+import { AvailablePanel } from "../code/AvailablePanel";
+import { scopeKey } from "../code/intel";
 import { registerPythonIntel, useIntel } from "../code/pythonEditor";
 import { Picker } from "./panel/Picker";
 
@@ -153,6 +155,15 @@ export default function CodeTab({
   }, []);
 
   const intel = useIntel();
+  // The Monaco editor, for inserting what the "Available here" panel offers.
+  const editorRef = useRef<any>(null);
+  const insertAtCursor = (text: string) => {
+    const editor = editorRef.current;
+    // Generated files are read-only: nothing to insert into.
+    if (!editor || editorReadOnly) return;
+    editor.executeEdits("available", [{ range: editor.getSelection(), text, forceMoveMarkers: true }]);
+    editor.focus();
+  };
 
   const codeFiles = useMemo(() => Object.keys(spec?.code ?? {}), [spec]);
   const hooks: Record<string, string> = spec?.env?.hooks ?? {};
@@ -667,6 +678,7 @@ export default function CodeTab({
           language={editorLanguage}
           value={value}
           beforeMount={registerPythonIntel}
+          onMount={(editor) => (editorRef.current = editor)}
           onChange={(v) => {
             if (selectedHook) setHook(selectedHook, v ?? "");
             else if (selectedHookSetup) setHookSetup(v ?? "");
@@ -691,6 +703,7 @@ export default function CodeTab({
       </div>
 
       <aside className="inspector">
+        <AvailablePanel intel={intel} scope={scopeKey(editorPath)} onInsert={insertAtCursor} />
         <h3>Validation</h3>
         {!validation && <p className="muted">…</p>}
         {validation && !validation.ok && <pre className="error-text">{validation.error}</pre>}

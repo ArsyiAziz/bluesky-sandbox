@@ -2603,3 +2603,56 @@ button:disabled {
   z-index: 80;
   overflow: visible;
 }
+
+/* "Available here": the open block's names, expandable. */
+.avail {
+  margin-bottom: 14px;
+}
+
+.avail-filter {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.avail-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.avail-toggle {
+  width: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+}
+
+.avail-name {
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: #d4d4d4;
+}
+
+.avail-name:hover {
+  text-decoration: underline;
+}
+
+/* The same colors the editor gives these kinds. */
+.avail-parameter { color: #c586c0; }
+.avail-function { color: #dcdcaa; }
+.avail-class, .avail-module { color: #4ec9b0; }
+.avail-property, .avail-field { color: #9cdcfe; }
+
+.avail-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
