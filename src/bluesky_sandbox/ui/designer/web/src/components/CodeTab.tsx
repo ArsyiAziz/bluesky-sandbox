@@ -467,6 +467,31 @@ function taskInfoTypeForEntry(entry: TaskInfoEntry | null, types: TaskInfoType[]
   return undefined;
 }
 
+// Semantic tokens in Monaco's encoding: five integers per token - line and start
+// column, each relative to the previous token, then length, type index and
+// modifier bits. (VS Code has a builder for this; Monaco does not.)
+class SemanticTokens {
+  private data: number[] = [];
+  private line = 0;
+  private column = 0;
+  constructor(private readonly types: string[]) {}
+
+  // Tokens must be pushed in document order.
+  push(line: number, column: number, length: number, type: string) {
+    const index = this.types.indexOf(type);
+    if (index < 0) return;
+    const deltaLine = line - this.line;
+    const deltaColumn = deltaLine === 0 ? column - this.column : column;
+    this.data.push(deltaLine, deltaColumn, length, index, 0);
+    this.line = line;
+    this.column = column;
+  }
+
+  build() {
+    return { data: new Uint32Array(this.data) };
+  }
+}
+
 function registerCompletions(monaco: any) {
   if (completionsRegistered) return;
   completionsRegistered = true;
@@ -476,20 +501,21 @@ function registerCompletions(monaco: any) {
   };
   const semanticEmitter = new monaco.Emitter();
   semanticTokensDidChange = semanticEmitter;
+  // Monaco styles a semantic token through the theme rule named after its type.
+  const semanticColors: Record<string, string> = {
+    namespace: "4EC9B0",
+    class: "4EC9B0",
+    function: "DCDCAA",
+    property: "9CDCFE",
+    parameter: "C586C0",
+    variable: "D4D4D4",
+  };
   monaco.editor.defineTheme("vs-dark", {
     base: "vs-dark",
     inherit: true,
-    rules: [],
+    rules: Object.entries(semanticColors).map(([token, foreground]) => ({ token, foreground })),
     colors: {},
     semanticHighlighting: true,
-    semanticTokenColors: {
-      namespace: "#4EC9B0",
-      class: "#4EC9B0",
-      function: "#DCDCAA",
-      property: "#9CDCFE",
-      parameter: "#C586C0",
-      variable: "#D4D4D4",
-    },
   });
   monaco.languages.registerDocumentSemanticTokensProvider("python", {
     getLegend: () => tokenLegend,
@@ -512,7 +538,7 @@ function registerCompletions(monaco: any) {
             .catch(() => undefined),
         ),
       );
-      const builder = new monaco.languages.SemanticTokensBuilder(tokenLegend);
+      const tokens = new SemanticTokens(tokenLegend.tokenTypes);
       const catalog = expressionCatalog(completionContext);
       const aliases = expressionAliasesForModel(model, catalog);
       const identifier = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
@@ -530,10 +556,10 @@ function registerCompletions(monaco: any) {
             aliases,
           ) ?? symbols.get(match[0]);
           if (!tokenType) continue;
-          builder.push(lineNumber - 1, startColumn, match[0].length, tokenType, []);
+          tokens.push(lineNumber - 1, startColumn, match[0].length, tokenType);
         }
       }
-      return builder.build();
+      return tokens.build();
     },
     releaseDocumentSemanticTokens: () => undefined,
   });
