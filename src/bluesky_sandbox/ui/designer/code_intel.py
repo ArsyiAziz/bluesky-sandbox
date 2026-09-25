@@ -281,7 +281,13 @@ class TypeTable:
         key = f"design:{marker.source}{suffix}"
         if key in self.types:
             return key
-        self.types[key] = {"name": marker.source, "doc": "", "attrs": []}
+        # Closed: the design has these keys and no others.
+        self.types[key] = {
+            "name": marker.source,
+            "doc": "",
+            "attrs": [],
+            "closed": True,
+        }
         build = getattr(self, f"_design_{marker.source}")
         self.types[key]["items"] = build(marker.batched, depth)
         return key
@@ -307,7 +313,13 @@ class TypeTable:
                         type=self.ref(np.ndarray, depth),
                     ),
                 )
-            self.types[key] = {"name": part, "doc": "", "attrs": [], "items": leaves}
+            self.types[key] = {
+                "name": part,
+                "doc": "",
+                "attrs": [],
+                "items": leaves,
+                "closed": True,
+            }
             items.append(
                 _member(part, "field", detail=f"{len(fields)} fields", type=key)
             )

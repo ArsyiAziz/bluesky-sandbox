@@ -4,11 +4,14 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { api, type SpecDict } from "../api";
 import {
+  blockKey,
   chainBefore,
   chainText,
   type Intel,
   type Member,
   memberMarkdown,
+  nearest,
+  type Problem,
   type Resolved,
   Resolver,
   scopeKey,
@@ -17,8 +20,10 @@ import {
 } from "./intel";
 
 let latest: Intel | null = null;
+let problems: Record<string, Problem[]> = {};
 let registered = false;
 let intelChanged: any = null;
+let monacoApi: any = null;
 const moduleMembers = new Map<string, Promise<Member[]>>();
 
 const listeners = new Set<() => void>();
@@ -51,6 +56,15 @@ export function useCodeIntel(spec: SpecDict | null) {
           latest = intel?.ok ? (intel as Intel) : latest;
           intelChanged?.fire?.();
           listeners.forEach((listener) => listener());
+          markAll();
+        })
+        .catch(() => undefined);
+      api
+        .diagnostics(spec)
+        .then((result) => {
+          if (canceled || !result?.ok) return;
+          problems = result.problems;
+          markAll();
         })
         .catch(() => undefined);
     }, 250);
@@ -137,10 +151,89 @@ class SemanticTokens {
   }
 }
 
+// --------------------------------------------------------------- markers --
+// A design key that is not one: `raw_obs["ownship"]["alt_fx"]`. Only keys the
+// design fixes are checked - their sets are closed; `info["task"]` is yours.
+function keyProblems(resolver: Resolver, lines: string[]): any[] {
+  const markers: any[] = [];
+  lines.forEach((line, n) => {
+    const tokens = tokenize(line);
+    tokens.forEach((token, i) => {
+      if (token.kind !== "string" || !token.closed) return;
+      const open = tokens[i - 1]?.text;
+      if (open !== "[" && open !== "(") return;
+      const target = resolveBefore(resolver, tokens, i - 1);
+      let keys: Member[] | undefined;
+      if (open === "[") {
+        const type = resolver.type(target?.type);
+        keys = type?.closed ? type.items : undefined;
+      } else if (target?.member?.params?.[0]?.keys) {
+        keys = resolver.argumentKeys(target, 0);
+      }
+      if (!keys || keys.some((m) => m.name === token.value)) return;
+      const names = keys.map((m) => m.name);
+      const hint = nearest(token.value, names);
+      const chain = chainBefore(tokens, i - 1);
+      markers.push({
+        startLineNumber: n + 1,
+        endLineNumber: n + 1,
+        startColumn: token.start + 1,
+        endColumn: token.end + 1,
+        message:
+          `${JSON.stringify(token.value)} is not a key of ${chain ? chainText(chain) : "this"}` +
+          (hint.length ? ` - did you mean ${hint.map((h) => JSON.stringify(h)).join(" or ")}?` : ""),
+        severity: monacoApi.MarkerSeverity.Error,
+      });
+    });
+  });
+  return markers;
+}
+
+function mark(model: any) {
+  if (!monacoApi || model.isDisposed?.()) return;
+  const path = String(model.uri?.path ?? "");
+  const block = blockKey(path);
+  const found = (block && problems[block]) || [];
+  monacoApi.editor.setModelMarkers(
+    model,
+    "design",
+    found.map((p) => ({
+      startLineNumber: p.line,
+      endLineNumber: p.line,
+      startColumn: p.column,
+      endColumn: p.end_column ?? model.getLineMaxColumn(Math.min(p.line, model.getLineCount())),
+      message: p.message,
+      severity: p.severity === "error" ? monacoApi.MarkerSeverity.Error : monacoApi.MarkerSeverity.Warning,
+    })),
+  );
+  const resolver = resolverFor(model);
+  monacoApi.editor.setModelMarkers(
+    model,
+    "design-keys",
+    resolver ? keyProblems(resolver, String(model.getValue()).split("\n")) : [],
+  );
+}
+
+function markAll() {
+  monacoApi?.editor.getModels().forEach(mark);
+}
+
 export function registerPythonIntel(monaco: any) {
   if (registered) return;
   registered = true;
+  monacoApi = monaco;
   intelChanged = new monaco.Emitter();
+  // Keys are checked as they are typed; the backend's checks follow the spec.
+  const watch = (model: any) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    mark(model);
+    model.onDidChangeContent(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => mark(model), 300);
+    });
+  };
+  monaco.editor.getModels().forEach(watch);
+  monaco.editor.onDidCreateModel(watch);
   const K = monaco.languages.CompletionItemKind;
   const completionKind = (kind: string) =>
     ({ module: K.Module, class: K.Class, function: K.Function, property: K.Property, field: K.Field, parameter: K.Variable, variable: K.Variable })[kind] ?? K.Value;

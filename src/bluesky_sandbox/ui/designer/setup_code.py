@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import keyword
 import textwrap
+from typing import NamedTuple
 
 from .spec import TaskInfoSpec
 
@@ -67,18 +68,24 @@ def provider_names(
     return [direct_provider(p, defined) or p.name.strip() for p in task_info]
 
 
+class Part(NamedTuple):
+    """One block of the setup module: ``where`` names it in messages -
+    ``"task info 'waypoint_outcome'"`` - and ``block`` in the editor -
+    ``"task_info:waypoint_outcome"``."""
+
+    where: str
+    block: str
+    code: str
+
+
 def setup_parts(
     task_info_setup: str, task_info: list[TaskInfoSpec], hook_setup: str
-) -> list[tuple[str, str]]:
-    """The setup module's code in order, as ``(where, code)``: the task-info
-    setup, each inline task-info entry as a function, then the hook setup.
-
-    ``where`` names what the design calls that code - ``"task-info setup"``,
-    ``"task info 'waypoint_outcome'"``, ``"hook setup"`` - so an error in the
-    module can say which block it came from.
-    """
+) -> list[Part]:
+    """The setup module's code in order: the task-info setup, each inline
+    task-info entry as a function, then the hook setup."""
     defined = _defined(task_info_setup, hook_setup)
-    parts = [("task-info setup", dedupe_imports(task_info_setup, PRELUDE).rstrip())]
+    setup = dedupe_imports(task_info_setup, PRELUDE).rstrip()
+    parts = [Part("task-info setup", "task_info_setup", setup)]
     seen: set[str] = set()
     for provider in task_info:
         name = provider.name.strip()
@@ -93,10 +100,10 @@ def setup_parts(
             continue
         body = textwrap.indent(provider.body.rstrip() or "pass", "    ")
         code = f"def {name}{PROVIDER_SIGNATURE} -> None:\n{body}\n"
-        parts.append((f"task info {name!r}", code))
+        parts.append(Part(f"task info {name!r}", f"task_info:{name}", code))
     hook_setup = dedupe_imports(hook_setup, PRELUDE + task_info_setup)
-    parts.append(("hook setup", hook_setup.rstrip()))
-    return [(where, code) for where, code in parts if code.strip()]
+    parts.append(Part("hook setup", "hook_setup", hook_setup.rstrip()))
+    return [part for part in parts if part.code.strip()]
 
 
 def setup_source(
@@ -108,38 +115,42 @@ def setup_source(
 
 def located_setup_source(
     task_info_setup: str, task_info: list[TaskInfoSpec], hook_setup: str
-) -> tuple[str, list[tuple[str, int]]]:
+) -> tuple[str, list[tuple[Part, int]]]:
     """:func:`setup_source`, and the line (1-based) each part starts on."""
     parts = setup_parts(task_info_setup, task_info, hook_setup)
-    setup = [code for where, code in parts if where == "task-info setup"]
-    entries = [(where, code) for where, code in parts if where.startswith("task info ")]
-    hooks = [code for where, code in parts if where == "hook setup"]
-    functions = (
-        ("\n\n".join(code for _where, code in entries) + "\n") if entries else ""
+    setup = [p for p in parts if p.block == "task_info_setup"]
+    entries = [p for p in parts if p.block.startswith("task_info:")]
+    hooks = [p for p in parts if p.block == "hook_setup"]
+    functions = ("\n\n".join(p.code for p in entries) + "\n") if entries else ""
+    source = "\n".join(
+        code
+        for code in (*(p.code for p in setup), functions, *(p.code for p in hooks))
+        if code.strip()
     )
-    source = "\n".join(part for part in (*setup, functions, *hooks) if part.strip())
 
-    starts: list[tuple[str, int]] = []
+    starts: list[tuple[Part, int]] = []
     line = 1
-    if setup:
-        starts.append(("task-info setup", line))
-        line += setup[0].count("\n") + 1
-    for where, code in entries:
-        starts.append((where, line))
-        line += code.count("\n") + 2  # two blank lines follow each entry
-    if hooks:
-        starts.append(("hook setup", line))
+    for part in setup:
+        starts.append((part, line))
+        line += part.code.count("\n") + 1
+    for part in entries:
+        starts.append((part, line))
+        line += part.code.count("\n") + 2  # two blank lines follow each entry
+    for part in hooks:
+        starts.append((part, line))
     return source, starts
 
 
-def locate(starts: list[tuple[str, int]], lineno: int) -> tuple[str, int]:
-    """Which part a line of the setup code is in, and its line within that part."""
-    where, first = starts[0]
-    for part, start in starts:
+def locate(starts: list[tuple[Part, int]], lineno: int) -> tuple[Part, int]:
+    """Which part a line of the setup code is in, and its line in that part's
+    own text - for an entry, counted from its body, below the def line."""
+    part, first = starts[0]
+    for candidate, start in starts:
         if start > lineno:
             break
-        where, first = part, start
-    return where, lineno - first + 1
+        part, first = candidate, start
+    line = lineno - first + 1
+    return part, line - 1 if part.block.startswith("task_info:") else line
 
 
 def dedupe_imports(setup: str, existing_source: str = "") -> str:

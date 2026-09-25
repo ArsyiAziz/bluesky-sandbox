@@ -31,7 +31,11 @@ export type Member = {
   color?: string;
 };
 
-export type TypeInfo = { name: string; doc?: string; attrs: Member[]; items?: Member[] };
+// `closed`: the items are all there are - a design's keys.
+export type TypeInfo = { name: string; doc?: string; attrs: Member[]; items?: Member[]; closed?: boolean };
+
+// A problem the backend found in a block, 1-based in the block's own text.
+export type Problem = { line: number; column: number; end_column?: number; message: string; severity: string };
 
 export type Scope = { params: Member[]; names: string };
 
@@ -270,6 +274,41 @@ export function scopeKey(path: string): string | null {
   const field = path.match(/custom_field_([^:/]+):/);
   if (field) return `code:${field[1]}.py`;
   return file.endsWith(".py") ? `code:${file}` : null;
+}
+
+// The block an editor model shows - as the backend's diagnostics key it. The
+// scope's key, except that each task-info entry is its own block.
+export function blockKey(path: string): string | null {
+  const file = path.split("/").pop() ?? path;
+  const entry = file.match(/^task_info_(.+)\.py$/);
+  if (entry && file !== "task_info_setup.py") return `task_info:${entry[1]}`;
+  // The field modal shows one class of a module: the module's lines do not apply.
+  if (/custom_field_/.test(path)) return null;
+  return scopeKey(path);
+}
+
+// The names nearest to `text`, for a "did you mean" hint.
+export function nearest(text: string, names: string[], limit = 2): string[] {
+  const distance = (a: string, b: string) => {
+    const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i += 1) {
+      let previous = row[0];
+      row[0] = i;
+      for (let j = 1; j <= b.length; j += 1) {
+        const current = row[j];
+        row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1));
+        previous = current;
+      }
+    }
+    return row[b.length];
+  };
+  const budget = Math.max(2, Math.floor(text.length / 3));
+  return names
+    .map((name) => [name, distance(text, name)] as const)
+    .filter(([, d]) => d <= budget)
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, limit)
+    .map(([name]) => name);
 }
 
 export function memberMarkdown(member: Member, title: string): { value: string; supportHtml: boolean } {

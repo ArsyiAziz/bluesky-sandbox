@@ -53,7 +53,19 @@ from .spec import SCENARIO_HOOKS, DesignSpec, EnvSpec, FieldRef
 
 
 class BuildError(ValueError):
-    """Raised when a spec cannot be compiled into runtime objects."""
+    """Raised when a spec cannot be compiled into runtime objects.
+
+    ``block`` and ``line`` place an error in a code block, when it has one: the
+    editor's block key (``"hook_setup"``, ``"task_info:waypoint_outcome"``,
+    ``"code:custom_fields.py"``) and the line within that block's own text.
+    """
+
+    def __init__(
+        self, message: str, *, block: str | None = None, line: int | None = None
+    ) -> None:
+        super().__init__(message)
+        self.block = block
+        self.line = line
 
 
 # Namespace under which a design's editable code modules are registered, so a
@@ -94,7 +106,10 @@ def install_code_modules(code: dict[str, str]) -> None:
         except Exception as e:  # surface user syntax/runtime errors clearly
             sys.modules.pop(stem, None)
             sys.modules.pop(f"{CODE_NS}.{stem}", None)
-            raise BuildError(f"error in {filename}: {e}") from e
+            line = _error_line(e, f"<designer:{filename}>")
+            raise BuildError(
+                f"error in {filename}: {e}", block=f"code:{filename}", line=line
+            ) from e
 
 
 # --------------------------------------------------------------------------- #
@@ -152,7 +167,7 @@ def run_setup_module(env: EnvSpec, config: EnvConfig) -> ModuleType:
         )
         exec(code, module.__dict__)
     except Exception as e:
-        raise BuildError(_located_setup_error(e, starts)) from e
+        raise _located_setup_error(e, starts) from e
     finally:
         sys.modules.pop(module.__name__, None)
     return module
@@ -161,21 +176,29 @@ def run_setup_module(env: EnvSpec, config: EnvConfig) -> ModuleType:
 _SETUP_FILENAME = "<designer setup>"
 
 
-def _located_setup_error(error: Exception, starts: list[tuple[str, int]]) -> str:
-    """``error``, prefixed with the block and line of the setup code it came from."""
-    lineno = getattr(error, "lineno", None) if isinstance(error, SyntaxError) else None
-    if lineno is None:
-        frames = [
-            frame for frame in traceback.extract_tb(error.__traceback__)
-            if frame.filename == _SETUP_FILENAME
-        ]
-        lineno = frames[-1].lineno if frames else None
+def _located_setup_error(
+    error: Exception, starts: list[tuple[setup_code.Part, int]]
+) -> BuildError:
+    """``error`` as a BuildError placed on the setup block and line it came from."""
+    lineno = _error_line(error, _SETUP_FILENAME)
     if lineno is None or not starts:
-        return f"error in setup code: {error}"
-    where, line = setup_code.locate(starts, lineno - 1)  # the __future__ line
-    if where.startswith("task info "):
-        line -= 1  # counted from the entry's body, not the def line added above it
-    return f"error in {where}, line {line}: {error}"
+        return BuildError(f"error in setup code: {error}")
+    part, line = setup_code.locate(starts, lineno - 1)  # the __future__ line
+    return BuildError(
+        f"error in {part.where}, line {line}: {error}", block=part.block, line=line
+    )
+
+
+def _error_line(error: Exception, filename: str) -> int | None:
+    """The line of ``filename`` an error was raised on, if it came from there."""
+    if isinstance(error, SyntaxError) and error.filename == filename:
+        return error.lineno
+    frames = [
+        frame
+        for frame in traceback.extract_tb(error.__traceback__)
+        if frame.filename == filename
+    ]
+    return frames[-1].lineno if frames else None
 
 
 def setup_providers(env: EnvSpec, module: ModuleType) -> list[Callable[..., Any]]:

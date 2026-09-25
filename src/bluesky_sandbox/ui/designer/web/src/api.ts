@@ -1,4 +1,4 @@
-import type { Intel } from "./code/intel";
+import type { Intel, Problem } from "./code/intel";
 
 // Typed client for the designer API. Paths are relative so the Vite dev proxy
 // (and the static-served production build) both work without configuration.
@@ -251,6 +251,13 @@ export const api = {
       jsonOrThrow<{ module: string; members: PythonMember[] }>(r),
     ),
 
+  // Problems in the design's code, by block.
+  diagnostics: (spec: SpecDict) =>
+    fetch("/api/spec/diagnostics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec }),
+    }).then((r) => jsonOrThrow<{ ok: boolean; problems: Record<string, Problem[]> }>(r)),
   // What the design's code can use: types, scopes and design keys.
   codeIntel: (spec: SpecDict) =>
     fetch("/api/spec/code-intel", {
