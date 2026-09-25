@@ -744,6 +744,11 @@ export default function CodeTab({
   const [pkg, setPkg] = useState<string>("");
   const [selected, setSelected] = useState<string>("design.py");
   const [genError, setGenError] = useState<string | null>(null);
+  // The per-agent hook a batched one just replaced, and its code, until it is
+  // restored or dismissed.
+  const [replacedHook, setReplacedHook] = useState<
+    { batch: string; perAgent: string; body: string } | null
+  >(null);
   const [hookCatalog, setHookCatalog] = useState<any[]>([]);
   // Scenario hooks come from the backend (catalog.scenario_hooks, derived from
   // spec.SCENARIO_HOOKS) rather than a list duplicated here, so adding a hook
@@ -854,6 +859,7 @@ export default function CodeTab({
 
   const removeHook = (name: string) => {
     if (!spec || DEFAULT_HOOKS.includes(name)) return;
+    if (replacedHook?.batch === name) setReplacedHook(null);
     const next = { ...hooks };
     delete next[name];
     onSpecChange({ ...spec, env: { ...spec.env, hooks: next } });
@@ -865,17 +871,34 @@ export default function CodeTab({
     // A batched hook replaces its per-agent one: a design defines one of them.
     const perAgent = name.endsWith("_batch") ? name.slice(0, -"_batch".length) : "";
     if (DEFAULT_HOOKS.includes(perAgent)) {
-      const code = hookCode(hooks[perAgent] ?? "");
-      if (code && code !== DEFAULT_BODIES[perAgent]) {
+      const body = hooks[perAgent] ?? "";
+      const code = hookCode(body);
+      const custom = Boolean(code) && code !== DEFAULT_BODIES[perAgent];
+      if (custom) {
         const ok = window.confirm(
-          `${name} replaces ${perAgent}, whose code will be removed (undo restores it). Continue?`,
+          `${name} replaces ${perAgent}: a design defines one of the two, so ` +
+            `${perAgent} and its code will be removed. You can restore it from ` +
+            `the notice above the editor until you dismiss it. Continue?`,
         );
         if (!ok) return;
       }
       delete next[perAgent];
+      setReplacedHook(custom ? { batch: name, perAgent, body } : null);
     }
     onSpecChange({ ...spec, env: { ...spec.env, hooks: next } });
     setSelected(`hook:${name}`);
+  };
+
+  // Put the replaced per-agent hook back, with its code. The two cannot both
+  // be defined, so this removes the batched hook - and whatever it holds.
+  const restoreReplacedHook = () => {
+    if (!spec || !replacedHook) return;
+    const { batch, perAgent, body } = replacedHook;
+    const next = { ...hooks, [perAgent]: body };
+    delete next[batch];
+    onSpecChange({ ...spec, env: { ...spec.env, hooks: next } });
+    setReplacedHook(null);
+    setSelected(`hook:${perAgent}`);
   };
 
   const setHookSetup = (body: string) => {
@@ -1211,6 +1234,24 @@ export default function CodeTab({
       </aside>
 
       <div className="editor-pane">
+        {replacedHook && replacedHook.batch in hooks && (
+          <div className="hook-notice small">
+            <span>
+              <code>{replacedHook.perAgent}</code> was replaced by{" "}
+              <code>{replacedHook.batch}</code>, and its code removed. Restoring it
+              removes <code>{replacedHook.batch}</code>.
+            </span>
+            <button
+              onClick={restoreReplacedHook}
+              title={`Bring back ${replacedHook.perAgent} with its code; ${replacedHook.batch} is removed.`}
+            >
+              Restore {replacedHook.perAgent}
+            </button>
+            <button className="link" onClick={() => setReplacedHook(null)}>
+              dismiss
+            </button>
+          </div>
+        )}
         {selectedHook && (
           <div className="hook-sig small">
             <code className="hook-sig-def">
