@@ -1613,7 +1613,7 @@ def test_an_unknown_template_is_refused():
 
 def test_an_sb3_package_trains_with_ppo_and_flags_what_sb3_cannot_do():
     plain = _templated("sb3")["train.py"]
-    assert "PPO(" in plain and "sb3_vec_env(make_env, n_processes)" in plain
+    assert "PPO(" in plain and "sb3_vec_env(make_env, n_processes, watch)" in plain
     assert "ActorView" not in plain and "raise NotImplementedError" not in plain
     ast.parse(plain)
 
@@ -1631,3 +1631,42 @@ def test_an_sb3_package_trains_with_ppo_and_flags_what_sb3_cannot_do():
     assert "raise NotImplementedError(" in guard and "SB3 cannot train this design" in guard
     # The critic-only fields are dropped rather than shown to the actor.
     assert "env = ActorView(env)" in train
+
+
+def _run_as(template: str, processes: int, watch: bool = False) -> str:
+    spec = _example_design_spec()
+    spec.metadata.update(template=template, processes=processes, watch=watch)
+    spec.env.critic_obs_fields = [S.FieldRef("CasKts")]
+    files = codegen.generate_task(spec, "Par")
+    return next(t for p, t in files.items() if p.endswith("train.py"))
+
+
+def test_an_rl_package_in_processes_steps_a_vector_env():
+    one = _run_as("rl", 1)
+    assert "vec_env(" not in one and "for agent, ob in obs.items()" in one
+    many = _run_as("rl", 3, watch=True)
+    ast.parse(many)
+    assert "n_processes: int = 3, watch: bool = True" in many
+    assert "vec = vec_env(make_env, n_processes, watch)" in many
+    assert "critic_observation_space(vec.observation_space)" in many
+    # The workers are closed whatever happens once they run.
+    body = many.split("vec = vec_env(", 1)[1]
+    assert body.index("try:") < body.index("vec.reset(") < body.index("finally:\n        vec.close()")
+
+
+def test_a_watched_single_process_draws_every_step():
+    one = _run_as("rl", 1, watch=True)
+    assert 'Env(render_mode="pygame")' in one and "env.render()" in one
+
+
+def test_an_sb3_package_runs_in_the_processes_asked_for():
+    sb3 = _run_as("sb3", 4)
+    assert "n_processes: int = 4" in sb3 and "sb3_vec_env(make_env, n_processes, watch)" in sb3
+    assert "finally:\n        vec.close()" in sb3
+
+
+def test_processes_below_one_are_refused():
+    spec = _example_design_spec()
+    spec.metadata.update(template="rl", processes=0)
+    with pytest.raises(ValueError, match="processes must be at least 1"):
+        codegen.generate_task(spec, "Par")

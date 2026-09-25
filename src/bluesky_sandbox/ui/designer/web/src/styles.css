@@ -3623,3 +3623,32 @@ button:disabled {
 .generate-note.info b {
   color: var(--muted);
 }
+
+/* The package to generate, and how its training script runs. */
+.generate-options {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.generate-options .seg {
+  flex-wrap: nowrap;
+}
+.modal-head button {
+  white-space: nowrap;
+}
+.generate-run {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.generate-run label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.generate-run input[type="number"] {
+  width: 56px;
+}

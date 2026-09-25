@@ -6,6 +6,11 @@ worker from ``make_env`` - never copied from this one - and every agent of
 every copy is one entry of the vector. Worker ``i`` is reset with ``seed + i``,
 so the copies play different episodes.
 
+With ``watch``, one copy - worker 0, or the only one - is built with
+``make_env(render_mode="pygame")`` and drawn after every reset and step, the
+others headless: a window per copy would crowd the screen, and the vector
+steps in lockstep, so every drawn copy would slow them all.
+
 Needs SuperSuit (and Stable-Baselines3 for :func:`sb3_vec_env`), which the
 library does not depend on otherwise.
 """
@@ -18,13 +23,30 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any
 
+from pettingzoo.utils.wrappers import BaseParallelWrapper
+
 __all__ = ["sb3_vec_env", "vec_env"]
 
 
-def _markov(make_env: Callable[[], Any]) -> Any:
+class _Watched(BaseParallelWrapper):
+    """Draws the env after every reset and step."""
+
+    def reset(self, seed=None, options=None):
+        out = self.env.reset(seed=seed, options=options)
+        self.env.render()
+        return out
+
+    def step(self, actions):
+        out = self.env.step(actions)
+        self.env.render()
+        return out
+
+
+def _markov(make_env: Callable[..., Any], watch: bool = False) -> Any:
     from supersuit.vector.markov_vector_wrapper import MarkovVectorEnv  # noqa: PLC0415 - optional
 
-    return MarkovVectorEnv(make_env())
+    env = _Watched(make_env(render_mode="pygame")) if watch else make_env()
+    return MarkovVectorEnv(env)
 
 
 def _probe(make_env: Callable[[], Any]) -> tuple[Any, Any, int, dict]:
@@ -37,7 +59,7 @@ def _probe(make_env: Callable[[], Any]) -> tuple[Any, Any, int, dict]:
         env.close()
 
 
-def vec_env(make_env: Callable[[], Any], n_processes: int = 1) -> Any:
+def vec_env(make_env: Callable[..., Any], n_processes: int = 1, watch: bool = False) -> Any:
     """``n_processes`` copies of the env from ``make_env`` as one gymnasium
     vector env, one entry per agent of each copy.
 
@@ -45,23 +67,22 @@ def vec_env(make_env: Callable[[], Any], n_processes: int = 1) -> Any:
     env with a fixed agent pool and fixed-shape observations, such as
     :func:`~bluesky_sandbox.integrations.wrap_parallel_env` makes. It must be
     importable or picklable: each worker calls it to build its own copy. With
-    one process the copy is built here, with no worker.
+    one process the copy is built here, with no worker. With ``watch`` it must
+    take ``render_mode``: one copy is built with a pygame window and drawn.
     """
     if n_processes < 1:
         raise ValueError(f"n_processes must be at least 1, got {n_processes}.")
     if n_processes == 1:
-        return _markov(make_env)
+        return _markov(make_env, watch)
     from supersuit.vector.multiproc_vec import ProcConcatVec  # noqa: PLC0415 - optional
 
     with ProcessPoolExecutor(1, mp_context=mp.get_context("spawn")) as pool:
         obs_space, act_space, per_copy, metadata = pool.submit(_probe, make_env).result()
-    build = functools.partial(_markov, make_env)
-    return ProcConcatVec(
-        [build] * n_processes, obs_space, act_space, per_copy * n_processes, metadata
-    )
+    builds = [functools.partial(_markov, make_env, watch and i == 0) for i in range(n_processes)]
+    return ProcConcatVec(builds, obs_space, act_space, per_copy * n_processes, metadata)
 
 
-def sb3_vec_env(make_env: Callable[[], Any], n_processes: int = 1) -> Any:
+def sb3_vec_env(make_env: Callable[..., Any], n_processes: int = 1, watch: bool = False) -> Any:
     """:func:`vec_env` as a Stable-Baselines3 ``VecEnv``."""
     from supersuit.vector.sb3_vector_wrapper import SB3VecEnvWrapper  # noqa: PLC0415 - optional
 
@@ -79,4 +100,4 @@ def sb3_vec_env(make_env: Callable[[], Any], n_processes: int = 1) -> Any:
             observations, self.reset_infos = self.venv.reset(seed=seed, options=options)
             return observations
 
-    return _SeededOnReset(vec_env(make_env, n_processes))
+    return _SeededOnReset(vec_env(make_env, n_processes, watch))

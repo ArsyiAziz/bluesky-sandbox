@@ -147,6 +147,19 @@ def critic_observation_space(space: Any) -> Any:
         )
 
     extra_intr = spaces.pop("critic_intruders", None)
+    if isinstance(extra_intr, Box):
+        # Padded to fixed rows (as a vector env takes it): each row widened,
+        # the row count kept - as critic_obs joins them, on the last axis.
+        base = spaces.get("intruders")
+        if base is None:
+            spaces["intruders"] = extra_intr
+        else:
+            spaces["intruders"] = Box(
+                low=np.concatenate([base.low, extra_intr.low], axis=-1),
+                high=np.concatenate([base.high, extra_intr.high], axis=-1),
+                dtype=np.float32,
+            )
+        extra_intr = None
     if extra_intr is not None:
         extra_feat = extra_intr.feature_space
         base = spaces.get("intruders")

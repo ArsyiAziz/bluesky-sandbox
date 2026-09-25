@@ -32,11 +32,15 @@ Needs the `parallel` extra (`sb3` for Stable-Baselines3).
 from bluesky_sandbox.integrations import sb3_vec_env, wrap_parallel_env
 from stable_baselines3 import PPO
 
-def make_env():                     # module-level, so each worker can import it
-    return wrap_parallel_env(MyTaskEnv(), max_agents=20)
+def make_env(render_mode=None):     # module-level, so each worker can import it
+    return wrap_parallel_env(MyTaskEnv(render_mode=render_mode), max_agents=20)
 
 model = PPO("MultiInputPolicy", sb3_vec_env(make_env, n_processes=4))
 ```
+
+With `watch=True`, one copy is built with `make_env(render_mode="pygame")` and
+drawn after every step, the others headless: the copies step together, so a
+drawn copy sets the pace for all of them.
 
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.integrations.vector

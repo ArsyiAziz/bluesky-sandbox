@@ -36,10 +36,11 @@ class _Scenario:
         return EpisodeSpec(airspace_bounds=None, spawn=spawn, queryables={}, max_aircraft=3)
 
 
-def make_env():
+def make_env(render_mode=None):
     """Module-level, so a worker process can import it."""
     env = BlueskyEnv(
         scenario=_Scenario(),
+        render_mode=render_mode,
         config=EnvConfig(dt=5.0, obs_fields=[obs.AltFt(), obs.LatDeg()], action_fields=[act.HdgDeltaDeg()]),
     )
     return wrap_parallel_env(env, max_agents=3)
@@ -95,3 +96,35 @@ def test_sb3_takes_the_seed_it_is_given():
     finally:
         second.close()
     np.testing.assert_allclose(a, b)
+
+
+def test_watching_draws_one_copy_the_others_headless(monkeypatch):
+    pytest.importorskip("pygame")
+    # No display needed: SDL draws to a dummy one, in this process and its workers.
+    monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
+    v = vec_env(make_env, n_processes=2, watch=True)
+    try:
+        v.reset(seed=0)
+        _step(v)
+        assert v.num_envs == 6
+    finally:
+        v.close()
+
+
+def test_a_padded_critic_intruder_block_widens_each_row():
+    from gymnasium.spaces import Box, Dict  # noqa: PLC0415
+
+    from bluesky_sandbox import critic_obs, critic_observation_space  # noqa: PLC0415
+
+    space = Dict(
+        {
+            "ownship": Box(-1, 1, (3,)),
+            "intruders": Box(-1, 1, (4, 2)),
+            "critic_intruders": Box(0, 5, (4, 1)),
+        }
+    )
+    widened = critic_observation_space(space)
+    assert set(widened.spaces) == {"ownship", "intruders"}
+    assert widened["intruders"].shape == (4, 3)
+    batch = {k: np.stack([s.sample() for _ in range(6)]) for k, s in space.spaces.items()}
+    assert critic_obs(batch)["intruders"].shape == (6, 4, 3)

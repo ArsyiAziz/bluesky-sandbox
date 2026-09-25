@@ -26,6 +26,7 @@ import dataclasses
 import importlib
 import inspect
 import io
+import os
 import json
 import zipfile
 from functools import lru_cache
@@ -280,7 +281,13 @@ def create_app() -> FastAPI:
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
         notes = _codegen.sb3_notes(spec) if _codegen.template_of(spec) == "sb3" else []
-        return {"package": next(iter(files)).split("/", 1)[0], "files": files, "notes": notes}
+        return {
+            "package": next(iter(files)).split("/", 1)[0],
+            "files": files,
+            "notes": notes,
+            # For choosing how many processes to train in: this machine's cores.
+            "cpus": os.cpu_count() or 1,
+        }
 
     @app.post("/api/spec/run")
     def run_design(body: dict[str, Any] = Body(...)) -> dict[str, Any]:

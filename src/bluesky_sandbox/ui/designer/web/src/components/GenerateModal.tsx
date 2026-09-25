@@ -33,8 +33,13 @@ export default function GenerateModal({
   onClose: () => void;
 }) {
   const template = String(spec.metadata?.template ?? "plain");
-  const chooseTemplate = (id: string) =>
-    onSpecChange({ ...spec, metadata: { ...(spec.metadata ?? {}), template: id } });
+  const setMeta = (patch: Record<string, unknown>) =>
+    onSpecChange({ ...spec, metadata: { ...(spec.metadata ?? {}), ...patch } });
+  const chooseTemplate = (id: string) => setMeta({ template: id });
+  // How the training script runs the env: in how many processes, one copy watched.
+  const processes = Math.max(1, Number(spec.metadata?.processes ?? 1) || 1);
+  const watch = Boolean(spec.metadata?.watch);
+  const trains = template !== "plain";
   const [name, setName] = useState(defaultName);
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [selected, setSelected] = useState<string>("");
@@ -56,11 +61,12 @@ export default function GenerateModal({
       .catch((e) => setError(String(e)));
   };
 
-  // Generate on opening, and again when the template changes.
+  // Generate on opening, and again when the template or how it runs changes.
   useEffect(() => {
-    generate();
+    const handle = setTimeout(generate, 250);
+    return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [template]);
+  }, [template, processes, watch]);
 
   const writeFolder = async (
     root: FileSystemDirectoryHandle,
@@ -120,6 +126,20 @@ export default function GenerateModal({
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <strong>Generate task package</strong>
+          <span className="spacer" />
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+          <button onClick={generate}>Regenerate</button>
+          {canSaveFolder && (
+            <button onClick={saveFolder}>
+              Save folder
+            </button>
+          )}
+          <button onClick={download} disabled={!result}>
+            Download .zip
+          </button>
+          <button onClick={onClose}>Close</button>
+        </header>
+        <div className="generate-options">
           <div className="seg" role="radiogroup" aria-label="template">
             {TEMPLATES.map((t) => (
               <button
@@ -134,19 +154,26 @@ export default function GenerateModal({
               </button>
             ))}
           </div>
-          <span className="spacer" />
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-          <button onClick={generate}>Regenerate</button>
-          {canSaveFolder && (
-            <button onClick={saveFolder}>
-              Save folder
-            </button>
+          {trains && (
+            <div className="generate-run" title="How train.py runs the env. BlueSky is one simulator per process, so each process runs its own copy; the copies step together.">
+              <label>
+                processes
+                <input
+                  type="number"
+                  min={1}
+                  max={256}
+                  value={processes}
+                  onChange={(e) => setMeta({ processes: Math.max(1, Math.round(Number(e.target.value) || 1)) })}
+                />
+              </label>
+              {result?.cpus && <span className="muted small">of {result.cpus} cores</span>}
+              <label title="Draw one copy in a pygame window; the others run headless. The copies step together, so the drawn one sets the pace.">
+                <input type="checkbox" checked={watch} onChange={(e) => setMeta({ watch: e.target.checked })} />
+                watch one copy
+              </label>
+            </div>
           )}
-          <button onClick={download} disabled={!result}>
-            Download .zip
-          </button>
-          <button onClick={onClose}>Close</button>
-        </header>
+        </div>
         {error && <pre className="error-text">{error}</pre>}
         {result?.notes && result.notes.length > 0 && (
           <ul className="generate-notes">

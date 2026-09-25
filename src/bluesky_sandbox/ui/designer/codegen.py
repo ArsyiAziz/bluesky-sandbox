@@ -79,6 +79,7 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
     pkg = _valid_package_name(package_name)
     class_stem = _class_stem(pkg)
     template = template_of(spec)
+    processes, watch = run_options(spec)
     title = str(spec.metadata.get("name", pkg))
     meta = dict(spec.metadata)
 
@@ -147,6 +148,8 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
             class_stem,
             privileged=bool(e.critic_obs_fields or e.critic_intruder_obs_fields),
             notes=sb3_notes(spec),
+            processes=processes,
+            watch=watch,
         )
     if template == "rl":
         files[f"{pkg}/train.py"] = _train_py(
@@ -154,6 +157,8 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
             class_stem,
             privileged=bool(e.critic_obs_fields or e.critic_intruder_obs_fields),
             has_cost=defines_cost(e),
+            processes=processes,
+            watch=watch,
         )
     return files
 
@@ -539,6 +544,17 @@ def template_of(spec: DesignSpec) -> str:
     return template
 
 
+def run_options(spec: DesignSpec) -> tuple[int, bool]:
+    """How a generated training script runs the env: in how many processes
+    (``metadata["processes"]``, 1 when unset) and whether one copy is drawn
+    (``metadata["watch"]``)."""
+    value = spec.metadata.get("processes")
+    processes = 1 if value is None else int(value)
+    if processes < 1:
+        raise ValueError(f"processes must be at least 1, got {processes}")
+    return processes, bool(spec.metadata.get("watch"))
+
+
 def defines_cost(env: Any) -> bool:
     """Whether the design defines a cost hook, per agent or batched."""
     hooks = getattr(env, "hooks", None) or {}
@@ -584,7 +600,14 @@ def sb3_notes(spec: DesignSpec) -> list[dict[str, str]]:
     return notes
 
 
-def _sb3_train_py(pkg: str, class_stem: str, privileged: bool, notes: list[dict[str, str]]) -> str:
+def _sb3_train_py(
+    pkg: str,
+    class_stem: str,
+    privileged: bool,
+    notes: list[dict[str, str]],
+    processes: int = 1,
+    watch: bool = False,
+) -> str:
     """``train.py`` for Stable-Baselines3: every agent shares one PPO policy,
     through SuperSuit's PettingZoo-to-vector-env conversion."""
     listed = "".join(
@@ -657,16 +680,23 @@ def make_env(render_mode=None):
     return wrap_parallel_env(env, max_agents=max_agents)
 
 
-def train(total_timesteps: int = 100_000, seed: int = 0, n_processes: int = 1) -> PPO:
+def train(
+    total_timesteps: int = 100_000, seed: int = 0, n_processes: int = {processes}, watch: bool = {watch}
+) -> PPO:
     """Train, the episodes run in ``n_processes`` processes at once - BlueSky
     is one simulator per process - every agent of each an entry of SB3's
-    vector env."""{guard}
-    vec = sb3_vec_env(make_env, n_processes)
-    policy = "MultiInputPolicy" if isinstance(vec.observation_space, gym.spaces.Dict) else "MlpPolicy"
-    model = PPO(policy, vec, seed=seed, verbose=1)
-    model.learn(total_timesteps=total_timesteps)
-    model.save("ppo_{pkg}")
-    return model
+    vector env. With ``watch``, one copy is drawn in a pygame window."""{guard}
+    vec = sb3_vec_env(make_env, n_processes, watch)
+    # From here on the worker processes are running: close them whatever
+    # happens, or this process cannot exit.
+    try:
+        policy = "MultiInputPolicy" if isinstance(vec.observation_space, gym.spaces.Dict) else "MlpPolicy"
+        model = PPO(policy, vec, seed=seed, verbose=1)
+        model.learn(total_timesteps=total_timesteps)
+        model.save("ppo_{pkg}")
+        return model
+    finally:
+        vec.close()
 
 
 if __name__ == "__main__":
@@ -685,7 +715,14 @@ def _step_unpack(has_cost: bool, indent: str) -> str:
     return line
 
 
-def _train_py(pkg: str, class_stem: str, privileged: bool, has_cost: bool) -> str:
+def _train_py(
+    pkg: str,
+    class_stem: str,
+    privileged: bool,
+    has_cost: bool,
+    processes: int = 1,
+    watch: bool = False,
+) -> str:
     """``train.py``: how a training loop is arranged around this design's MDP.
 
     Deliberately not runnable: the networks, buffer and update step are the
@@ -777,6 +814,11 @@ with the reward, and a cost critic is bootstrapped beside the value.
         if has_cost
         else f"buffer.bootstrap(agent, value({critic_next}))"
     )
+    if processes > 1:
+        return _train_vec_py(pkg, class_stem, privileged, has_cost, processes, watch)
+    render_mode = '"pygame"' if watch else "None"
+    draw = "\n            env.render()" if watch else ""
+    draw_step = "\n        env.render()" if watch else ""
     return f'''"""A training-loop scaffold for this task: what each network sees, and what
 a transition holds - the rest is yours.
 {views_note}{cost_note}
@@ -815,7 +857,7 @@ def update({update_args}):
 
 
 def training_loop(steps: int = 200, seed: int = 0) -> None:
-    env = {class_stem}Env(render_mode=None)
+    env = {class_stem}Env(render_mode={render_mode})
     obs, _infos = env.reset(seed=seed)
 
     # Aircraft arrive on a schedule: wait for the first agent to size the nets.
@@ -828,7 +870,7 @@ def training_loop(steps: int = 200, seed: int = 0) -> None:
 
     for _ in range(steps):
         if env.episode_done:
-            obs, _infos = env.reset()
+            obs, _infos = env.reset(){draw}
             continue
 
         actions, values{cost_values_init} = {{}}, {{}}{cost_values_init_rhs}
@@ -836,7 +878,7 @@ def training_loop(steps: int = 200, seed: int = 0) -> None:
             actions[agent] = policy({actor})
             values[agent] = value({critic}){cost_value_call}
 
-{_step_unpack(has_cost, "        ")}
+{_step_unpack(has_cost, "        ")}{draw_step}
         for agent, action in actions.items():
 {add_call}
 
@@ -848,6 +890,149 @@ def training_loop(steps: int = 200, seed: int = 0) -> None:
         obs = next_obs
 
     update({update_args})
+
+
+if __name__ == "__main__":
+    training_loop()
+'''
+
+
+def _train_vec_py(
+    pkg: str, class_stem: str, privileged: bool, has_cost: bool, processes: int, watch: bool
+) -> str:
+    """``train.py`` for a training loop over copies of the env in parallel
+    processes: the same arrangement as the one-env scaffold, over a vector env
+    whose entries are every agent of every copy, one row each."""
+    # SuperSuit's vector envs give one entry's space as ``observation_space``.
+    single = "vec.observation_space"
+    actor = "actor_obs(obs)" if privileged else "obs"
+    critic = "critic_obs(obs)" if privileged else "obs"
+    actor_space = f"actor_observation_space({single})" if privileged else single
+    critic_space = f"critic_observation_space({single})" if privileged else single
+    last_view = "critic_obs(last)" if privileged else "last"
+    view_imports = (
+        "from bluesky_sandbox import (\n    actor_obs,\n    actor_observation_space,\n"
+        "    critic_obs,\n    critic_observation_space,\n)\n"
+        if privileged
+        else ""
+    )
+    cost_value_def = (
+        '\n\ndef build_cost_value(observation_space):\n'
+        '    """Your cost critic, built from the CRITIC observation space."""\n'
+        '    raise NotImplementedError("build_cost_value: return a cost-value network.")\n'
+        if has_cost
+        else ""
+    )
+    if has_cost:
+        add_args = "live, obs, actions, values, cost_values, rewards, costs, terminations, truncations"
+        add_call = (
+            "buffer.add(\n                live, obs, actions, values, cost_values, rewards, costs, "
+            "terminations, truncations\n            )"
+        )
+        bootstrap_args = "row, value, cost_value"
+        bootstrap_call = f"buffer.bootstrap(row, value({last_view}), cost_value({last_view}))"
+        update_args = "policy, value, cost_value, buffer"
+        cost_lines = (
+            "\n            # This design defines a cost: each entry's is in its info."
+            '\n            costs = np.stack([np.asarray(info.get("cost", 0.0)) for info in infos])'
+        )
+        cost_value_build = f"\n        cost_value = build_cost_value({critic_space})"
+        cost_values_line = f"\n            cost_values = cost_value({critic})"
+    else:
+        add_args = "live, obs, actions, values, rewards, terminations, truncations"
+        add_call = "buffer.add(live, obs, actions, values, rewards, terminations, truncations)"
+        bootstrap_args = "row, value"
+        bootstrap_call = f"buffer.bootstrap(row, value({last_view}))"
+        update_args = "policy, value, buffer"
+        cost_lines = cost_value_build = cost_values_line = ""
+    watch_note = (
+        "One copy - worker 0 - is drawn in a pygame window; the others run headless."
+        if watch
+        else "All copies run headless; ``watch=True`` draws one."
+    )
+    return f'''"""A training-loop scaffold for this task, its episodes run in {processes}
+processes at once - BlueSky is one simulator per process - as one vector env
+whose entries are every agent of every copy, one row each. {watch_note}
+
+What each network sees and what a transition holds are fixed here; the
+networks, buffer and update are yours. A reward must be one number per agent
+here, as the vector env holds it. Run ``python -m {pkg}.train`` once the stubs
+are filled in (``pip install bluesky-sandbox[parallel]``).
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+{view_imports}from bluesky_sandbox.integrations import vec_env, wrap_parallel_env
+
+from .env import {class_stem}Env
+
+
+def make_env(render_mode=None):
+    """One copy, as the vector env takes it: a fixed pool of agent IDs, its
+    intruders padded to a fixed shape. Each worker process builds its own."""
+    env = {class_stem}Env(render_mode=render_mode)
+    max_agents = env.unwrapped.scenario.support().max_aircraft
+    return wrap_parallel_env(env, max_agents=max_agents)
+
+
+def build_policy(observation_space):
+    """Your actor, built from the ACTOR observation space; called on a batch."""
+    raise NotImplementedError("build_policy: return an actor network.")
+
+
+def build_value(observation_space):
+    """Your critic, built from the CRITIC observation space; called on a batch."""
+    raise NotImplementedError("build_value: return a value network.")
+{cost_value_def}
+
+class Buffer:
+    """Your rollout storage: one row per entry, RAW observations. ``live``
+    marks the rows that are an aircraft this step - the rest pad the fixed
+    agent pool and are not transitions."""
+
+    def add(self, {add_args}):
+        raise NotImplementedError("Buffer.add: store one step of every live row.")
+
+    def bootstrap(self, {bootstrap_args}):
+        raise NotImplementedError("Buffer.bootstrap: record the tail estimate of a truncated trajectory.")
+
+
+def update({update_args}):
+    """Your learning step."""
+    raise NotImplementedError("update: fit the networks on the collected rollout.")
+
+
+def training_loop(
+    steps: int = 200, seed: int = 0, n_processes: int = {processes}, watch: bool = {watch}
+) -> None:
+    vec = vec_env(make_env, n_processes, watch)
+    # From here on the worker processes are running: close them whatever
+    # happens, or this process cannot exit.
+    try:
+        obs, _infos = vec.reset(seed=seed)
+        policy = build_policy({actor_space})
+        value = build_value({critic_space}){cost_value_build}
+        buffer = Buffer()
+        for _ in range(steps):
+            actions = policy({actor})
+            values = value({critic}){cost_values_line}
+            next_obs, rewards, terminations, truncations, infos = vec.step(actions){cost_lines}
+            live = np.array([not info.get("_padded", False) for info in infos])
+            {add_call}
+
+            # A truncated row is bootstrapped from its final observation: its
+            # copy has already moved on.
+            for row, info in enumerate(infos):
+                last = info.get("final_observation")
+                if truncations[row] and last is not None:
+                    {bootstrap_call}
+
+            obs = next_obs
+        update({update_args})
+    finally:
+        vec.close()
 
 
 if __name__ == "__main__":

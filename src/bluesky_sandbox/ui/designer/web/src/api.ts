@@ -99,6 +99,8 @@ export interface GenerateResult {
   files: Record<string, string>;
   // What the chosen template cannot do with this design (SB3's limits).
   notes?: { level: "error" | "warning" | "info"; message: string }[];
+  // The server machine's cores, for choosing how many processes to train in.
+  cpus?: number;
 }
 
 
