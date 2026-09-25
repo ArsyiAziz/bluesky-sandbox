@@ -64,14 +64,7 @@ def _switch(enabled: bool) -> str:
 
 @dataclass(frozen=True)
 class HdgDeg(ActionField):
-    """Set target heading in degrees.
-
-    Metadata:
-        name: hdg_deg
-        unit: deg
-        control_axis: heading
-        mode: absolute
-    """
+    """Set target heading in degrees."""
 
     meta = ActionMeta(
         "hdg_deg",
@@ -267,13 +260,6 @@ class _FromRouteWaypoint:
 class SpdKts(_InKnots, _SpeedAxis, _AbsoluteTarget):
     """Set target calibrated airspeed in knots.
 
-    Metadata:
-        name: spd_kts
-        unit: kts
-        control_axis: speed
-        mode: absolute
-        dynamic_bounds: True
-
     ``low=None`` and ``high=None`` mean action bounds are read from BlueSky's
     current aircraft performance envelope at runtime.
     """
@@ -298,13 +284,6 @@ class SpdKts(_InKnots, _SpeedAxis, _AbsoluteTarget):
 @dataclass(frozen=True)
 class SpdMs(_InMetersPerSecond, _SpeedAxis, _AbsoluteTarget):
     """Set target calibrated airspeed in m/s.
-
-    Metadata:
-        name: spd_ms
-        unit: m/s
-        control_axis: speed
-        mode: absolute
-        dynamic_bounds: True
 
     ``low=None`` and ``high=None`` mean action bounds are read from BlueSky's
     current aircraft performance envelope at runtime.
@@ -331,13 +310,6 @@ class SpdMs(_InMetersPerSecond, _SpeedAxis, _AbsoluteTarget):
 class AltFt(_InFeet, _AltitudeAxis, _AbsoluteTarget):
     """Set target altitude in feet.
 
-    Metadata:
-        name: alt_ft
-        unit: ft
-        control_axis: altitude
-        mode: absolute
-        dynamic_bounds: True
-
     ``low=None`` and ``high=None`` mean action bounds are read from BlueSky's
     current aircraft performance envelope at runtime.
     """
@@ -363,13 +335,6 @@ class AltFt(_InFeet, _AltitudeAxis, _AbsoluteTarget):
 class AltM(_InMeters, _AltitudeAxis, _AbsoluteTarget):
     """Set target altitude in meters.
 
-    Metadata:
-        name: alt_m
-        unit: m
-        control_axis: altitude
-        mode: absolute
-        dynamic_bounds: True
-
     ``low=None`` and ``high=None`` mean action bounds are read from BlueSky's
     current aircraft performance envelope at runtime.
     """
@@ -393,14 +358,7 @@ class AltM(_InMeters, _AltitudeAxis, _AbsoluteTarget):
 
 @dataclass(frozen=True)
 class HdgDeltaDeg(ActionField):
-    """Adjust heading by a delta in degrees.
-
-    Metadata:
-        name: hdg_delta_deg
-        unit: deg
-        control_axis: heading
-        mode: delta
-    """
+    """Adjust heading by a delta in degrees."""
 
     meta = ActionMeta(
         "hdg_delta_deg",
@@ -422,15 +380,7 @@ class HdgDeltaDeg(ActionField):
 
 @dataclass(frozen=True)
 class ApHdgDeltaDeg(ActionField):
-    """Set autopilot selected heading relative to current track.
-
-    Metadata:
-        name: ap_hdg_delta_deg
-        unit: deg
-        control_axis: heading
-        mode: delta
-        dynamic_bounds: True
-    """
+    """Set autopilot selected heading relative to current track."""
 
     meta = ActionMeta(
         "ap_hdg_delta_deg",
@@ -460,11 +410,9 @@ class ApHdgDeltaDeg(ActionField):
 class AltDeltaFt(_InFeet, _AltitudeAxis, _DeltaTarget):
     """Adjust target altitude by a delta in feet.
 
-    Metadata:
-        name: alt_delta_ft
-        unit: ft
-        control_axis: altitude
-        mode: delta
+    ``low=None`` and ``high=None`` resolve the delta bounds at runtime as a
+    symmetric span around the current altitude, reaching both 0 and the aircraft's
+    altitude ceiling. Pass ``low`` and ``high`` for a fixed range instead.
     """
 
     meta = ActionMeta(
@@ -472,21 +420,22 @@ class AltDeltaFt(_InFeet, _AltitudeAxis, _DeltaTarget):
         Unit.FT,
         control_axis=ControlAxis.ALTITUDE,
         mode=ActionMode.DELTA,
+        dynamic_bounds=True,
     )
-    low: Annotated[float, "altitude delta feet"] = -1000.0
-    high: Annotated[float, "altitude delta feet"] = 1000.0
+    low: Annotated[
+        float | None, "altitude delta feet; None = runtime altitude envelope"
+    ] = None
+    high: Annotated[
+        float | None, "altitude delta feet; None = runtime altitude envelope"
+    ] = None
 
 
 @dataclass(frozen=True)
-class ApAltDeltaFt(_InFeet, _AltitudeAxis, _DeltaTarget):
+class ApAltDeltaFt(AltDeltaFt):
     """Set autopilot selected altitude relative to current altitude.
 
-    Metadata:
-        name: ap_alt_delta_ft
-        unit: ft
-        control_axis: altitude
-        mode: delta
-        dynamic_bounds: True
+    The same action as :class:`AltDeltaFt` - BlueSky's ``ALT`` sets the
+    autopilot selection either way - under the name existing configs use.
     """
 
     meta = ActionMeta(
@@ -496,25 +445,15 @@ class ApAltDeltaFt(_InFeet, _AltitudeAxis, _DeltaTarget):
         mode=ActionMode.DELTA,
         dynamic_bounds=True,
     )
-    low: Annotated[
-        float | None,
-        "autopilot altitude offset feet; None = runtime altitude envelope",
-    ] = None
-    high: Annotated[
-        float | None,
-        "autopilot altitude offset feet; None = runtime altitude envelope",
-    ] = None
 
 
 @dataclass(frozen=True)
 class AltDeltaM(_InMeters, _AltitudeAxis, _DeltaTarget):
     """Adjust target altitude by a delta in meters.
 
-    Metadata:
-        name: alt_delta_m
-        unit: m
-        control_axis: altitude
-        mode: delta
+    ``low=None`` and ``high=None`` resolve the delta bounds at runtime as a
+    symmetric span around the current altitude, reaching both 0 and the aircraft's
+    altitude ceiling. Pass ``low`` and ``high`` for a fixed range instead.
     """
 
     meta = ActionMeta(
@@ -522,14 +461,23 @@ class AltDeltaM(_InMeters, _AltitudeAxis, _DeltaTarget):
         Unit.M,
         control_axis=ControlAxis.ALTITUDE,
         mode=ActionMode.DELTA,
+        dynamic_bounds=True,
     )
-    low: Annotated[float, "altitude delta meters"] = -1000.0 * ft
-    high: Annotated[float, "altitude delta meters"] = 1000.0 * ft
+    low: Annotated[
+        float | None, "altitude delta meters; None = runtime altitude envelope"
+    ] = None
+    high: Annotated[
+        float | None, "altitude delta meters; None = runtime altitude envelope"
+    ] = None
 
 
 @dataclass(frozen=True)
-class ApAltDeltaM(_InMeters, _AltitudeAxis, _DeltaTarget):
-    """Set autopilot selected altitude relative to current altitude."""
+class ApAltDeltaM(AltDeltaM):
+    """Set autopilot selected altitude relative to current altitude.
+
+    The same action as :class:`AltDeltaM` - BlueSky's ``ALT`` sets the
+    autopilot selection either way - under the name existing configs use.
+    """
 
     meta = ActionMeta(
         "ap_alt_delta_m",
@@ -538,25 +486,15 @@ class ApAltDeltaM(_InMeters, _AltitudeAxis, _DeltaTarget):
         mode=ActionMode.DELTA,
         dynamic_bounds=True,
     )
-    low: Annotated[
-        float | None,
-        "autopilot altitude offset meters; None = runtime altitude envelope",
-    ] = None
-    high: Annotated[
-        float | None,
-        "autopilot altitude offset meters; None = runtime altitude envelope",
-    ] = None
 
 
 @dataclass(frozen=True)
 class SpdDeltaKts(_InKnots, _SpeedAxis, _DeltaTarget):
     """Adjust target calibrated airspeed by a delta in knots.
 
-    Metadata:
-        name: spd_delta_kts
-        unit: kts
-        control_axis: speed
-        mode: delta
+    ``low=None`` and ``high=None`` resolve the delta bounds at runtime as a
+    symmetric span around the current CAS, reaching both the minimum and maximum
+    operating speed. Pass ``low`` and ``high`` for a fixed range instead.
     """
 
     meta = ActionMeta(
@@ -564,21 +502,22 @@ class SpdDeltaKts(_InKnots, _SpeedAxis, _DeltaTarget):
         Unit.KTS,
         control_axis=ControlAxis.SPEED,
         mode=ActionMode.DELTA,
+        dynamic_bounds=True,
     )
-    low: Annotated[float, "CAS delta knots"] = -100.0
-    high: Annotated[float, "CAS delta knots"] = 100.0
+    low: Annotated[float | None, "CAS delta knots; None = runtime speed envelope"] = (
+        None
+    )
+    high: Annotated[float | None, "CAS delta knots; None = runtime speed envelope"] = (
+        None
+    )
 
 
 @dataclass(frozen=True)
-class ApSpdDeltaKts(_InKnots, _SpeedAxis, _DeltaTarget):
+class ApSpdDeltaKts(SpdDeltaKts):
     """Set autopilot selected calibrated airspeed relative to current CAS.
 
-    Metadata:
-        name: ap_spd_delta_kts
-        unit: kts
-        control_axis: speed
-        mode: delta
-        dynamic_bounds: True
+    The same action as :class:`SpdDeltaKts` - BlueSky's ``SPD`` sets the
+    autopilot selection either way - under the name existing configs use.
     """
 
     meta = ActionMeta(
@@ -588,25 +527,15 @@ class ApSpdDeltaKts(_InKnots, _SpeedAxis, _DeltaTarget):
         mode=ActionMode.DELTA,
         dynamic_bounds=True,
     )
-    low: Annotated[
-        float | None,
-        "autopilot CAS offset knots; None = runtime speed envelope",
-    ] = None
-    high: Annotated[
-        float | None,
-        "autopilot CAS offset knots; None = runtime speed envelope",
-    ] = None
 
 
 @dataclass(frozen=True)
 class SpdDeltaMs(_InMetersPerSecond, _SpeedAxis, _DeltaTarget):
     """Adjust target calibrated airspeed by a delta in m/s.
 
-    Metadata:
-        name: spd_delta_ms
-        unit: m/s
-        control_axis: speed
-        mode: delta
+    ``low=None`` and ``high=None`` resolve the delta bounds at runtime as a
+    symmetric span around the current CAS, reaching both the minimum and maximum
+    operating speed. Pass ``low`` and ``high`` for a fixed range instead.
     """
 
     meta = ActionMeta(
@@ -614,9 +543,10 @@ class SpdDeltaMs(_InMetersPerSecond, _SpeedAxis, _DeltaTarget):
         Unit.M_PER_S,
         control_axis=ControlAxis.SPEED,
         mode=ActionMode.DELTA,
+        dynamic_bounds=True,
     )
-    low: Annotated[float, "CAS delta m/s"] = -100.0 * kts
-    high: Annotated[float, "CAS delta m/s"] = 100.0 * kts
+    low: Annotated[float | None, "CAS delta m/s; None = runtime speed envelope"] = None
+    high: Annotated[float | None, "CAS delta m/s; None = runtime speed envelope"] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -632,12 +562,6 @@ class ActiveRouteWaypointHdgDeltaDeg(ActionField):
     Commands ``bearing_to_active_waypoint + value`` (degrees); ``value == 0``
     flies straight at the waypoint. Falls back to current track when there is
     no active waypoint.
-
-    Metadata:
-        name: active_route_waypoint_hdg_delta_deg
-        unit: deg
-        control_axis: heading
-        mode: delta
     """
 
     meta = ActionMeta(
@@ -674,13 +598,6 @@ class ActiveRouteWaypointAltDeltaFt(
     waypoint's altitude constraint. Falls back to current altitude when the
     waypoint has no altitude constraint. The result is clamped to ``[0, ceiling]``.
 
-    Metadata:
-        name: active_route_waypoint_alt_delta_ft
-        unit: ft
-        control_axis: altitude
-        mode: delta
-        dynamic_bounds: True
-
     ``low=None`` and ``high=None`` mean the offset bounds are resolved at
     runtime as a symmetric span around the nominal, reaching both ``0`` and the
     aircraft altitude ceiling. Pair with a normalizer for a fixed action space.
@@ -713,13 +630,6 @@ class ActiveRouteWaypointSpdDeltaKts(
     waypoint's speed constraint. Falls back to current CAS when the waypoint
     has no speed constraint. The result is clamped to the aircraft's
     performance speed envelope.
-
-    Metadata:
-        name: active_route_waypoint_spd_delta_kts
-        unit: kts
-        control_axis: speed
-        mode: delta
-        dynamic_bounds: True
 
     ``low=None`` and ``high=None`` mean the offset bounds are resolved at
     runtime as a symmetric span around the nominal, reaching both the minimum
@@ -772,13 +682,6 @@ class ActiveRouteWaypointSpdDeltaCrossover(
     saturates - and it keeps the action's upper bound tracking the *achievable*
     speed as altitude changes.
 
-    Metadata:
-        name: active_route_waypoint_spd_delta_crossover
-        unit: kts
-        control_axis: speed
-        mode: delta
-        dynamic_bounds: True
-
     ``low=None`` / ``high=None`` resolve the offset bounds at runtime as a
     symmetric span around the nominal reaching the minimum operating speed and
     the (Mach-limited) maximum. Pair with a normalizer for a fixed action space.
@@ -810,13 +713,6 @@ class ApSpdDeltaCrossover(_InKnots, _CrossoverSpeedAxis, _DeltaTarget):
     action nudges speed from where it is. The CAS target is capped at the
     altitude's Mach limit and issued as **Mach** above the crossover altitude /
     **CAS** below - so it never commands a Mach-exceeding CAS at cruise.
-
-    Metadata:
-        name: ap_spd_delta_crossover
-        unit: kts
-        control_axis: speed
-        mode: delta
-        dynamic_bounds: True
     """
 
     meta = ActionMeta(
@@ -895,14 +791,7 @@ class _AutopilotHoldSwitch(SwitchActionMixin, ActionField):
 
 @dataclass(frozen=True)
 class AutopilotLnav(_AutopilotHoldSwitch):
-    """Command BlueSky LNAV with an ON/OFF hold band.
-
-    Metadata:
-        name: autopilot_lnav
-        unit: switch
-        control_axis: autopilot
-        mode: switch
-    """
+    """Command BlueSky LNAV with an ON/OFF hold band."""
 
     meta = ActionMeta(
         "autopilot_lnav",
@@ -922,15 +811,7 @@ class AutopilotLnav(_AutopilotHoldSwitch):
 
 @dataclass(frozen=True)
 class AutopilotVnav(_AutopilotHoldSwitch):
-    """Command BlueSky VNAV with an ON/OFF hold band.
-
-    Metadata:
-        name: autopilot_vnav
-        unit: switch
-        control_axis: autopilot
-        mode: switch
-        requires_on: autopilot_lnav
-    """
+    """Command BlueSky VNAV with an ON/OFF hold band."""
 
     meta = ActionMeta(
         "autopilot_vnav",
@@ -951,14 +832,7 @@ class AutopilotVnav(_AutopilotHoldSwitch):
 
 @dataclass(frozen=True)
 class AutopilotLnavVnav(_AutopilotHoldSwitch):
-    """Command BlueSky LNAV and VNAV together with an ON/OFF hold band.
-
-    Metadata:
-        name: autopilot_lnav_vnav
-        unit: switch
-        control_axis: autopilot
-        mode: switch
-    """
+    """Command BlueSky LNAV and VNAV together with an ON/OFF hold band."""
 
     meta = ActionMeta(
         "autopilot_lnav_vnav",
@@ -991,10 +865,6 @@ class CommBroadcast(ActionField):
     aircraft-control effect - a pure signaling channel whose meaning the
     shared policy must learn (emergent communication). Exclude these dims from
     any action-magnitude penalty, or the reward will train the channel silent.
-
-    Metadata:
-        name: comm_broadcast
-        unit: unitless
     """
 
     meta = ActionMeta(

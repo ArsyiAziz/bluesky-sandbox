@@ -124,13 +124,7 @@ def _with_derived_bounds(
 
 @dataclass(frozen=True)
 class LatDeg(_BroadcastObs, ObsField):
-    """Latitude in degrees.
-
-    Metadata:
-        name: lat_deg
-        unit: deg
-        quantity: latitude
-    """
+    """Latitude in degrees."""
 
     meta = ObsMeta("lat_deg", Unit.DEG, ObsQuantity.LATITUDE)
     low: Annotated[float, "latitude degrees"] = -90.0
@@ -148,13 +142,7 @@ class LatDeg(_BroadcastObs, ObsField):
 
 @dataclass(frozen=True)
 class LonDeg(_BroadcastObs, ObsField):
-    """Longitude in degrees.
-
-    Metadata:
-        name: lon_deg
-        unit: deg
-        quantity: longitude
-    """
+    """Longitude in degrees."""
 
     meta = ObsMeta("lon_deg", Unit.DEG, ObsQuantity.LONGITUDE)
     low: Annotated[float, "longitude degrees"] = -180.0
@@ -172,14 +160,7 @@ class LonDeg(_BroadcastObs, ObsField):
 
 @dataclass(frozen=True)
 class HdgDeg(_BroadcastObs, ObsField):
-    """Aircraft heading in degrees.
-
-    Metadata:
-        name: hdg_deg
-        unit: deg
-        quantity: heading
-        circular: True
-    """
+    """Aircraft heading in degrees."""
 
     meta = ObsMeta("hdg_deg", Unit.DEG, ObsQuantity.HEADING, circular=True)
     low: Annotated[float, "heading degrees"] = 0.0
@@ -197,14 +178,7 @@ class HdgDeg(_BroadcastObs, ObsField):
 
 @dataclass(frozen=True)
 class TrkDeg(_BroadcastObs, ObsField):
-    """Aircraft track angle in degrees.
-
-    Metadata:
-        name: trk_deg
-        unit: deg
-        quantity: track
-        circular: True
-    """
+    """Aircraft track angle in degrees."""
 
     meta = ObsMeta("trk_deg", Unit.DEG, ObsQuantity.TRACK, circular=True)
     low: Annotated[float, "track degrees"] = 0.0
@@ -598,11 +572,6 @@ class ActiveRouteWaypointEteS(_ActiveRouteWaypointField):
     when intruders or route-exhausted traffic can hit the sentinel. Unclamped:
     ETE is finite for any moving aircraft, so a value past ``high`` is a real
     reading (distant fix, slow groundspeed) left to the normalizer to clip.
-
-    Metadata:
-        name: active_route_waypoint_ete_s
-        unit: s
-        quantity: time
     """
 
     meta = ObsMeta("active_route_waypoint_ete_s", Unit.S, ObsQuantity.TIME)
@@ -675,11 +644,6 @@ class ActiveRouteWaypointVerticalEteS(_ActiveRouteWaypointField):
     at infinity - so the value is clamped INTO ``[0, high]`` and ``high`` reads
     as "not converging". Keep ``high`` above any real level-off time in the
     task, or true profiles saturate against the sentinel.
-
-    Metadata:
-        name: active_route_waypoint_vertical_ete_s
-        unit: s
-        quantity: time
     """
 
     meta = ObsMeta(
@@ -954,12 +918,6 @@ class _VerticalSpeed(_UnitField):
 class AltFt(_InFeet, _Altitude):
     """Aircraft altitude in feet.
 
-    Metadata:
-        name: alt_ft
-        unit: ft
-        quantity: altitude
-        dynamic_bounds: True
-
     ``low=None`` and ``high=None`` mean bounds are read from BlueSky's
     aircraft altitude ceiling at runtime.
     """
@@ -970,12 +928,6 @@ class AltFt(_InFeet, _Altitude):
 @dataclass(frozen=True)
 class AltM(_InMeters, _Altitude):
     """Aircraft altitude in meters.
-
-    Metadata:
-        name: alt_m
-        unit: m
-        quantity: altitude
-        dynamic_bounds: True
 
     ``low=None`` and ``high=None`` mean bounds are read from BlueSky's
     aircraft altitude ceiling at runtime.
@@ -988,12 +940,6 @@ class AltM(_InMeters, _Altitude):
 class CasKts(_InKnots, _Cas):
     """Calibrated airspeed in knots.
 
-    Metadata:
-        name: cas_kts
-        unit: kts
-        quantity: speed
-        dynamic_bounds: True
-
     ``low=None`` and ``high=None`` mean bounds are read from BlueSky's
     current operating-speed envelope at runtime.
     """
@@ -1005,12 +951,6 @@ class CasKts(_InKnots, _Cas):
 class CasMs(_InMetersPerSecond, _Cas):
     """Calibrated airspeed in m/s.
 
-    Metadata:
-        name: cas_ms
-        unit: m/s
-        quantity: speed
-        dynamic_bounds: True
-
     ``low=None`` and ``high=None`` mean bounds are read from BlueSky's
     current operating-speed envelope at runtime.
     """
@@ -1020,28 +960,14 @@ class CasMs(_InMetersPerSecond, _Cas):
 
 @dataclass(frozen=True)
 class TasKts(_InKnots, _Tas):
-    """True airspeed in knots.
-
-    Metadata:
-        name: tas_kts
-        unit: kts
-        quantity: speed
-        dynamic_bounds: True
-    """
+    """True airspeed in knots."""
 
     meta = ObsMeta("tas_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
 
 @dataclass(frozen=True)
 class TasMs(_InMetersPerSecond, _Tas):
-    """True airspeed in m/s.
-
-    Metadata:
-        name: tas_ms
-        unit: m/s
-        quantity: speed
-        dynamic_bounds: True
-    """
+    """True airspeed in m/s."""
 
     meta = ObsMeta("tas_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
 
@@ -1049,12 +975,6 @@ class TasMs(_InMetersPerSecond, _Tas):
 @dataclass(frozen=True)
 class VsFtMin(_InFeetPerMinute, _VerticalSpeed):
     """Vertical speed in ft/min.
-
-    Metadata:
-        name: vs_ftmin
-        unit: ft/min
-        quantity: vertical_speed
-        dynamic_bounds: True
 
     ``low=None`` and ``high=None`` mean bounds are read from BlueSky's current
     aircraft performance envelope at runtime, as ``(vsmin, vsmax)``.
@@ -1068,12 +988,6 @@ class VsFtMin(_InFeetPerMinute, _VerticalSpeed):
 @dataclass(frozen=True)
 class VsMs(_InMetersPerSecond, _VerticalSpeed):
     """Vertical speed in m/s.
-
-    Metadata:
-        name: vs_ms
-        unit: m/s
-        quantity: vertical_speed
-        dynamic_bounds: True
 
     ``low=None`` and ``high=None`` mean bounds are read from BlueSky's current
     aircraft performance envelope at runtime, as ``(vsmin, vsmax)`` .
@@ -1096,11 +1010,6 @@ class AxMs2(_BroadcastObs, ObsField):
     thrust-limited accel differs from drag/idle decel), so the default is a fixed
     representative span that covers the typical range; override for a different
     scale.
-
-    Metadata:
-        name: ax_ms2
-        unit: m/s
-        quantity: speed
     """
 
     meta = ObsMeta("ax_ms2", Unit.M_PER_S, ObsQuantity.SPEED)
@@ -1127,11 +1036,6 @@ class MachNumber(_BroadcastObs, ObsField):
     different TAS, hence different closing dynamics). Bounds default to the
     subsonic ``[0, 1]``; tighten ``high`` toward the type's Mmo (~0.87 for a
     B744) for a fuller normalized range.
-
-    Metadata:
-        name: mach_number
-        unit: unitless
-        quantity: speed
     """
 
     meta = ObsMeta("mach_number", Unit.UNITLESS, ObsQuantity.SPEED)
@@ -1158,11 +1062,6 @@ class CrossoverAltMarginFt(_BroadcastObs, ObsField):
     the policy need not infer it from Alt+CAS. Its *sign* is the "above crossover"
     boolean; the magnitude says how deep into the regime the aircraft is - a
     smoother, more informative signal than a bare flag.
-
-    Metadata:
-        name: crossover_alt_margin_ft
-        unit: ft
-        quantity: altitude
     """
 
     meta = ObsMeta("crossover_alt_margin_ft", Unit.FT, ObsQuantity.ALTITUDE)
@@ -1209,11 +1108,6 @@ class TimeInEnvS(_BroadcastObs, _TimeInEnvBacked, ObsField):
     Published by the environment each step from its spawn-time bookkeeping (an
     ObsField cannot reach it - BlueSky keeps no per-aircraft age); reads 0 on the
     step an aircraft spawns.
-
-    Metadata:
-        name: time_in_env_s
-        unit: s
-        quantity: time
     """
 
     meta = ObsMeta("time_in_env_s", Unit.S, ObsQuantity.TIME)
@@ -1252,11 +1146,6 @@ class PerfVminKts(_BroadcastObs, ObsField):
     a higher ``vmin`` than mine cannot match my hold speed and must be led,
     not followed. Reads the live performance model (state-dependent through
     configuration/phase).
-
-    Metadata:
-        name: perf_vmin_kts
-        unit: kts
-        quantity: speed
     """
 
     meta = ObsMeta("perf_vmin_kts", Unit.KTS, ObsQuantity.SPEED)
@@ -1280,11 +1169,6 @@ class PerfVmaxKts(_BroadcastObs, ObsField):
     How fast this airframe *can* fly - whether the aircraft ahead can
     accelerate out of the way, or I can close a slot. Reads the live
     performance model.
-
-    Metadata:
-        name: perf_vmax_kts
-        unit: kts
-        quantity: speed
     """
 
     meta = ObsMeta("perf_vmax_kts", Unit.KTS, ObsQuantity.SPEED)
@@ -1308,11 +1192,6 @@ class PerfVsMaxFtMin(_BroadcastObs, ObsField):
     Vertical escape capacity - can this aircraft climb out of a conflict
     layer, and how fast. Reads the live performance model (varies with
     altitude/mass/phase).
-
-    Metadata:
-        name: perf_vs_max_ft_min
-        unit: ft/min
-        quantity: vertical_speed
     """
 
     meta = ObsMeta(
@@ -1339,11 +1218,6 @@ class PerfVsMinFtMin(_BroadcastObs, ObsField):
     physics and a distinct number - on the openap model the two differ by ~20%
     for the same aircraft - so a descending task cannot substitute one for the
     other.
-
-    Metadata:
-        name: perf_vs_min_ft_min
-        unit: ft/min
-        quantity: vertical_speed
     """
 
     meta = ObsMeta(
@@ -1371,11 +1245,6 @@ class PerfCeilingFt(_BroadcastObs, ObsField):
     (``span = max(wpalt, ceiling - wpalt)``) - measured on safe_rl_v38d at ~9% of
     steps - so without this the policy cannot know how many feet its normalized
     altitude action commands.
-
-    Metadata:
-        name: perf_ceiling_ft
-        unit: ft
-        quantity: altitude
     """
 
     meta = ObsMeta("perf_ceiling_ft", Unit.FT, ObsQuantity.ALTITUDE)
@@ -1399,11 +1268,6 @@ class PerfMassT(_BroadcastObs, ObsField):
     Unlike :class:`MtowT`, which is a static per-type constant, this is the live
     mass the performance model is actually flying, and it drives thrust-to-weight,
     achievable rates and turn performance. Spans ~5-190 t across the allowed fleet.
-
-    Metadata:
-        name: perf_mass_t
-        unit: t
-        quantity: mass
     """
 
     meta = ObsMeta("perf_mass_t", Unit.T, ObsQuantity.MASS)
@@ -1432,11 +1296,6 @@ class TurnRadiusNm(_BroadcastObs, ObsField):
     shrinks it - the physical lever behind decelerate-before-capture. At
     cruise (480 kt, 25 deg) it is ~7 nm - larger than a typical reach radius,
     which is why an overshoot costs a full circuit.
-
-    Metadata:
-        name: turn_radius_nm
-        unit: nm
-        quantity: distance
     """
 
     meta = ObsMeta("turn_radius_nm", Unit.NM, ObsQuantity.DISTANCE)
@@ -1492,11 +1351,6 @@ class MtowT(_BroadcastObs, ObsField):
     MTOW bands): a smooth mass descriptor generalizes where a categorical
     one-hot cannot. Looked up once per type from the openap aircraft
     database and cached; unknown types fall back to a medium-class 100 t.
-
-    Metadata:
-        name: mtow_t
-        unit: t
-        quantity: mass
     """
 
     meta = ObsMeta("mtow_t", Unit.T, ObsQuantity.MASS)
@@ -1520,11 +1374,6 @@ class MtowT(_BroadcastObs, ObsField):
 @dataclass(frozen=True)
 class FlightPhaseOneHot(_BroadcastObs, ObsField):
     """Flight phase as a one-hot vector.
-
-    Metadata:
-        name: flight_phase_one_hot
-        unit: unitless
-        quantity: phase
 
     The default ``phase_values`` encode BlueSky/OpenAP-style raw phase codes
     ``0..6``. Pass a custom tuple when using a performance model that emits a
@@ -1774,12 +1623,6 @@ class PrevActionNorm(_BroadcastObs, _LastActionBacked, ObsField):
     publishes bounds it falls back to ``[-1, 1]``. No normalizer is attached (the
     value is already in action space). Reads all-zero before the first action and
     on spawn (matching a first-step Δ of 0).
-
-    Metadata:
-        name: prev_action_norm
-        unit: unitless
-        quantity: action
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -1854,12 +1697,6 @@ class PrevActionNorm(_BroadcastObs, _LastActionBacked, ObsField):
 class GsKts(_InKnots, _Gs):
     """Ground speed in knots.
 
-    Metadata:
-        name: gs_kts
-        unit: kts
-        quantity: speed
-        dynamic_bounds: True
-
     BlueSky has no separate ground-speed performance envelope. Default bounds
     use the TAS-equivalent operating-speed envelope; override constructor
     bounds if wind can push ground speed outside that range.
@@ -1872,12 +1709,6 @@ class GsKts(_InKnots, _Gs):
 class GsMs(_InMetersPerSecond, _Gs):
     """Ground speed in m/s.
 
-    Metadata:
-        name: gs_ms
-        unit: m/s
-        quantity: speed
-        dynamic_bounds: True
-
     BlueSky has no separate ground-speed performance envelope. Default bounds
     use the TAS-equivalent operating-speed envelope; override constructor
     bounds if wind can push ground speed outside that range.
@@ -1888,14 +1719,7 @@ class GsMs(_InMetersPerSecond, _Gs):
 
 @dataclass(frozen=True)
 class ApHdgDeg(_BroadcastObs, ObsField):
-    """Autopilot selected heading in degrees.
-
-    Metadata:
-        name: ap_hdg_deg
-        unit: deg
-        quantity: heading
-        circular: True
-    """
+    """Autopilot selected heading in degrees."""
 
     meta = ObsMeta("ap_hdg_deg", Unit.DEG, ObsQuantity.HEADING, circular=True)
     low: Annotated[float, "autopilot heading degrees"] = 0.0
@@ -1913,56 +1737,28 @@ class ApHdgDeg(_BroadcastObs, ObsField):
 
 @dataclass(frozen=True)
 class ApCasKts(_InKnots, _ApCas):
-    """Autopilot selected calibrated airspeed in knots.
-
-    Metadata:
-        name: ap_cas_kts
-        unit: kts
-        quantity: speed
-        dynamic_bounds: True
-    """
+    """Autopilot selected calibrated airspeed in knots."""
 
     meta = ObsMeta("ap_cas_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
 
 @dataclass(frozen=True)
 class ApCasMs(_InMetersPerSecond, _ApCas):
-    """Autopilot selected calibrated airspeed in m/s.
-
-    Metadata:
-        name: ap_cas_ms
-        unit: m/s
-        quantity: speed
-        dynamic_bounds: True
-    """
+    """Autopilot selected calibrated airspeed in m/s."""
 
     meta = ObsMeta("ap_cas_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
 
 
 @dataclass(frozen=True)
 class ApAltFt(_InFeet, _ApAltitude):
-    """Autopilot selected altitude in feet.
-
-    Metadata:
-        name: ap_alt_ft
-        unit: ft
-        quantity: altitude
-        dynamic_bounds: True
-    """
+    """Autopilot selected altitude in feet."""
 
     meta = ObsMeta("ap_alt_ft", Unit.FT, ObsQuantity.ALTITUDE, dynamic_bounds=True)
 
 
 @dataclass(frozen=True)
 class ApAltM(_InMeters, _ApAltitude):
-    """Autopilot selected altitude in meters.
-
-    Metadata:
-        name: ap_alt_m
-        unit: m
-        quantity: altitude
-        dynamic_bounds: True
-    """
+    """Autopilot selected altitude in meters."""
 
     meta = ObsMeta("ap_alt_m", Unit.M, ObsQuantity.ALTITUDE, dynamic_bounds=True)
 
@@ -2163,14 +1959,7 @@ class AngleDifference(Difference):
 
 @dataclass(frozen=True)
 class DistToOwnNm(_BroadcastPairs, PairObsField):
-    """Ownship-relative intruder distance in nautical miles.
-
-    Metadata:
-        name: dist_to_own_nm
-        unit: nm
-        quantity: distance
-        is_pair: True
-    """
+    """Ownship-relative intruder distance in nautical miles."""
 
     meta = ObsMeta("dist_to_own_nm", Unit.NM, ObsQuantity.DISTANCE, is_pair=True)
     low: Annotated[float, "distance nautical miles"] = 0.0
@@ -2201,13 +1990,6 @@ class TcpaS(_BroadcastPairs, PairObsField):
     BlueSky's CD lookahead (:func:`_cd_lookahead_s`, read from
     ``asas_dtlookahead``) as ``(-lookahead, +lookahead)``. Detected conflicts
     fall in that range (``tcpa`` goes slightly negative just past CPA).
-
-    Metadata:
-        name: tcpa_s
-        unit: s
-        quantity: time
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -2253,13 +2035,6 @@ class TlosS(_BroadcastPairs, PairObsField):
     ``config.lookahead_s``) as ``(0, lookahead)`` - the horizon within which a
     conflict is flagged. Unlike ``tcpa`` this is non-negative (time *to* PZ
     entry), so it is a cleaner imminence signal than time-to-CPA.
-
-    Metadata:
-        name: tlos_s
-        unit: s
-        quantity: time
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -2292,12 +2067,6 @@ class ClosingRateKts(_BroadcastPairs, PairObsField):
     """Ownship-intruder horizontal closing rate, in knots.
 
     Positive means the pair is closing horizontally; negative means opening.
-
-    Metadata:
-        name: closing_rate_kts
-        unit: kts
-        quantity: speed
-        is_pair: True
     """
 
     meta = ObsMeta("closing_rate_kts", Unit.KTS, ObsQuantity.SPEED, is_pair=True)
@@ -2326,12 +2095,6 @@ class BearingRateDegPerSec(_BroadcastPairs, PairObsField):
     """Ownship-intruder bearing rate, in degrees per second.
 
     Positive means the bearing from ownship to intruder rotates clockwise.
-
-    Metadata:
-        name: bearing_rate_deg_per_sec
-        unit: deg
-        quantity: bearing
-        is_pair: True
     """
 
     meta = ObsMeta(
@@ -2367,12 +2130,6 @@ class RelPosAlongTrackNm(_BroadcastPairs, PairObsField):
     Track-frame Cartesian. Unlike range x bearing, this gives relative position
     directly - no multiplicative decode whose bearing resolution scales with
     range. Pairs with :class:`RelPosCrossTrackNm`.
-
-    Metadata:
-        name: rel_pos_along_track_nm
-        unit: nm
-        quantity: distance
-        is_pair: True
     """
 
     meta = ObsMeta("rel_pos_along_track_nm", Unit.NM, ObsQuantity.DISTANCE, is_pair=True)
@@ -2395,12 +2152,6 @@ class RelPosCrossTrackNm(_BroadcastPairs, PairObsField):
     """Intruder position relative to ownship ACROSS the own track, nm (right +).
 
     Track-frame Cartesian companion to :class:`RelPosAlongTrackNm`.
-
-    Metadata:
-        name: rel_pos_cross_track_nm
-        unit: nm
-        quantity: distance
-        is_pair: True
     """
 
     meta = ObsMeta("rel_pos_cross_track_nm", Unit.NM, ObsQuantity.DISTANCE, is_pair=True)
@@ -2426,12 +2177,6 @@ class RelVelAlongTrackKts(_BroadcastPairs, PairObsField):
     ownship overtaking along-track). Together with the cross component this is the
     same information as closing rate + bearing rate, but singularity-free and
     without the range-dependent scaling.
-
-    Metadata:
-        name: rel_vel_along_track_kts
-        unit: kts
-        quantity: speed
-        is_pair: True
     """
 
     meta = ObsMeta("rel_vel_along_track_kts", Unit.KTS, ObsQuantity.SPEED, is_pair=True)
@@ -2454,12 +2199,6 @@ class RelVelCrossTrackKts(_BroadcastPairs, PairObsField):
     """Intruder velocity relative to ownship ACROSS the own track, kts (right +).
 
     Track-frame Cartesian companion to :class:`RelVelAlongTrackKts`.
-
-    Metadata:
-        name: rel_vel_cross_track_kts
-        unit: kts
-        quantity: speed
-        is_pair: True
     """
 
     meta = ObsMeta("rel_vel_cross_track_kts", Unit.KTS, ObsQuantity.SPEED, is_pair=True)
@@ -2483,12 +2222,6 @@ class RelPosAtCpaAlongTrackNm(_BroadcastPairs, PairObsField):
 
     Cartesian replacement for the scalar horizontal-miss `dcpa`: together with the
     cross component it preserves the miss magnitude AND adds the pass direction.
-
-    Metadata:
-        name: rel_pos_at_cpa_along_track_nm
-        unit: nm
-        quantity: distance
-        is_pair: True
     """
 
     meta = ObsMeta("rel_pos_at_cpa_along_track_nm", Unit.NM, ObsQuantity.DISTANCE, is_pair=True)
@@ -2515,12 +2248,6 @@ class RelPosAtCpaCrossTrackNm(_BroadcastPairs, PairObsField):
 
     The sign is which side the intruder passes at closest approach - the key cue
     for turn direction. ``|along, cross|`` == the horizontal miss dcpa.
-
-    Metadata:
-        name: rel_pos_at_cpa_cross_track_nm
-        unit: nm
-        quantity: distance
-        is_pair: True
     """
 
     meta = ObsMeta("rel_pos_at_cpa_cross_track_nm", Unit.NM, ObsQuantity.DISTANCE, is_pair=True)
@@ -2543,14 +2270,7 @@ class RelPosAtCpaCrossTrackNm(_BroadcastPairs, PairObsField):
 
 @dataclass(frozen=True)
 class RelVsFtMin(_BroadcastPairs, PairObsField):
-    """Intruder vertical speed minus ownship vertical speed, in ft/min.
-
-    Metadata:
-        name: rel_vs_ft_min
-        unit: ft/min
-        quantity: vertical_speed
-        is_pair: True
-    """
+    """Intruder vertical speed minus ownship vertical speed, in ft/min."""
 
     meta = ObsMeta(
         "rel_vs_ft_min",
@@ -2587,13 +2307,6 @@ class HorizontalDistAtCpaNm(_BroadcastPairs, PairObsField):
     ``config.pz_radius_nm`` / ``asas_pzr``) as ``(0, rpz)``. That is the true
     support of the cached ``dcpa``, so the normalized value grades the actual
     miss distance instead of collapsing every conflict toward 0.
-
-    Metadata:
-        name: horizontal_dist_at_cpa_nm
-        unit: nm
-        quantity: distance
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -2641,13 +2354,6 @@ class VerticalSepAtCpaFt(_BroadcastPairs, PairObsField):
     a *normalization* choice, not the data range: intruders predicted to clear
     the vertical PZ saturate at the safe edge, focusing the signal on the danger
     band. Pass explicit bounds for a wider scale.
-
-    Metadata:
-        name: vertical_sep_at_cpa_ft
-        unit: ft
-        quantity: altitude
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -2759,13 +2465,6 @@ class ConflictHorizontalDistAtCpaNm(_ConflictGeomPairField):
     are dynamic: unless given, ``(0, CD rpz)`` - so a clipped normalizer grades the
     danger band and saturates every safer miss at the PZ edge, matching the cost's
     ``r_h`` support.
-
-    Metadata:
-        name: conflict_horizontal_dist_at_cpa_nm
-        unit: nm
-        quantity: distance
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -2800,13 +2499,6 @@ class ConflictVerticalSepAtCpaFt(_WindowedConflictPairField):
     window) falls back to the classic CPA-instant value. Bounds are dynamic: unless
     given, ``(0, CD hpz)`` - a clipped normalizer grades the danger band and
     saturates every safe pair at the PZ edge.
-
-    Metadata:
-        name: conflict_vertical_sep_at_cpa_ft
-        unit: ft
-        quantity: altitude
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -2861,13 +2553,6 @@ class ConflictHorizontalSepAtCpaNm(_WindowedConflictPairField):
     grades the danger band and saturates every safer miss at the PZ edge, matching
     the cost's ``r_h`` support. Pass ``rpz_nm``/``vpz_ft`` (and matching
     ``low``/``high``) when the cost grades a buffered zone rather than the CD one.
-
-    Metadata:
-        name: conflict_horizontal_sep_at_cpa_nm
-        unit: nm
-        quantity: distance
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -2914,13 +2599,6 @@ class ConflictSignedVerticalSepAtEntryFt(_WindowedConflictPairField):
     :class:`SymmetricNormalizer` so the whole PZ band spans ``[-1, 1]`` and every
     safe pair saturates at the correct end - unlike a wide ``relative_alt_ft``,
     where the danger band is squeezed into a few percent of the input range.
-
-    Metadata:
-        name: conflict_signed_vertical_sep_at_entry_ft
-        unit: ft
-        quantity: altitude
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -2956,13 +2634,6 @@ class ConflictTcpaS(_ConflictGeomPairField):
 
     The continuous, all-pairs counterpart of :class:`TcpaS` (ASAS ``confpairs``
     cache). Bounds are dynamic: unless given, ``(-lookahead, +lookahead)``.
-
-    Metadata:
-        name: conflict_tcpa_s
-        unit: s
-        quantity: time
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -2992,13 +2663,6 @@ class ConflictTlosS(_WindowedConflictPairField):
     ``tinconf`` the cost's imminence term reads - using the CD ``rpz``/``hpz``.
     Non-conflict pairs saturate at the high bound (lookahead); an already-entered
     LoS reads 0. Bounds are dynamic: unless given, ``(0, lookahead)``.
-
-    Metadata:
-        name: conflict_tlos_s
-        unit: s
-        quantity: time
-        is_pair: True
-        dynamic_bounds: True
     """
 
     meta = ObsMeta(
@@ -3063,12 +2727,6 @@ class InConf(_WindowedConflictPairField):
 
     Leave ``normalizer`` unset - the value is already 0/1, so there is nothing
     to scale.
-
-    Metadata:
-        name: in_conf
-        unit: unitless
-        quantity: indicator
-        is_pair: True
     """
 
     meta = ObsMeta("in_conf", Unit.UNITLESS, ObsQuantity.INDICATOR, is_pair=True)
@@ -3134,12 +2792,6 @@ class InLosNow(_BroadcastPairs, PairObsField):
 
     Leave ``normalizer`` unset - the value is already 0/1, so there is nothing
     to scale.
-
-    Metadata:
-        name: in_los_now
-        unit: unitless
-        quantity: indicator
-        is_pair: True
     """
 
     meta = ObsMeta("in_los_now", Unit.UNITLESS, ObsQuantity.INDICATOR, is_pair=True)
@@ -3178,12 +2830,6 @@ class IntruderFixApproachDistNm(_BroadcastPairs, PairObsField):
     ownship<->intruder CPA fields miss (same-heading in-trail traffic has low
     closing rate yet converges at the fix). Non-private: see :func:`_fix_projection`.
     Sentinel ``high`` (far) when the ownship has no usable fix.
-
-    Metadata:
-        name: intruder_fix_approach_dist_nm
-        unit: nm
-        quantity: distance
-        is_pair: True
     """
 
     meta = ObsMeta(
@@ -3227,12 +2873,6 @@ class IntruderFixArrivalDeltaS(_BroadcastPairs, PairObsField):
     Non-private: see :func:`_fix_projection`. ``0`` (no order) when the ownship
     has no usable fix. Pair with :class:`IntruderFixApproachDistNm` so a
     consumer knows *whether* the intruder is heading to the fix at all.
-
-    Metadata:
-        name: intruder_fix_arrival_delta_s
-        unit: s
-        quantity: time
-        is_pair: True
     """
 
     meta = ObsMeta(
@@ -3281,12 +2921,6 @@ class IntruderFixVerticalSepFt(_BroadcastPairs, PairObsField):
     knows which way to separate. Non-private: see :func:`_fix_projection`.
     ``0`` when the ownship has no usable fix - read alongside the approach
     field, whose sentinel flags that state.
-
-    Metadata:
-        name: intruder_fix_vertical_sep_ft
-        unit: ft
-        quantity: altitude
-        is_pair: True
     """
 
     meta = ObsMeta(
@@ -3331,12 +2965,6 @@ class IntruderCommMessage(_CommBacked, PairObsField):
     to the message range), drawn from a per-episode-seeded RNG. The DIAL/DRU
     grounding pressure: a message must be high-contrast to survive a noisy
     channel, so ambiguous low-amplitude signaling stops being free.
-
-    Metadata:
-        name: intruder_comm_message
-        unit: unitless
-        quantity: action
-        is_pair: True
     """
 
     meta = ObsMeta(
@@ -3401,13 +3029,6 @@ class BrgFromOwnDeg(_BroadcastPairs, PairObsField):
 
     The true bearing from ownship to the intruder, signed in ``[-180, 180]``
     (0 = north, +90 = east, -90 = west) as returned by ``qdrdist``.
-
-    Metadata:
-        name: brg_from_own_deg
-        unit: deg
-        quantity: bearing
-        is_pair: True
-        circular: True
     """
 
     meta = ObsMeta(
@@ -3444,13 +3065,6 @@ class BrgFromOwnRelTrkDeg(_BroadcastPairs, PairObsField):
     :class:`DistToOwnNm` for a full egocentric polar intruder position. Unlike
     :class:`BrgFromOwnDeg` (an absolute compass bearing), this rotates with the
     ownship heading.
-
-    Metadata:
-        name: brg_from_own_rel_trk_deg
-        unit: deg
-        quantity: bearing
-        is_pair: True
-        circular: True
     """
 
     meta = ObsMeta(
@@ -3490,12 +3104,6 @@ class ConflictRisk(_BroadcastPairs, PairObsField):
     non-conflict intruders score ``0``. Placed on the intruder token so attention
     can focus on the threatening aircraft, with the ownship's worst-case risk
     recoverable by max-pooling this field.
-
-    Metadata:
-        name: conflict_risk
-        unit: unitless
-        quantity: risk
-        is_pair: True
     """
 
     meta = ObsMeta("conflict_risk", Unit.UNITLESS, ObsQuantity.RISK, is_pair=True)

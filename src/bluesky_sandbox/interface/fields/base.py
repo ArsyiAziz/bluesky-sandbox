@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
@@ -265,8 +266,48 @@ class ActionMeta:
                 )
 
 
+def _render_metadata(meta: ObsMeta | ActionMeta) -> str:
+    """A ``Metadata:`` docstring section for ``meta``: its name and unit, and
+    every other field that differs from its default."""
+    lines = ["Metadata:"]
+    for f in fields(meta):
+        value = getattr(meta, f.name)
+        if f.name not in ("name", "unit") and value == f.default:
+            continue
+        if isinstance(value, tuple):
+            value = ", ".join(str(v) for v in value)
+        lines.append(f"    {f.name}: {value}")
+    return "\n".join(lines)
+
+
+def _without_metadata(doc: str) -> str:
+    """``doc`` with any ``Metadata:`` section (the line and its indented body)
+    removed."""
+    out: list[str] = []
+    skipping = False
+    for line in doc.splitlines():
+        if line.strip() == "Metadata:":
+            skipping = True
+            continue
+        if skipping and (not line.strip() or line.startswith((" ", "\t"))):
+            continue
+        skipping = False
+        out.append(line)
+    return "\n".join(out).rstrip()
+
+
 @dataclass(frozen=True)
 class _BoundedField:
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        # The docstring's Metadata section is rendered from ``meta``, so the
+        # two cannot drift. Only a class with its own docstring and a static
+        # ``meta`` gets one; a ``meta`` property depends on the instance.
+        super().__init_subclass__(**kwargs)
+        doc = cls.__dict__.get("__doc__")
+        meta = getattr(cls, "meta", None)
+        if doc and isinstance(meta, (ObsMeta, ActionMeta)):
+            summary = _without_metadata(inspect.cleandoc(doc))
+            cls.__doc__ = f"{summary}\n\n{_render_metadata(meta)}\n"
 
     # ---- optional per-aircraft state ------------------------------------- #
     # A field that reads state the simulator does not keep (a rate, an
@@ -311,6 +352,7 @@ class _BoundedField:
                 "on_episode_reset",
             )
         )
+
     low: float | None = None
     high: float | None = None
     normalizer: Any | None = None

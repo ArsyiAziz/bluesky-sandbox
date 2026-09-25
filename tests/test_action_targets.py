@@ -87,11 +87,64 @@ def test_twins_send_the_same_command(
     assert _value(sent[0]) == pytest.approx(_value(sent[1]), rel=1e-6)
 
 
-def test_twins_share_their_default_ranges():
+_DELTA_TWINS = [
+    (act.AltDeltaFt, act.AltDeltaM, ft),
+    (act.SpdDeltaKts, act.SpdDeltaMs, kts),
+    (act.ApAltDeltaFt, act.ApAltDeltaM, ft),
+]
+
+
+@pytest.mark.parametrize(
+    ("in_unit", "in_si", "si_per_unit"),
+    _DELTA_TWINS,
+    ids=[a.__name__ for a, *_ in _DELTA_TWINS],
+)
+def test_twins_share_their_default_ranges(aircraft, in_unit, in_si, si_per_unit):
     # The metric delta actions used to default to half (altitude) and a tenth
-    # (speed) of their twins' ranges.
-    assert act.AltDeltaM().high == pytest.approx(act.AltDeltaFt().high * ft)
-    assert act.SpdDeltaMs().high == pytest.approx(act.SpdDeltaKts().high * kts)
+    # (speed) of their twins' ranges; both now resolve from the envelope.
+    low, high = in_unit().bounds(aircraft)
+    low_si, high_si = in_si().bounds(aircraft)
+    assert low_si == pytest.approx(low * si_per_unit, rel=1e-6)
+    assert high_si == pytest.approx(high * si_per_unit, rel=1e-6)
+
+
+# --- delta defaults -------------------------------------------------------------
+def test_a_delta_defaults_to_the_reachable_span(aircraft):
+    # 12,000 ft is nearer the ground than the ceiling: +/-12,000 ft reaches
+    # both without a dead zone; the speed span is the nearer speed limit.
+    assert act.AltDeltaFt().bounds(aircraft) == pytest.approx((-12_000.0, 12_000.0))
+    cas = float(bs.traf.cas[aircraft])
+    perf = bs.traf.perf
+    half = min(cas - perf.vmin[aircraft], perf.vmax[aircraft] - cas) / kts
+    assert act.SpdDeltaKts().bounds(aircraft) == pytest.approx((-half, half))
+
+
+def test_a_fixed_delta_range_is_still_honored(aircraft):
+    assert act.AltDeltaFt(low=-1000.0, high=1000.0).bounds(aircraft) == (
+        -1000.0,
+        1000.0,
+    )
+
+
+_ALIASES = [
+    (act.ApAltDeltaFt, act.AltDeltaFt, 700.0),
+    (act.ApAltDeltaM, act.AltDeltaM, 200.0),
+    (act.ApSpdDeltaKts, act.SpdDeltaKts, -12.0),
+]
+
+
+@pytest.mark.parametrize(
+    ("alias", "plain", "value"), _ALIASES, ids=[a.__name__ for a, *_ in _ALIASES]
+)
+def test_an_autopilot_delta_is_its_plain_twin_by_another_name(
+    aircraft, sent, alias, plain, value
+):
+    assert issubclass(alias, plain)
+    assert alias.meta.name == f"ap_{plain.meta.name}"
+    assert alias().bounds(aircraft) == plain().bounds(aircraft)
+    alias().set(aircraft, value)
+    plain().set(aircraft, value)
+    assert sent[0] == sent[1]
 
 
 # --- floor and ceiling --------------------------------------------------------
