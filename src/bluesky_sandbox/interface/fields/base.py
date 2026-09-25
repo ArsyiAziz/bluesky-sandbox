@@ -215,7 +215,7 @@ class ActionMeta:
 
     ``control_axis`` identifies which aircraft control channel this action
     commands. ``mode`` describes how values should be interpreted. Switch
-    actions are scalar controls implemented by :class:`SwitchActionMixin` and
+    actions are 0/1 controls implemented by :class:`SwitchActionMixin` and
     handled separately during action ordering.
 
     ``requires_on`` lists switch action names that must also be considered
@@ -728,45 +728,41 @@ class TaskContextPairObsField(EnvPairObsField, ABC, Generic[ContextT]):
         return float(self.low), float(self.high)
 
 
+@dataclass(frozen=True)
 class SwitchActionMixin(ABC):
-    """Behavior required by scalar ON/OFF action fields."""
+    """An ON/OFF action: 1 turns it on, 0 turns it off.
 
-    switch_threshold: ClassVar[float] = 0.5
+    The bounds are fixed at ``(0, 1)`` and there is no normalizer, so the action
+    value reaches the field as the policy gives it; a value between reads as
+    the nearer of the two.
+    """
+
+    low: float = dataclass_field(default=0.0, init=False)
+    high: float = dataclass_field(default=1.0, init=False)
+    normalizer: Any | None = dataclass_field(default=None, init=False)
 
     def _validate_switch_policy(self) -> None:
-        threshold = self.switch_on_value()
-        if not math.isfinite(threshold):
+        if (self.low, self.high, self.normalizer) != (0.0, 1.0, None):
             raise ValueError(
-                f"{self.__class__.__name__} switch threshold must be finite, "
-                f"got {threshold!r}."
+                f"{self.__class__.__name__} is a 0/1 switch: its bounds are (0, 1) "
+                f"and it has no normalizer, got low={self.low!r}, "
+                f"high={self.high!r}, normalizer={self.normalizer!r}."
             )
-        if self.low is not None and self.high is not None:
-            lo, hi = _validate_bounds(
-                f"{self.__class__.__name__} switch bounds",
-                self.low,
-                self.high,
-            )
-            if not lo <= threshold <= hi:
-                raise ValueError(
-                    f"{self.__class__.__name__} switch threshold must be "
-                    f"within bounds ({lo}, {hi}), got {threshold}."
-                )
 
-    def is_on(self, value: float) -> bool:
-        """Return whether a switch-style action value should be treated as ON."""
-        return value >= self.switch_on_value()
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return 0.0, 1.0
 
-    def switch_command(self, value: float) -> bool | None:
-        """Return ON/OFF for a switch command, or None to leave state unchanged."""
-        return self.is_on(value)
+    def switch_command(self, value: float) -> bool:
+        """Whether ``value`` turns the switch on."""
+        return value >= 0.5
+
+    def switch_on_value(self) -> float:
+        """The action value that turns this switch on."""
+        return 1.0
 
     @abstractmethod
     def current_switch_state(self, idx: int) -> bool:
-        """Return current switch state for hold-band semantics."""
-
-    def switch_on_value(self) -> float:
-        """Return an action value that forces this switch ON."""
-        return float(self.switch_threshold)
+        """Whether the switch is on for the aircraft at ``idx``."""
 
 
 @dataclass(frozen=True)

@@ -202,15 +202,10 @@ class ActionDispatcher:
             for field, value in values
             if isinstance(field, SwitchActionMixin)
         ]
-        switch_commands = {}
-        switch_on = {}
-        for field, value in switch_fields:
-            command = field.switch_command(value)
-            switch_commands[field.meta.name] = command
-            switch_on[field.meta.name] = command is True or (
-                command is None and field.current_switch_state(idx)
-            )
-        switch_on_before_dependencies = dict(switch_on)
+        switch_on = {
+            field.meta.name: field.switch_command(value)
+            for field, value in switch_fields
+        }
 
         changed = True
         while changed:
@@ -230,8 +225,10 @@ class ActionDispatcher:
             for axis in field.meta.suppresses_when_on
         }
 
+        # Each switch is set once, to its state after the dependencies: a switch
+        # another one requires stays on, rather than going off and back on.
         for field, value in switch_fields:
-            if switch_commands.get(field.meta.name) is False:
+            if not switch_on[field.meta.name]:
                 field.set(idx, value)
 
         for field, value in values:
@@ -241,13 +238,8 @@ class ActionDispatcher:
                 continue
             field.set(idx, value)
 
-        for field, value in switch_fields:
-            command = switch_commands.get(field.meta.name)
-            if command is True:
-                field.set(idx, value)
-            elif switch_on.get(
-                field.meta.name, False
-            ) and not switch_on_before_dependencies.get(field.meta.name, False):
+        for field, _value in switch_fields:
+            if switch_on[field.meta.name]:
                 field.set(idx, field.switch_on_value())
 
 

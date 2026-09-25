@@ -76,7 +76,12 @@ def _concrete(module, base) -> list[type]:
 
 
 OBS_FIELDS = _concrete(observations, (ObsField, PairObsField))
-ACTION_FIELDS = _concrete(actions, ActionField)
+# A switch has fixed (0, 1) bounds and no normalizer; test_switch_actions has them.
+ACTION_FIELDS = [
+    cls
+    for cls in _concrete(actions, ActionField)
+    if not issubclass(cls, actions.SwitchActionMixin)
+]
 
 # Composite fields wrap another field, so ``cls(low=..., high=...)`` alone
 # leaves them half-built. ``LaggedObs``/``LaggedPair`` deliberately resolve

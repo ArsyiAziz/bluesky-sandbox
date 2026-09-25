@@ -1,9 +1,9 @@
-"""Autopilot mode switches: LNAV, VNAV, or both, with an ON/OFF hold band."""
+"""Autopilot mode switches: LNAV, VNAV, or both, turned on with 1 and off with 0."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, ClassVar
+from typing import ClassVar
 
 import bluesky as bs
 
@@ -22,32 +22,15 @@ def _switch(enabled: bool) -> str:
 
 
 @dataclass(frozen=True)
-class _AutopilotHoldSwitch(SwitchActionMixin, ActionField):
-    """Autopilot switch with ON/OFF commands and a no-op hold band."""
+class _AutopilotSwitch(SwitchActionMixin, ActionField):
+    """An autopilot mode, set ON with 1 and OFF with 0.
+
+    A command goes to BlueSky only when the mode changes: turning a mode off
+    also resets the selections it hands back to (see ``capture_off_reference``),
+    which repeated every step would undo the other actions' targets.
+    """
 
     switch_names: ClassVar[tuple[str, ...]] = ()
-    low: Annotated[float, "switch scalar"] = 0.0
-    high: Annotated[float, "switch scalar"] = 1.0
-    threshold: Annotated[float, "switch ON threshold"] = 0.5
-    off_threshold: Annotated[float, "switch OFF threshold"] = 0.2
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if not self.low <= self.off_threshold <= self.switch_on_value() <= self.high:
-            raise ValueError(
-                f"{self.__class__.__name__} requires "
-                "low <= off_threshold <= threshold <= high"
-            )
-
-    def switch_on_value(self) -> float:
-        return float(self.threshold)
-
-    def switch_command(self, value: float) -> bool | None:
-        if value >= self.switch_on_value():
-            return True
-        if value <= self.off_threshold:
-            return False
-        return None
 
     @staticmethod
     def capture_lnav_reference(idx: int) -> None:
@@ -65,22 +48,19 @@ class _AutopilotHoldSwitch(SwitchActionMixin, ActionField):
 
     def set(self, idx: int, value: float) -> None:
         command = self.switch_command(value)
-        if command is None:
+        if command == self.current_switch_state(idx):
             return
         acid = bs.traf.id[idx]
-        if command is False:
+        if not command:
             self.capture_off_reference(idx)
         state = _switch(command)
         for switch_name in self.switch_names:
             bs.stack.stack(f"{switch_name} {acid} {state}")
 
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._configured_bounds()
-
 
 @dataclass(frozen=True)
-class AutopilotLnav(_AutopilotHoldSwitch):
-    """Command BlueSky LNAV with an ON/OFF hold band."""
+class AutopilotLnav(_AutopilotSwitch):
+    """Turn BlueSky LNAV on (1) or off (0)."""
 
     meta = ActionMeta(
         "autopilot_lnav",
@@ -99,8 +79,8 @@ class AutopilotLnav(_AutopilotHoldSwitch):
 
 
 @dataclass(frozen=True)
-class AutopilotVnav(_AutopilotHoldSwitch):
-    """Command BlueSky VNAV with an ON/OFF hold band."""
+class AutopilotVnav(_AutopilotSwitch):
+    """Turn BlueSky VNAV on (1) or off (0)."""
 
     meta = ActionMeta(
         "autopilot_vnav",
@@ -120,8 +100,8 @@ class AutopilotVnav(_AutopilotHoldSwitch):
 
 
 @dataclass(frozen=True)
-class AutopilotLnavVnav(_AutopilotHoldSwitch):
-    """Command BlueSky LNAV and VNAV together with an ON/OFF hold band."""
+class AutopilotLnavVnav(_AutopilotSwitch):
+    """Turn BlueSky LNAV and VNAV on (1) or off (0) together."""
 
     meta = ActionMeta(
         "autopilot_lnav_vnav",
