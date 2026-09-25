@@ -96,6 +96,15 @@ def _normalize_field_value(field, value, idx: int) -> list[float]:
     return normalizer.normalize(field, float(raw[0]), idx)
 
 
+def _bounds_vary_by_aircraft(field) -> bool:
+    """Whether ``field.bounds(idx)`` can differ between aircraft.
+
+    Fixed bounds - static, or dynamic ones pinned by ``low``/``high`` - are the
+    same at every index, so one normalization serves every ownship.
+    """
+    return bool(field.meta.dynamic_bounds) and not field.bounds_overridden
+
+
 def _normalize_field_values_batch(field, values, idx: int) -> np.ndarray:
     """Vectorized :func:`_normalize_field_value` over a batch of raw values that
     all share ``idx`` (one ownship's intruders). Returns an
@@ -299,49 +308,87 @@ class ObservationAssembler:
             raw = [f.get_many(all_indices) for f, _size in specs]
             return specs, dim, raw
 
-        # With per-intruder bounds, an intruder's value no longer depends on who
-        # observes it: normalize each aircraft once, at its own index, and
-        # share the rows across every ownship's block.
+        intr_fields = config.intruder_obs_fields or []
+        critic_own_fields = config.critic_obs_fields or []
+        critic_intr_fields = config.critic_intruder_obs_fields or []
+        needs_others = bool(intr_fields) or bool(critic_intr_fields)
+        if agent_ids is None:
+            agent_items = tuple(enumerate(bs.traf.id))
+        else:
+            live_index = {acid: idx for idx, acid in enumerate(bs.traf.id)}
+            agent_items = tuple(
+                (idx, acid)
+                for acid in agent_ids
+                if (idx := live_index.get(acid)) is not None
+            )
+        # Every intruder block is sliced from per-field arrays built once here:
+        # an (n, size) array per aircraft for a non-pair field, and a
+        # (k, n, size) matrix per ownship x aircraft for a pair field.
+        owns = np.array([acidx for acidx, _acid in agent_items], dtype=np.intp)
+        own_row = {int(acidx): row for row, acidx in enumerate(owns)}
         own_bounds = config.intruder_obs_bounds == "intruder"
+        pair_matrices: dict[int, np.ndarray] = {}
+
+        def _pair_matrix(field) -> np.ndarray:
+            # Shared by the actor and critic blocks when both list the field.
+            matrix = pair_matrices.get(id(field))
+            if matrix is None:
+                matrix = np.asarray(field.get_pair_matrix(owns))
+                pair_matrices[id(field)] = matrix
+            return matrix
 
         def _intruder_pack(fields):
+            """Per field: ``(field, size, kind, data)``. ``kind`` "rows" is
+            normalized per aircraft, "matrix" normalized per ownship x aircraft;
+            "raw_rows" / "raw_matrix" still need normalizing per ownship, at
+            that ownship's bounds."""
+            if not needs_others or owns.size == 0:
+                fields = ()
             specs = []
-            raw = []
             for f in fields:
                 size = _field_output_size(f)
-                is_pair = isinstance(f, PairObsField)
-                prenormalized = (
-                    own_bounds and not is_pair and _field_normalizer(f) is not None
-                )
-                specs.append((f, size, is_pair, prenormalized))
-                if is_pair:
-                    raw.append(None)
+                # Normalizing at one aircraft's bounds serves every ownship
+                # when the bounds are the same for all of them.
+                scaled = _field_normalizer(f) is not None
+                one_scale = not scaled or not _bounds_vary_by_aircraft(f)
+                if isinstance(f, PairObsField):
+                    matrix = _pair_matrix(f)
+                    if one_scale:
+                        k, n = matrix.shape[:2]
+                        flat = matrix.reshape(k * n, *matrix.shape[2:])
+                        with np.errstate(invalid="ignore"):  # the undefined diagonal
+                            data = _normalize_field_values_batch(f, flat, int(owns[0]))
+                        specs.append((f, size, "matrix", data.reshape(k, n, size)))
+                    else:
+                        specs.append((f, size, "raw_matrix", matrix))
                     continue
                 # Coerce to an ndarray: intruder batches are fancy-indexed by
                 # ``other_arr`` below, which fails on the plain list returned
                 # by the default ``ObsField.get_many`` (fields only ever used as
                 # ownship observations never hit that path).
                 values = np.asarray(f.get_many(all_indices))
-                if prenormalized:
-                    values = np.array(
+                if one_scale:
+                    data = _normalize_field_values_batch(f, values, 0)
+                    specs.append((f, size, "rows", data.reshape(ntraf, size)))
+                elif own_bounds:
+                    # Per-intruder bounds: each aircraft at its own index, which
+                    # no longer depends on who observes it.
+                    data = np.array(
                         [_normalize_field_value(f, values[i], i) for i in all_indices],
                         dtype=np.float32,
                     ).reshape(ntraf, size)
-                raw.append(values)
-            dim = sum(size for _f, size, _p, _n in specs)
-            return tuple(specs), dim, raw
+                    specs.append((f, size, "rows", data))
+                else:
+                    specs.append((f, size, "raw_rows", values))
+            dim = sum(_field_output_size(f) for f in fields)
+            return tuple(specs), dim
 
         obs_specs, ownship_dim, ownship_raw = _ownship_pack(config.obs_fields)
-        intr_fields = config.intruder_obs_fields or []
-        critic_own_fields = config.critic_obs_fields or []
-        critic_intr_fields = config.critic_intruder_obs_fields or []
-        intr_specs, intruder_dim, intr_raw = _intruder_pack(intr_fields)
+        intr_specs, intruder_dim = _intruder_pack(intr_fields)
         critic_own_specs, critic_own_dim, critic_own_raw = _ownship_pack(
             critic_own_fields
         )
-        critic_intr_specs, critic_intr_dim, critic_intr_raw = _intruder_pack(
-            critic_intr_fields
-        )
+        critic_intr_specs, critic_intr_dim = _intruder_pack(critic_intr_fields)
 
         def _fill_ownship(specs, raw, dim, acidx):
             vec = np.empty(dim, dtype=np.float32)
@@ -353,38 +400,26 @@ class ObservationAssembler:
                 cursor = next_cursor
             return vec
 
-        def _fill_intruders(specs, raw, dim, other_indices, other_arr, acidx):
-            block = np.empty((len(other_indices), dim), dtype=np.float32)
+        def _fill_intruders(specs, dim, other_arr, acidx):
+            block = np.empty((other_arr.size, dim), dtype=np.float32)
+            row = own_row[acidx]
             cursor = 0
-            for spec_idx, (field, size, is_pair, prenormalized) in enumerate(specs):
-                if prenormalized:
-                    block[:, cursor : cursor + size] = raw[spec_idx][other_arr]
-                    cursor += size
-                    continue
-                if is_pair:
-                    raw_batch = field.get_pairs(acidx, other_indices)
+            for field, size, kind, data in specs:
+                if kind == "rows":
+                    block[:, cursor : cursor + size] = data[other_arr]
+                elif kind == "matrix":
+                    block[:, cursor : cursor + size] = data[row][other_arr]
                 else:
-                    raw_batch = raw[spec_idx][other_arr]
-                # Bounds are resolved once at the shared ownship idx (acidx), so
-                # the whole intruder batch normalizes in one vectorized op.
-                block[:, cursor : cursor + size] = _normalize_field_values_batch(
-                    field, raw_batch, acidx
-                )
+                    raw_batch = data[row] if kind == "raw_matrix" else data
+                    # The ownship's bounds scale its whole intruder batch in one
+                    # vectorized op.
+                    block[:, cursor : cursor + size] = _normalize_field_values_batch(
+                        field, raw_batch[other_arr], acidx
+                    )
                 cursor += size
             return block
 
-        needs_others = bool(intr_fields) or bool(critic_intr_fields)
-
         obs = {}
-        if agent_ids is None:
-            agent_items = tuple(enumerate(bs.traf.id))
-        else:
-            live_index = {acid: idx for idx, acid in enumerate(bs.traf.id)}
-            agent_items = tuple(
-                (idx, acid)
-                for acid in agent_ids
-                if (idx := live_index.get(acid)) is not None
-            )
         for acidx, acid in agent_items:
             ownship = _fill_ownship(obs_specs, ownship_raw, ownship_dim, acidx)
 
@@ -394,14 +429,15 @@ class ObservationAssembler:
 
             agent_obs = {"ownship": ownship}
             if needs_others:
-                other_indices = tuple(idx for idx in range(ntraf) if idx != acidx)
                 # dtype=intp so an *empty* other set (a lone surviving agent)
                 # stays an integer index array; np.asarray(()) defaults to
-                # float64, which raises on the non-pair fancy-index path below.
-                other_arr = np.asarray(other_indices, dtype=np.intp)
+                # float64, which raises on the fancy-index paths above.
+                other_arr = np.array(
+                    [idx for idx in range(ntraf) if idx != acidx], dtype=np.intp
+                )
             if intr_fields:
                 agent_obs["intruders"] = _fill_intruders(
-                    intr_specs, intr_raw, intruder_dim, other_indices, other_arr, acidx
+                    intr_specs, intruder_dim, other_arr, acidx
                 )
             # Privileged critic-only blocks: same geometry, appended to the
             # critic's view only (see EnvConfig.critic_*obs_fields).
@@ -411,12 +447,7 @@ class ObservationAssembler:
                 )
             if critic_intr_fields:
                 agent_obs["critic_intruders"] = _fill_intruders(
-                    critic_intr_specs,
-                    critic_intr_raw,
-                    critic_intr_dim,
-                    other_indices,
-                    other_arr,
-                    acidx,
+                    critic_intr_specs, critic_intr_dim, other_arr, acidx
                 )
             obs[acid] = agent_obs
         return obs

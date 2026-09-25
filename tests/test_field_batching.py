@@ -236,3 +236,49 @@ def test_batch_normalization_matches_one_at_a_time(fields, cls, name):
             for k in range(len(others))
         ]
         _assert_same(batched, single, f"own {own}")
+
+
+def test_the_intruder_block_matches_per_ownship_assembly():
+    """The assembler builds each field once for all ownships - a pair matrix,
+    and one normalization when bounds do not vary by aircraft. Pin it to the
+    straightforward way: each ownship's intruders, normalized at its bounds."""
+    names = sorted(NORMALIZERS)
+    fields = []
+    for i, cls in enumerate(PAIR_CLASSES + OWN_CLASSES):
+        attached = _normalized_field(_build(cls), NORMALIZERS[names[i % len(names)]])
+        fields.append(_build(cls) if attached is None else attached)
+    # Mixed types, so envelope bounds really differ between ownships.
+    types = ["B744", "A320"]
+    env = BlueskyEnv(
+        scenario=_Scenario(aircraft_type=types),
+        config=EnvConfig(
+            dt=6.0,
+            allowed_aircraft=types,
+            obs_fields=[observations.CasKts()],
+            intruder_obs_fields=fields,
+            action_fields=[],
+        ),
+    )
+    try:
+        env.reset(seed=0)
+        for _ in range(3):
+            env.step({})
+        assembler = env._observation_assembler
+        bound = env.config.intruder_obs_fields
+        for obs_ in (assembler.get_obs(), assembler.get_obs(list(bs.traf.id)[::4])):
+            for acid, agent_obs in obs_.items():
+                own = list(bs.traf.id).index(acid)
+                others = np.array(_others(own), dtype=np.intp)
+                every = np.arange(bs.traf.ntraf)
+                columns = []
+                for field in bound:
+                    if isinstance(field, PairObsField):
+                        raw = field.get_pairs(own, others)
+                    else:
+                        raw = np.asarray(field.get_many(every))[others]
+                    columns.append(
+                        services._normalize_field_values_batch(field, raw, own)
+                    )
+                _assert_same(agent_obs["intruders"], np.hstack(columns), acid)
+    finally:
+        env.close()
