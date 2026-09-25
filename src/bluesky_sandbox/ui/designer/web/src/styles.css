@@ -2745,9 +2745,16 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 4px;
 }
+.sampling-note {
+  margin-bottom: 6px;
+}
+.sampling-ac b {
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+}
 .sampling-row {
   display: grid;
-  grid-template-columns: 70px 1fr 64px 52px;
+  grid-template-columns: 58px minmax(0, 1fr) 34px 96px;
   gap: 6px;
   padding: 3px 8px;
   font-size: 12px;
@@ -3062,6 +3069,23 @@ button:disabled {
 
 .field-row.invalid {
   border-color: #f87171;
+}
+
+/* After a move: what moved, what it means, and a way back. */
+.field-moved {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: -2px 0 8px;
+  padding: 6px 8px;
+  border: 1px solid #6b5a1f;
+  border-radius: 4px;
+  background: #2b2616;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.field-moved > span {
+  flex: 1;
 }
 
 /* Its place in the list, and a grip to drag it by. */

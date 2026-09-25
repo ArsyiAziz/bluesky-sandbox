@@ -90,12 +90,18 @@ export function FieldList({
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
   // Move the field at `from` into the gap `gap`, keeping the rest in order.
+  // Reordering changes the observation's column order, which a trained policy
+  // depends on - so a drag starts only from a row's grip, and every move says
+  // what it did, with a way back.
+  const [armed, setArmed] = useState<number | null>(null);
+  const [moved, setMoved] = useState<{ name: string; from: number; to: number; before: SpecDict[] } | null>(null);
   const move = (from: number, gap: number) => {
     const to = gap > from ? gap - 1 : gap;
     if (to === from || to < 0 || to >= fields.length) return;
     const next = [...fields];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
+    const [field] = next.splice(from, 1);
+    next.splice(to, 0, field);
+    setMoved({ name: field.field.split(":").pop() ?? field.field, from, to, before: fields });
     onChange(next);
   };
   // The gap a pointer over row i points at: before it in its upper half.
@@ -106,6 +112,7 @@ export function FieldList({
   const endDrag = () => {
     setDragFrom(null);
     setDropAt(null);
+    setArmed(null);
   };
   const normalizerOrder = normalizers.map((n) => n.name);
   const optByName = (n: string) => options.find((o) => o.name === n);
@@ -148,7 +155,7 @@ export function FieldList({
               key={`${f.field}-${i}`}
               title={`${problem ? validationError : opt?.doc || f.field}\n\nDrag, or Alt+↑/↓, to reorder.`}
               tabIndex={0}
-              draggable
+              draggable={armed === i}
               onClick={() => setEditing(i)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") setEditing(i);
@@ -158,6 +165,10 @@ export function FieldList({
                 }
               }}
               onDragStart={(e) => {
+                if (armed !== i) {
+                  e.preventDefault();
+                  return;
+                }
                 e.dataTransfer.effectAllowed = "move";
                 e.dataTransfer.setData("text/plain", f.field);
                 setDragFrom(i);
@@ -174,7 +185,13 @@ export function FieldList({
               }}
               onDragEnd={endDrag}
             >
-              <span className="field-row-grip" aria-hidden="true">
+              <span
+                className="field-row-grip"
+                title="drag to reorder"
+                onPointerDown={() => setArmed(i)}
+                onPointerUp={() => setArmed(null)}
+                onClick={(e) => e.stopPropagation()}
+              >
                 ⠿
               </span>
               <span className="field-row-num">{i + 1}</span>
@@ -217,6 +234,25 @@ export function FieldList({
         })}
         {fields.length === 0 && <span className="muted">no {label} fields</span>}
       </div>
+      {moved && (
+        <div className="field-moved" role="status">
+          <span>
+            Moved <b>{moved.name}</b> from {moved.from + 1} to {moved.to + 1}. The observation's columns reorder, so a
+            policy trained on the old order will not match.
+          </span>
+          <button
+            onClick={() => {
+              onChange(moved.before);
+              setMoved(null);
+            }}
+          >
+            Undo
+          </button>
+          <button className="link" onClick={() => setMoved(null)} aria-label="dismiss">
+            ✕
+          </button>
+        </div>
+      )}
 
       {editing != null && fields[editing] && (
         <FieldConfigModal

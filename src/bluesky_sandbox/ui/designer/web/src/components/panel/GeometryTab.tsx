@@ -627,7 +627,13 @@ export default function GeometryTab({
 
       <div className="geo-inspector">
         {sel != null && (
-          <button className="geo-back" onClick={() => onSelect(null)}>
+          <button
+            className="geo-back"
+            onClick={() => {
+              setRoutesView(false);
+              onSelect(null);
+            }}
+          >
             ← all elements
           </button>
         )}
