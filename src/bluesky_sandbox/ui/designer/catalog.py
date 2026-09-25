@@ -390,7 +390,7 @@ OBS_FIELD_SCAFFOLD = '''
 class {name}(ObsField):
     """Custom observation: one scalar value per aircraft.
 
-    The designer constructs this class from the Fields tab. Constructor values
+    The designer constructs this class from the Spaces tab. Constructor values
     such as ``low``, ``high``, and ``normalizer`` can be configured there.
     """
 
@@ -424,7 +424,7 @@ ACTION_FIELD_SCAFFOLD = '''
 class {name}(ActionField):
     """Custom action: maps one agent action scalar to a BlueSky command.
 
-    The designer constructs this class from the Fields tab. Constructor values
+    The designer constructs this class from the Spaces tab. Constructor values
     such as ``low``, ``high``, and ``normalizer`` can be configured there.
     """
 

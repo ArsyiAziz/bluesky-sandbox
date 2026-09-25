@@ -7,18 +7,27 @@ import MapTab from "./components/MapTab";
 import CodeTab from "./components/CodeTab";
 import RouteTab from "./route/RouteTab";
 import GenerateModal from "./components/GenerateModal";
-import MdpTab from "./components/MdpTab";
+import ConfigTab from "./components/ConfigTab";
+import SpacesTab from "./components/SpacesTab";
 import { RefreshContext } from "./refresh";
 import MetadataTab from "./components/MetadataTab";
 import RunModal from "./components/RunModal";
 import { Picker } from "./components/panel/Picker";
 
-type Tab = "map" | "route" | "code" | "metadata" | "mdp";
+type Tab = "map" | "route" | "spaces" | "config" | "code" | "metadata";
 
 const normalizeSpec = (spec: SpecDict): SpecDict =>
   migrateRotationGroups(migrateRewardHooks(normalizeToRegions(spec)));
 
 const IMPORT_JSON_VALUE = "__import_json__";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "map", label: "Map" },
+  { id: "route", label: "Route" },
+  { id: "spaces", label: "Spaces" },
+  { id: "config", label: "Config" },
+  { id: "code", label: "Code" },
+  { id: "metadata", label: "Metadata" },
+];
 const NEW_PROJECT_VALUE = "__new_project__";
 const DELETE_PROJECT_VALUE = "__delete_project__";
 
@@ -333,21 +342,11 @@ export default function App() {
       <header className="toolbar">
         <strong className="brand">Environment Designer</strong>
         <div className="tabs">
-          <button className={tab === "map" ? "tab active" : "tab"} onClick={() => setTab("map")}>
-            Map
-          </button>
-          <button className={tab === "route" ? "tab active" : "tab"} onClick={() => setTab("route")}>
-            Route
-          </button>
-          <button className={tab === "code" ? "tab active" : "tab"} onClick={() => setTab("code")}>
-            Code
-          </button>
-          <button className={tab === "metadata" ? "tab active" : "tab"} onClick={() => setTab("metadata")}>
-            Metadata
-          </button>
-          <button className={tab === "mdp" ? "tab active" : "tab"} onClick={() => setTab("mdp")}>
-            MDP
-          </button>
+          {TABS.map((t) => (
+            <button key={t.id} className={tab === t.id ? "tab active" : "tab"} onClick={() => setTab(t.id)}>
+              {t.label}
+            </button>
+          ))}
         </div>
         <div className="undo-redo">
           <button onClick={undo} disabled={!canUndo} title="Undo (⌘/Ctrl+Z)" aria-label="Undo">
@@ -423,13 +422,19 @@ export default function App() {
 
       <main className="content">
         {tab === "map" ? (
-          <MapTab spec={spec} onSpecChange={updateSpec} validation={validation} />
+          <MapTab spec={spec} onSpecChange={updateSpec} />
         ) : tab === "route" ? (
           <RouteTab spec={spec} onSpecChange={updateSpec} />
         ) : tab === "metadata" ? (
           <MetadataTab spec={spec} onChange={updateSpec} />
-        ) : tab === "mdp" ? (
-          <MdpTab spec={spec} />
+        ) : tab === "spaces" ? (
+          <SpacesTab
+            spec={spec}
+            onChange={updateSpec}
+            validationError={validation && !validation.ok ? validation.error : undefined}
+          />
+        ) : tab === "config" ? (
+          <ConfigTab spec={spec} onChange={updateSpec} />
         ) : (
           <CodeTab
             spec={spec}

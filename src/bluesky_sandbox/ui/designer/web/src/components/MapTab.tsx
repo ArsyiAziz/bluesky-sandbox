@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import maplibregl from "maplibre-gl";
 import { MapboxOverlay } from "@deck.gl/mapbox";
-import { api, type SpecDict, type PreviewResult, type NavFeatures, type ValidateResult } from "../api";
+import { api, type SpecDict, type PreviewResult, type NavFeatures } from "../api";
 import DesignPanel from "./DesignPanel";
 import SearchBox from "./SearchBox";
 import type { CategoryVisibility, EditHandle, EditTarget } from "../map/types";
@@ -67,11 +67,9 @@ function isEditableElement(el: EventTarget | null): boolean {
 export default function MapTab({
   spec,
   onSpecChange,
-  validation,
 }: {
   spec: SpecDict | null;
   onSpecChange: (next: SpecDict) => void;
-  validation: ValidateResult | null;
 }) {
   // Design-panel width. Persisted per browser so a width you chose survives a
   // reload; clamped on read as well as on drag, because a stored value from a
@@ -743,7 +741,6 @@ export default function MapTab({
           onHighlightRoute={setHighlight}
           selectedKey={selectedTarget ? targetKey(selectedTarget) : null}
           onSelect={selectTarget}
-          validationError={validation && !validation.ok ? validation.error : undefined}
         />
       )}
     </div>

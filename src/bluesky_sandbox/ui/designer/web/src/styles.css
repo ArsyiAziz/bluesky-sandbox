@@ -2689,7 +2689,52 @@ button:disabled {
   color: var(--muted);
 }
 
-/* MDP tab: each part's columns as a strip, then its fields as a table. */
+/* Spaces tab: the field editor beside the spaces it builds. */
+.spaces-tab {
+  display: flex;
+  height: 100%;
+}
+
+.spaces-side {
+  width: 400px;
+  flex: none;
+  overflow: auto;
+  padding: 6px 12px 30px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.spaces-tab > .mdp-tab {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Config tab: a single-column form, its groups spaced apart. */
+.config-tab {
+  height: 100%;
+  overflow: auto;
+  padding: 8px 24px 32px;
+  max-width: 640px;
+  font-size: 12px;
+}
+
+.config-tab .sub-label {
+  margin: 22px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.config-tab .numfield.inline > span:first-child {
+  width: 110px;
+  flex: none;
+}
+
+.config-tab .muted.small {
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+/* The spaces, part by part: each part's columns as a strip, then its fields. */
 .mdp-tab {
   height: 100%;
   overflow: auto;
