@@ -932,13 +932,36 @@ button:disabled {
 
 /* Drag handle between the map and the design panel. The hit area is wider
    than the visible line so it is grabbable without pixel-hunting. */
-/* A divider between panes: a thin hit strip that lights when grabbed. */
+/* A divider between panes: a thin hit strip that lights when grabbed, with a
+   grip at its middle so it can be found before it is hovered. */
 .resizer {
+  position: relative;
   flex: none;
   z-index: 6;
   background: transparent;
   transition: background 120ms ease;
   touch-action: none;
+}
+.resizer::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: #5a5a5c;
+}
+.resizer-x::after {
+  width: 3px;
+  height: 28px;
+}
+.resizer-y::after {
+  width: 28px;
+  height: 3px;
+}
+.resizer:hover::after,
+.resizer.dragging::after {
+  background: #fff;
 }
 .resizer-x {
   width: 6px;
@@ -956,6 +979,7 @@ button:disabled {
 }
 
 .panel-resizer {
+  position: relative;
   flex: 0 0 auto;
   width: 6px;
   margin: 0 -3px;
@@ -969,6 +993,18 @@ button:disabled {
 .panel-resizer:hover,
 .panel-resizer:active {
   background: var(--accent);
+}
+
+.panel-resizer::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: #5a5a5c;
 }
 
 .panel-tabs {
