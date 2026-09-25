@@ -1,7 +1,7 @@
 """Every observation field batches exactly like it computes one value.
 
 The observation assembler never calls the one-at-a-time methods: ownship rows
-come from ``get_many`` and intruder rows from ``get_pairs``, normalized with
+come from ``get_many`` and intruder rows from ``get_pair_matrix``, normalized with
 ``_normalize_field_values_batch``. Tasks and rewards, though, call ``get`` and
 ``get_pair``. If the two disagree, an agent observes a different number than
 its reward is computed from, and nothing else notices: this sweep found
@@ -86,7 +86,7 @@ def _build(cls: type):
 class _Scenario:
     """20 aircraft on one route in a small box: conflicts and LoS by step 1."""
 
-    def __init__(self) -> None:
+    def __init__(self, aircraft_type="B744") -> None:
         self.spawn = SpawnConfig(
             regions=[
                 SpawnRegion(
@@ -96,7 +96,7 @@ class _Scenario:
                     route=["merge"],
                 )
             ],
-            aircraft_type="B744",
+            aircraft_type=aircraft_type,
             conflict_free_spawn=False,
         )
 
@@ -185,6 +185,23 @@ def test_get_pairs_matches_get_pair(fields, cls):
             _assert_same(
                 batched[k], field.get_pair(own, other), f"own {own}, other {other}"
             )
+
+
+@pytest.mark.parametrize("cls", PAIR_CLASSES, ids=lambda c: c.__name__)
+def test_get_pair_matrix_matches_get_pairs(fields, cls):
+    """The assembler reads each ownship's row of one matrix per field."""
+    field = fields[cls.__name__]
+    owns = np.array(_all_indices())
+    matrix = np.asarray(field.get_pair_matrix(owns))
+    assert matrix.shape[:2] == (len(owns), bs.traf.ntraf)
+    for row, own in enumerate(owns):
+        others = np.array(_others(int(own)))
+        _assert_same(
+            matrix[row][others], field.get_pairs(int(own), others), f"own {own}"
+        )
+    # A subset of ownships reads the same rows.
+    subset = owns[1::3]
+    _assert_same(field.get_pair_matrix(subset), matrix[1::3], "ownship subset")
 
 
 def _normalized_field(field, normalizer):

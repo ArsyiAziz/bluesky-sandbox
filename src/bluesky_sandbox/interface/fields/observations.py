@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, ClassVar
@@ -11,7 +10,7 @@ from bluesky.tools.aero import crossoveralt, ft, g0, kts, nm, vcas2tas
 from bluesky.tools.geo import kwikqdrdist, qdrdist
 
 from bluesky_sandbox.sim.geometry.conflict import (
-    ConflictView,
+    conflict_geometry,
     predicted_tlos_s,
     windowed_min_hsep_nm,
     windowed_min_vsep_ft,
@@ -33,6 +32,8 @@ from bluesky_sandbox.sim.performance.envelope import (
 from bluesky_sandbox.sim.performance.models import type_limits
 from bluesky_sandbox.sim.performance.speeds import crossover_speed_state
 
+from bluesky_sandbox.sim.aircraft_uids import live_aircraft_uids
+
 from .base import ObsField, ObsMeta, ObsQuantity, PairObsField, Unit
 
 _M_TO_FT = 1.0 / ft
@@ -52,38 +53,151 @@ def _indices_array(indices: Any) -> np.ndarray:
     return np.asarray(indices, dtype=np.intp)
 
 
-def _pair_qdr_dist(own_idx: int, other_indices: Any) -> tuple[np.ndarray, np.ndarray]:
-    other_indices = _indices_array(other_indices)
-    own_lat = np.full(other_indices.shape, bs.traf.lat[own_idx])
-    own_lon = np.full(other_indices.shape, bs.traf.lon[own_idx])
-    qdr, dist = qdrdist(
-        own_lat,
-        own_lon,
-        bs.traf.lat[other_indices],
-        bs.traf.lon[other_indices],
+# Pair helpers take ``own`` and ``other`` INDEX ARRAYS that broadcast against
+# each other: a scalar ownship against a 1-D intruder list (``get_pairs``), or an
+# ``(k, 1)`` column of ownships against a ``(1, n)`` row of every aircraft
+# (``get_pair_matrix``). One computation serves both, so they cannot disagree.
+
+
+def _traf_array(name: str) -> np.ndarray:
+    return np.asarray(getattr(bs.traf, name), dtype=np.float64)
+
+
+def _pair_index_grid(own_indices: Any) -> tuple[np.ndarray, np.ndarray]:
+    """``(k, 1)`` ownships and a ``(1, n)`` row of every live aircraft."""
+    own = _indices_array(own_indices).reshape(-1, 1)
+    every = np.arange(int(bs.traf.ntraf), dtype=np.intp).reshape(1, -1)
+    return own, every
+
+
+def _per_own(own: np.ndarray, value) -> np.ndarray:
+    """``value(own_idx)`` for each ownship, shaped like ``own`` to broadcast."""
+    return np.array(
+        [float(value(int(o))) for o in own.ravel()], dtype=np.float64
+    ).reshape(own.shape)
+
+
+class _BroadcastPairs:
+    """A pair field defined by one broadcasting function, :meth:`_pairs`.
+
+    ``get_pair``, ``get_pairs`` and ``get_pair_matrix`` are all that function
+    evaluated on different index shapes, so they agree by construction.
+    """
+
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
+        return float(self.get_pairs(own_idx, [other_idx])[0])
+
+    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
+        return self._pairs(_indices_array(own_idx), _indices_array(other_indices))
+
+    def get_pair_matrix(self, own_indices: Any) -> np.ndarray:
+        own, every = _pair_index_grid(own_indices)
+        return self._pairs(own, every)
+
+
+def _per_aircraft(field: ObsField, idx: np.ndarray) -> np.ndarray:
+    """An ownship field's value at each index of ``idx``, shaped like it."""
+    flat = np.asarray(field.get_many(idx.ravel()), dtype=np.float64)
+    return flat.reshape(idx.shape + flat.shape[1:])
+
+
+# BlueSky's detector keeps one entry per conflict pair (``confpairs``) in each
+# of its arrays. Laid out as an ``n x n`` matrix once per sim time, so every
+# ownship reads its row instead of rescanning the pair list.
+_CD_PAIR_CACHE: dict[str, tuple[tuple, tuple[np.ndarray, np.ndarray]]] = {}
+
+
+def _cd_pair_matrix(attr: str) -> tuple[np.ndarray, np.ndarray] | None:
+    """``(values, present)`` of CD array ``attr`` by ``[own, other]`` index."""
+    cd = getattr(bs.traf, "cd", None)
+    if cd is None or len(cd.confpairs) == 0:
+        return None
+    ids = bs.traf.id
+    key = (float(bs.sim.simt), tuple(ids), id(cd.confpairs), len(cd.confpairs))
+    cached = _CD_PAIR_CACHE.get(attr)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    n = len(ids)
+    values = np.zeros((n, n), dtype=np.float64)
+    present = np.zeros((n, n), dtype=bool)
+    row = {acid: i for i, acid in enumerate(ids)}
+    source = np.asarray(getattr(cd, attr), dtype=np.float64)
+    for k, (left, right) in enumerate(cd.confpairs):
+        i, j = row.get(left), row.get(right)
+        if i is not None and j is not None and k < source.size:
+            values[i, j] = source[k]
+            present[i, j] = True
+    _CD_PAIR_CACHE[attr] = (key, (values, present))
+    return values, present
+
+
+def _cd_pair_values(
+    attr: str, own: np.ndarray, other: np.ndarray, fill, divisor: float = 1.0
+) -> np.ndarray:
+    """CD array ``attr`` for each (own, other) pair in conflict, else ``fill``."""
+    shape = np.broadcast_shapes(own.shape, other.shape)
+    fill = np.broadcast_to(np.asarray(fill, dtype=np.float64), shape)
+    matrix = _cd_pair_matrix(attr)
+    if matrix is None:
+        return fill.copy()
+    values, present = matrix
+    return np.where(present[own, other], values[own, other] / divisor, fill)
+
+
+class _GeomPairs:
+    """The per-step conflict geometry, sliced by (own, other) index arrays.
+
+    Stands in for :class:`ConflictView` wherever only its raw per-pair arrays
+    are read - the windowed conflict functions are elementwise - but over any
+    broadcastable index shape, so one ownship's row and every ownship's matrix
+    come from the same code.
+    """
+
+    __slots__ = ("_geom", "_other", "_own")
+
+    def __init__(self, own: np.ndarray, other: np.ndarray) -> None:
+        self._geom = conflict_geometry()
+        self._own = own
+        self._other = other
+
+    def __getattr__(self, name: str) -> np.ndarray:
+        return getattr(self._geom, name)[self._own, self._other]
+
+
+def _pair_qdr_dist(own_idx: Any, other_indices: Any) -> tuple[np.ndarray, np.ndarray]:
+    own = _indices_array(own_idx)
+    other = _indices_array(other_indices)
+    lat, lon = _traf_array("lat"), _traf_array("lon")
+    qdr, dist = qdrdist(lat[own], lon[own], lat[other], lon[other])
+    shape = np.broadcast_shapes(own.shape, other.shape)
+    return (
+        np.broadcast_to(np.asarray(qdr, dtype=np.float64), shape),
+        np.broadcast_to(np.asarray(dist, dtype=np.float64), shape),
     )
-    return np.asarray(qdr, dtype=np.float64), np.asarray(dist, dtype=np.float64)
 
 
 def _pair_relative_motion(
-    own_idx: int,
+    own_idx: Any,
     other_indices: Any,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return relative position and velocity as east/north arrays in SI units."""
     qdr, dist_nm = _pair_qdr_dist(own_idx, other_indices)
-    other_indices = _indices_array(other_indices)
+    own = _indices_array(own_idx)
+    other = _indices_array(other_indices)
     qdrrad = np.radians(qdr)
     dist_m = dist_nm * nm
     rel_east_m = dist_m * np.sin(qdrrad)
     rel_north_m = dist_m * np.cos(qdrrad)
 
-    own_track = np.radians(float(bs.traf.trk[own_idx]))
-    own_east_ms = float(bs.traf.gs[own_idx]) * np.sin(own_track)
-    own_north_ms = float(bs.traf.gs[own_idx]) * np.cos(own_track)
-
-    other_track = np.radians(bs.traf.trk[other_indices])
-    other_east_ms = bs.traf.gs[other_indices] * np.sin(other_track)
-    other_north_ms = bs.traf.gs[other_indices] * np.cos(other_track)
+    track = np.radians(_traf_array("trk"))
+    gs = _traf_array("gs")
+    own_east_ms = gs[own] * np.sin(track[own])
+    own_north_ms = gs[own] * np.cos(track[own])
+    other_east_ms = gs[other] * np.sin(track[other])
+    other_north_ms = gs[other] * np.cos(track[other])
 
     return (
         rel_east_m,
@@ -93,7 +207,7 @@ def _pair_relative_motion(
     )
 
 
-def _pair_horizontal_tcpa_s(own_idx: int, other_indices: Any) -> np.ndarray:
+def _pair_horizontal_tcpa_s(own_idx: Any, other_indices: Any) -> np.ndarray:
     rel_east_m, rel_north_m, rel_east_ms, rel_north_ms = _pair_relative_motion(
         own_idx,
         other_indices,
@@ -1202,7 +1316,7 @@ def reset_all_field_state(seed: int | None = None) -> None:
     global _COMM_NOISE_RNG
     _LAST_NORM_ACTION.clear()
     _LAG_HISTORY.clear()
-    _LAG_LAST_SIMT.clear()
+    _CD_PAIR_CACHE.clear()
     _TIME_IN_ENV.clear()
     _COMM_MESSAGE.clear()
     _COMM_NOISE_RNG = np.random.default_rng(seed)
@@ -1227,14 +1341,15 @@ class _LagHistoryBacked:
     """State hooks for lag/stack wrappers.
 
     History is pushed lazily on read (see ``get_many``), so there is no
-    ``on_step`` here - only the per-aircraft drop. Keys are
-    ``(field_key, acid)`` or ``(field_key, own_acid, other_acid)``, so losing
-    one aircraft means losing every key that mentions it.
+    ``on_step`` here - only the per-aircraft drop.
     """
 
     def on_aircraft_removed(self, acid: str) -> None:
-        for key in [k for k in _LAG_HISTORY if acid in k[1:]]:
-            del _LAG_HISTORY[key]
+        # Uid-keyed rows need nothing: the next access drops the departed
+        # aircraft. Callsign-keyed ones must forget it here, or a new aircraft
+        # given the same callsign would inherit its history.
+        for ring in _LAG_HISTORY.values():
+            ring.forget(acid)
 
 
 class _TimeInEnvBacked:
@@ -1689,25 +1804,28 @@ _LAST_NORM_ACTION: dict[str, np.ndarray] = {}
 # ``_LAST_NORM_ACTION`` above: one BlueSky sim per process, the env clears on
 # reset and drops an aircraft on despawn.
 #
-# Keyed by ``(field_key, acid)`` for ownship fields and
-# ``(field_key, own_acid, other_acid)`` for pair fields. ``field_key`` is the
-# INNER field's repr, not its ``meta.name``: two instances of the same class with
+# One ring buffer per INNER field, keyed ``("obs" | "pair", repr(inner))``.
+# ``repr`` rather than ``meta.name``: two instances of the same class with
 # different kwargs (``ConflictTlosS(rpz_nm=8)`` vs ``rpz_nm=5``) share a name but
 # are different signals and must not share a buffer.
 #
-# All lags of one inner field share a buffer, and the push is guarded by sim
+# All lags of one inner field share its buffer, and the push is guarded by sim
 # time, so ``.lagged(1)`` and ``.lagged(2)`` on the same field cost ONE inner
 # evaluation per step rather than one each - this sits in the per-agent per-step
 # rollout hot path.
-_LAG_HISTORY: dict[tuple, Any] = {}
-_LAG_LAST_SIMT: dict[tuple, float] = {}
+#
+# Rows follow aircraft by uid (:mod:`~bluesky_sandbox.sim.aircraft_uids`), not
+# callsign: BlueSky reuses a deleted aircraft's callsign, and a history keyed by
+# callsign would hand the new aircraft the old one's past. A field used without
+# a runtime - on its own, or under a test's stand-in for BlueSky - falls back to
+# callsigns, and ``on_aircraft_removed`` forgets them.
+_LAG_HISTORY: dict[tuple[str, str], _LagRing] = {}
 
 # How deep each inner field's history has to be: the deepest lag anyone
 # actually built on it. Derived rather than capped - a fixed ceiling made
-# ``.lagged(12)`` a source edit for no benefit, since ``deque(maxlen=n)``
-# allocates on append and an unused depth costs nothing. Sizing per field also
-# stops the common case over-allocating: with only ``.lagged(1)`` configured a
-# buffer now holds 2 frames per aircraft instead of a blanket 9.
+# ``.lagged(12)`` a source edit for no benefit. Sizing per field also stops the
+# common case over-allocating: with only ``.lagged(1)`` configured a buffer
+# holds 2 frames per aircraft instead of a blanket 9.
 #
 # Keyed by ``repr(inner)`` like the history itself, so sibling lags of one
 # field agree on a size. This is derived from CONFIGURATION, not from episode
@@ -1721,31 +1839,136 @@ def _register_lag_depth(key: str, steps: int) -> None:
     _LAG_DEPTH[key] = max(_LAG_DEPTH.get(key, 0), int(steps))
 
 
-def _lag_buffer(key: str, steps: int) -> Any:
-    """A history buffer deep enough for every lag registered on ``key``.
+def _lag_row_keys() -> tuple:
+    """Each live aircraft's uid, or its callsign when there is no runtime."""
+    ids = bs.traf.id
+    uids = live_aircraft_uids()
+    if uids is not None and len(uids) == len(ids):
+        return tuple(uids.tolist())
+    return tuple(ids)
 
-    Sized when the buffer is first created, which is after configuration built
-    every field, so all depths are known by then. A lag constructed *after*
-    stepping has begun on the same inner field would find the existing buffer
-    already sized; it degrades to a zero-order hold rather than failing.
+
+class _LagRing:
+    """Past values of one inner field, per aircraft or per ordered pair.
+
+    ``values[slot, row]`` (``values[slot, own, other]`` for pairs) is a ring of
+    ``depth`` frames. Every entry keeps its own write position and length,
+    because entries are pushed independently - only the aircraft (or pairs)
+    observed at a sim time. Rows are matched to aircraft by key on every
+    access, so an entry follows its aircraft when others spawn or leave.
     """
-    return deque(maxlen=_LAG_DEPTH.get(key, int(steps)) + 1)
+
+    def __init__(self, depth: int, *, pair: bool) -> None:
+        # Frames kept: the deepest lag registered on the field, plus the latest.
+        # Sized once, after configuration built every field; a lag constructed
+        # later on the same inner field finds it sized and degrades to a
+        # zero-order hold rather than failing.
+        self.depth = depth
+        self.pair = pair
+        self.keys: tuple = ()
+        self.row: dict = {}
+        grid = (0, 0) if pair else (0,)
+        self.values: np.ndarray | None = None  # allocated at the first push
+        self.head = np.zeros(grid, dtype=np.intp)
+        self.count = np.zeros(grid, dtype=np.intp)
+        # When each ownship row was last pushed (pairs); an ownship field is
+        # pushed as a whole, once per sim time, by whichever query comes first.
+        self.pushed_at = np.full(0, np.nan)
+        self.last_push_simt: float | None = None
+
+    def sync(self, keys: tuple) -> None:
+        """Match rows to ``keys``; survivors keep their history, newcomers none."""
+        if keys == self.keys:
+            return
+        take = np.fromiter(
+            (self.row.get(key, -1) for key in keys), dtype=np.intp, count=len(keys)
+        )
+        new_rows = np.flatnonzero(take >= 0)
+        old_rows = take[new_rows]
+        n = len(keys)
+        grid = (n, n) if self.pair else (n,)
+
+        def carry(old: np.ndarray, lead: int) -> np.ndarray:
+            tail = old.shape[lead + len(grid) :]
+            new = np.zeros(old.shape[:lead] + grid + tail, dtype=old.dtype)
+            pick = (slice(None),) * lead
+            if self.pair:
+                new[pick + np.ix_(new_rows, new_rows)] = old[
+                    pick + np.ix_(old_rows, old_rows)
+                ]
+            else:
+                new[pick + (new_rows,)] = old[pick + (old_rows,)]
+            return new
+
+        self.head = carry(self.head, 0)
+        self.count = carry(self.count, 0)
+        if self.values is not None:
+            self.values = carry(self.values, 1)
+        pushed_at = np.full(n, np.nan)
+        pushed_at[new_rows] = self.pushed_at[old_rows]
+        self.pushed_at = pushed_at
+        self.keys = keys
+        self.row = {key: i for i, key in enumerate(keys)}
+
+    def _at(self, rows: np.ndarray, cols: np.ndarray | None) -> tuple:
+        return (rows[:, None], cols[None, :]) if self.pair else (rows,)
+
+    def push(self, current, rows: np.ndarray, cols: np.ndarray | None = None) -> None:
+        """Append ``current`` to the rings of ``rows`` (x ``cols``, for pairs)."""
+        current = np.asarray(current, dtype=np.float64)
+        at = self._at(rows, cols)
+        if self.values is None:
+            tail = current.shape[len(at) :]
+            self.values = np.zeros((self.depth, *self.head.shape, *tail))
+        head = (self.head[at] + 1) % self.depth
+        self.head[at] = head
+        self.values[(head, *at)] = current
+        self.count[at] = np.minimum(self.count[at] + 1, self.depth)
+
+    def read(
+        self, steps: int, rows: np.ndarray, cols: np.ndarray | None = None
+    ) -> tuple[np.ndarray | None, np.ndarray]:
+        """``(values, missing)``: each entry ``steps`` pushes back, held at its
+        oldest frame when the history is shorter.
+
+        Zero-order hold, never zero-fill: a brand-new aircraft has no history,
+        and zero is a MEANINGFUL value for these fields (raw 0 on
+        ``ConflictTlosS`` means "in LoS right now"), so zero-filling would inject
+        a maximal-threat signal on every aircraft that just came into view.
+        Repeating the oldest value it has says "no observed change", which is
+        the honest reading. An entry with no history at all is ``missing``; the
+        caller substitutes its live value.
+        """
+        at = self._at(rows, cols)
+        count = self.count[at]
+        missing = count == 0
+        if self.values is None:
+            return None, missing
+        back = np.minimum(int(steps), np.maximum(count - 1, 0))
+        slot = (self.head[at] - back) % self.depth
+        return self.values[(slot, *at)], missing
+
+    def forget(self, key) -> None:
+        """Drop the history of the aircraft keyed ``key``, if it has a row."""
+        row = self.row.get(key)
+        if row is None:
+            return
+        if self.pair:
+            self.count[row, :] = 0
+            self.count[:, row] = 0
+        else:
+            self.count[row] = 0
+        self.pushed_at[row] = np.nan
 
 
-
-
-
-
-def _lag_read(buf, steps: int):
-    """Value ``steps`` back, zero-order held when the history is shorter.
-
-    Zero-order hold, never zero-fill: a brand-new aircraft has no history, and
-    zero is a MEANINGFUL value for these fields (raw 0 on ``ConflictTlosS``
-    means "in LoS right now"), so zero-filling would inject a maximal-threat
-    signal on every aircraft that just came into view. Repeating the oldest
-    value it has says "no observed change", which is the honest reading.
-    """
-    return buf[max(0, len(buf) - 1 - int(steps))]
+def _lag_ring(kind: str, key: str, steps: int) -> _LagRing:
+    """The shared ring for inner field ``key``, its rows matched to traffic."""
+    ring = _LAG_HISTORY.get((kind, key))
+    if ring is None:
+        depth = _LAG_DEPTH.get(key, int(steps)) + 1
+        ring = _LAG_HISTORY[(kind, key)] = _LagRing(depth, pair=kind == "pair")
+    ring.sync(_lag_row_keys())
+    return ring
 
 
 @dataclass(frozen=True)
@@ -1803,27 +2026,23 @@ class LaggedObs(_LagHistoryBacked, ObsField):
 
     def get_many(self, indices: Any) -> Any:
         inner = self._field()
-        idxs = [int(i) for i in indices]
-        key0 = (self._key,)
+        idxs = _indices_array(indices).ravel()
+        ring = _lag_ring("obs", self._key, self.steps)
         simt = float(bs.sim.simt)
-        if _LAG_LAST_SIMT.get(key0) != simt:
-            _LAG_LAST_SIMT[key0] = simt
-            current = inner.get_many(idxs)
-            for pos, i in enumerate(idxs):
-                buf = _LAG_HISTORY.setdefault(
-                    (self._key, bs.traf.id[i]), _lag_buffer(self._key, self.steps)
-                )
-                buf.append(current[pos])
-        out = []
-        for i in idxs:
-            buf = _LAG_HISTORY.get((self._key, bs.traf.id[i]))
-            if not buf:
-                # Aircraft appeared after this step's push (or the push was made
-                # by a sibling lag before it existed): its own value is the only
-                # history there is.
-                out.append(inner.get(i))
-            else:
-                out.append(_lag_read(buf, self.steps))
+        if ring.last_push_simt != simt:
+            ring.last_push_simt = simt
+            rows = np.unique(idxs)
+            if rows.size:
+                ring.push(inner.get_many(rows), rows)
+        out, missing = ring.read(self.steps, idxs)
+        if out is None or missing.any():
+            # Aircraft that appeared after this step's push (or the push was made
+            # by a sibling lag before it existed): its own value is the only
+            # history there is.
+            live = np.asarray(inner.get_many(idxs), dtype=np.float64)
+            if out is None:
+                return live
+            out[missing] = live[missing]
         return out
 
 
@@ -1882,38 +2101,36 @@ class LaggedPair(_LagHistoryBacked, PairObsField):
         return self.get_pairs(own_idx, [int(other_idx)])[0]
 
     def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
+        own = np.array([int(own_idx)], dtype=np.intp)
+        return self._lagged(own, _indices_array(other_indices).ravel())[0]
+
+    def get_pair_matrix(self, own_indices: Any) -> np.ndarray:
+        every = np.arange(int(bs.traf.ntraf), dtype=np.intp)
+        return self._lagged(_indices_array(own_indices).ravel(), every)
+
+    def _lagged(self, owns: np.ndarray, cols: np.ndarray) -> np.ndarray:
+        """The inner field ``steps`` pushes back, for each (own, col) pair.
+
+        Each ownship's row is pushed once per sim time, by its first query, with
+        the pairs that query asked for.
+        """
         inner = self._field()
-        others = [int(j) for j in np.asarray(other_indices, dtype=int).ravel()]
-        if not others:
-            return inner.get_pairs(own_idx, others)
-        own_acid = bs.traf.id[int(own_idx)]
-        key0 = (self._key, own_acid)
+        ring = _lag_ring("pair", self._key, self.steps)
         simt = float(bs.sim.simt)
-        if _LAG_LAST_SIMT.get(key0) != simt:
-            _LAG_LAST_SIMT[key0] = simt
-            current = np.asarray(inner.get_pairs(own_idx, others))
-            for pos, j in enumerate(others):
-                buf = _LAG_HISTORY.setdefault(
-                    (self._key, own_acid, bs.traf.id[j]),
-                    _lag_buffer(self._key, self.steps),
-                )
-                buf.append(current[pos])
-        out = []
-        missing = []
-        for pos, j in enumerate(others):
-            buf = _LAG_HISTORY.get((self._key, own_acid, bs.traf.id[j]))
-            if not buf:
-                missing.append(pos)
-                out.append(None)
-            else:
-                out.append(_lag_read(buf, self.steps))
-        if missing:
+        due = np.unique(owns[ring.pushed_at[owns] != simt])
+        if due.size and cols.size:
+            current = np.asarray(inner.get_pair_matrix(due))[:, cols]
+            ring.push(current, due, cols)
+            ring.pushed_at[due] = simt
+        out, missing = ring.read(self.steps, owns, cols)
+        if out is None or missing.any():
             # Pairs that appeared after this step's push - hold their current
-            # value (see :func:`_lag_read`).
-            fresh = np.asarray(inner.get_pairs(own_idx, [others[p] for p in missing]))
-            for slot, pos in enumerate(missing):
-                out[pos] = fresh[slot]
-        return np.asarray(out)
+            # value (see :meth:`_LagRing.read`).
+            live = np.asarray(inner.get_pair_matrix(owns), dtype=np.float64)[:, cols]
+            if out is None:
+                return live
+            out[missing] = live[missing]
+        return out
 
 
 # The environment's flat normalized action-space bounds, published so
@@ -2394,7 +2611,7 @@ class ApAltErrorM(_AltitudeEnvelopeBounds, ObsField):
 
 
 @dataclass(frozen=True)
-class Difference(PairObsField):
+class Difference(_BroadcastPairs, PairObsField):
     """Difference between an intruder field and an ownship field.
 
     ``left`` is read from the intruder index and ``right`` is read from the
@@ -2438,14 +2655,9 @@ class Difference(PairObsField):
             )
         return self.left, self.right
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         left, right = self._fields()
-        return left.get(other_idx) - right.get(own_idx)
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        left, right = self._fields()
-        return np.asarray(left.get_many(other_indices)) - right.get(own_idx)
-
+        return _per_aircraft(left, other) - _per_aircraft(right, own)
     def bounds(self, own_idx: int) -> tuple[float, float]:
         if self.bounds_overridden:
             return self._configured_bounds()
@@ -2496,21 +2708,10 @@ class AngleDifference(Difference):
             )
         PairObsField.__post_init__(self)
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         left, right = self._fields()
-        return _signed_angle_delta_deg(
-            float(left.get(other_idx)),
-            float(right.get(own_idx)),
-        )
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        left, right = self._fields()
-        return (
-            np.asarray(left.get_many(other_indices), dtype=np.float64)
-            - float(right.get(own_idx))
-            + 540.0
-        ) % 360.0 - 180.0
-
+        delta = _per_aircraft(left, other) - _per_aircraft(right, own)
+        return (delta + 540.0) % 360.0 - 180.0
     def bounds(self, own_idx: int) -> tuple[float, float]:
         if self.bounds_overridden:
             return self._configured_bounds()
@@ -2518,7 +2719,7 @@ class AngleDifference(Difference):
 
 
 @dataclass(frozen=True)
-class DistToOwnNm(PairObsField):
+class DistToOwnNm(_BroadcastPairs, PairObsField):
     """Ownship-relative intruder distance in nautical miles.
 
     Metadata:
@@ -2532,19 +2733,15 @@ class DistToOwnNm(PairObsField):
     low: Annotated[float, "distance nautical miles"] = 0.0
     high: Annotated[float, "distance nautical miles"] = 200.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        _qdr, dist = _pair_qdr_dist(own_idx, other_indices)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        _qdr, dist = _pair_qdr_dist(own, other)
         return dist
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class TcpaS(PairObsField):
+class TcpaS(_BroadcastPairs, PairObsField):
     """BlueSky ASAS time to closest point of approach, in seconds.
 
     ASAS only stores this value for detected conflict pairs. Non-conflict
@@ -2574,26 +2771,12 @@ class TcpaS(PairObsField):
         float | None, "time seconds upper bound; None = +CD lookahead at runtime"
     ] = None
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         # BlueSky ConflictDetection caches ``tcpa`` (one entry per ``confpairs``
         # row) each sim step - read it directly. Non-conflict intruders take the
         # high bound (the CD lookahead horizon), so the sentinel tracks config.
-        other_indices = _indices_array(other_indices)
-        out = np.full(other_indices.shape, self.bounds(own_idx)[1], dtype=np.float64)
-        cd = getattr(bs.traf, "cd", None)
-        if cd is None or len(cd.confpairs) == 0:
-            return out
-        own_id = bs.traf.id[own_idx]
-        rows = {bs.traf.id[int(j)]: r for r, j in enumerate(other_indices)}
-        tcpa = np.asarray(cd.tcpa, dtype=np.float64)
-        for k, (left, right) in enumerate(cd.confpairs):
-            if left == own_id and k < tcpa.size and right in rows:
-                out[rows[right]] = tcpa[k]
-        return out
-
+        fill = _per_own(own, lambda o: self.bounds(o)[1])
+        return _cd_pair_values("tcpa", own, other, fill)
     def bounds(self, own_idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
             look = _cd_lookahead_s()
@@ -2603,7 +2786,7 @@ class TcpaS(PairObsField):
 
 
 @dataclass(frozen=True)
-class TlosS(PairObsField):
+class TlosS(_BroadcastPairs, PairObsField):
     """BlueSky ASAS predicted time to loss of separation (PZ entry), in seconds.
 
     Reads the conflict detector's cached ``tLOS`` (one entry per ``confpairs``
@@ -2635,32 +2818,18 @@ class TlosS(PairObsField):
         float | None, "time seconds upper bound; None = CD lookahead at runtime"
     ] = None
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         # BlueSky ConflictDetection caches ``tLOS`` (one entry per ``confpairs``
         # row) each sim step - read it directly. Non-conflict intruders take the
         # high bound (the CD lookahead horizon).
-        other_indices = _indices_array(other_indices)
-        out = np.full(other_indices.shape, self.bounds(own_idx)[1], dtype=np.float64)
-        cd = getattr(bs.traf, "cd", None)
-        if cd is None or len(cd.confpairs) == 0:
-            return out
-        own_id = bs.traf.id[own_idx]
-        rows = {bs.traf.id[int(j)]: r for r, j in enumerate(other_indices)}
-        tlos = np.asarray(cd.tLOS, dtype=np.float64)
-        for k, (left, right) in enumerate(cd.confpairs):
-            if left == own_id and k < tlos.size and right in rows:
-                out[rows[right]] = tlos[k]
-        return out
-
+        fill = _per_own(own, lambda o: self.bounds(o)[1])
+        return _cd_pair_values("tLOS", own, other, fill)
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_lookahead_s()))
 
 
 @dataclass(frozen=True)
-class ClosingRateKts(PairObsField):
+class ClosingRateKts(_BroadcastPairs, PairObsField):
     """Ownship-intruder horizontal closing rate, in knots.
 
     Positive means the pair is closing horizontally; negative means opening.
@@ -2676,26 +2845,19 @@ class ClosingRateKts(PairObsField):
     low: Annotated[float, "speed knots"] = -1000.0
     high: Annotated[float, "speed knots"] = 1000.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         rel_east_m, rel_north_m, rel_east_ms, rel_north_ms = _pair_relative_motion(
-            own_idx,
-            other_indices,
+            own, other
         )
         dist_m = np.maximum(np.hypot(rel_east_m, rel_north_m), 1e-6)
-        range_rate_ms = (
-            rel_east_m * rel_east_ms + rel_north_m * rel_north_ms
-        ) / dist_m
+        range_rate_ms = (rel_east_m * rel_east_ms + rel_north_m * rel_north_ms) / dist_m
         return -range_rate_ms * _MS_TO_KTS
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class BearingRateDegPerSec(PairObsField):
+class BearingRateDegPerSec(_BroadcastPairs, PairObsField):
     """Ownship-intruder bearing rate, in degrees per second.
 
     Positive means the bearing from ownship to intruder rotates clockwise.
@@ -2716,34 +2878,24 @@ class BearingRateDegPerSec(PairObsField):
     low: Annotated[float, "degrees per second"] = -10.0
     high: Annotated[float, "degrees per second"] = 10.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         rel_east_m, rel_north_m, rel_east_ms, rel_north_ms = _pair_relative_motion(
-            own_idx,
-            other_indices,
+            own, other
         )
-        dist2_m = np.maximum(
-            rel_east_m * rel_east_m + rel_north_m * rel_north_m,
-            1e-6,
-        )
-        rate_rad_s = (
-            rel_north_m * rel_east_ms - rel_east_m * rel_north_ms
-        ) / dist2_m
+        dist2_m = np.maximum(rel_east_m * rel_east_m + rel_north_m * rel_north_m, 1e-6)
+        rate_rad_s = (rel_north_m * rel_east_ms - rel_east_m * rel_north_ms) / dist2_m
         return np.degrees(rate_rad_s)
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
-def _track_frame(own_idx: int, other_indices: Any):
+def _track_frame(own_idx: Any, other_indices: Any):
     """Intruder relative position (m) and velocity (m/s) in the OWNSHIP TRACK
     frame: (along, cross) where along = down the own velocity vector (ahead +),
     cross = to the right of it. Rotation-invariant (rotates with own track), so
     the encounter reads the same at any absolute heading."""
     rel_e, rel_n, ve, vn = _pair_relative_motion(own_idx, other_indices)
-    trk = np.radians(float(bs.traf.trk[own_idx]))
+    trk = np.radians(_traf_array("trk"))[_indices_array(own_idx)]
     s, c = np.sin(trk), np.cos(trk)
     along = rel_e * s + rel_n * c           # projection on own track (compass sin/cos)
     cross = rel_e * c - rel_n * s           # 90 deg clockwise (to the right)
@@ -2753,7 +2905,7 @@ def _track_frame(own_idx: int, other_indices: Any):
 
 
 @dataclass(frozen=True)
-class RelPosAlongTrackNm(PairObsField):
+class RelPosAlongTrackNm(_BroadcastPairs, PairObsField):
     """Intruder position relative to ownship ALONG the own track, nm (ahead +).
 
     Track-frame Cartesian. Unlike range x bearing, this gives relative position
@@ -2771,19 +2923,15 @@ class RelPosAlongTrackNm(PairObsField):
     low: Annotated[float, "along-track nm"] = -200.0
     high: Annotated[float, "along-track nm"] = 200.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        along, _c, _va, _vc = _track_frame(own_idx, other_indices)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        along, _c, _va, _vc = _track_frame(own, other)
         return along / nm
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class RelPosCrossTrackNm(PairObsField):
+class RelPosCrossTrackNm(_BroadcastPairs, PairObsField):
     """Intruder position relative to ownship ACROSS the own track, nm (right +).
 
     Track-frame Cartesian companion to :class:`RelPosAlongTrackNm`.
@@ -2799,19 +2947,15 @@ class RelPosCrossTrackNm(PairObsField):
     low: Annotated[float, "cross-track nm"] = -200.0
     high: Annotated[float, "cross-track nm"] = 200.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        _a, cross, _va, _vc = _track_frame(own_idx, other_indices)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        _a, cross, _va, _vc = _track_frame(own, other)
         return cross / nm
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class RelVelAlongTrackKts(PairObsField):
+class RelVelAlongTrackKts(_BroadcastPairs, PairObsField):
     """Intruder velocity relative to ownship ALONG the own track, kts.
 
     Track-frame Cartesian relative velocity (negative = intruder falling behind /
@@ -2830,19 +2974,15 @@ class RelVelAlongTrackKts(PairObsField):
     low: Annotated[float, "along-track kts"] = -1000.0
     high: Annotated[float, "along-track kts"] = 1000.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        _a, _c, v_along, _vc = _track_frame(own_idx, other_indices)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        _a, _c, v_along, _vc = _track_frame(own, other)
         return v_along * _MS_TO_KTS
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class RelVelCrossTrackKts(PairObsField):
+class RelVelCrossTrackKts(_BroadcastPairs, PairObsField):
     """Intruder velocity relative to ownship ACROSS the own track, kts (right +).
 
     Track-frame Cartesian companion to :class:`RelVelAlongTrackKts`.
@@ -2858,18 +2998,14 @@ class RelVelCrossTrackKts(PairObsField):
     low: Annotated[float, "cross-track kts"] = -1000.0
     high: Annotated[float, "cross-track kts"] = 1000.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        _a, _c, _va, v_cross = _track_frame(own_idx, other_indices)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        _a, _c, _va, v_cross = _track_frame(own, other)
         return v_cross * _MS_TO_KTS
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
-def _track_frame_at_cpa(own_idx: int, other_indices: Any):
+def _track_frame_at_cpa(own_idx: Any, other_indices: Any):
     """Track-frame relative position AT the predicted (constant-velocity) CPA:
     (along, cross) in metres = now-position + relative-velocity * tcpa, with tcpa
     clamped to >=0 (already-passed encounters read at 'now'). Its magnitude equals
@@ -2883,7 +3019,7 @@ def _track_frame_at_cpa(own_idx: int, other_indices: Any):
 
 
 @dataclass(frozen=True)
-class RelPosAtCpaAlongTrackNm(PairObsField):
+class RelPosAtCpaAlongTrackNm(_BroadcastPairs, PairObsField):
     """Along-track relative position at predicted CPA, nm (ahead +).
 
     Cartesian replacement for the scalar horizontal-miss `dcpa`: together with the
@@ -2900,19 +3036,15 @@ class RelPosAtCpaAlongTrackNm(PairObsField):
     low: Annotated[float, "along-track nm"] = -200.0
     high: Annotated[float, "along-track nm"] = 200.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        along, _cross = _track_frame_at_cpa(own_idx, other_indices)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        along, _cross = _track_frame_at_cpa(own, other)
         return along / nm
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class RelPosAtCpaCrossTrackNm(PairObsField):
+class RelPosAtCpaCrossTrackNm(_BroadcastPairs, PairObsField):
     """Cross-track relative position at predicted CPA, nm (right +).
 
     The sign is which side the intruder passes at closest approach - the key cue
@@ -2929,19 +3061,15 @@ class RelPosAtCpaCrossTrackNm(PairObsField):
     low: Annotated[float, "cross-track nm"] = -200.0
     high: Annotated[float, "cross-track nm"] = 200.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        _along, cross = _track_frame_at_cpa(own_idx, other_indices)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        _along, cross = _track_frame_at_cpa(own, other)
         return cross / nm
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class RelVsFtMin(PairObsField):
+class RelVsFtMin(_BroadcastPairs, PairObsField):
     """Intruder vertical speed minus ownship vertical speed, in ft/min.
 
     Metadata:
@@ -2960,19 +3088,15 @@ class RelVsFtMin(PairObsField):
     low: Annotated[float, "vertical speed feet per minute"] = -6000.0
     high: Annotated[float, "vertical speed feet per minute"] = 6000.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        other_indices = _indices_array(other_indices)
-        return (bs.traf.vs[other_indices] - float(bs.traf.vs[own_idx])) * _MS_TO_FTMIN
-
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        vs = _traf_array("vs")
+        return (vs[other] - vs[own]) * _MS_TO_FTMIN
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class HorizontalDistAtCpaNm(PairObsField):
+class HorizontalDistAtCpaNm(_BroadcastPairs, PairObsField):
     """BlueSky ASAS horizontal distance at closest point of approach, in NM.
 
     Reads the conflict detector's cached ``dcpa`` (metres, one entry per
@@ -3009,32 +3133,18 @@ class HorizontalDistAtCpaNm(PairObsField):
         float | None, "distance nm upper bound; None = CD PZ radius at runtime"
     ] = None
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         # BlueSky ConflictDetection caches ``dcpa`` (metres, one entry per
         # ``confpairs`` row) each sim step - read it directly and convert to NM.
         # Non-conflict intruders take the high bound (the PZ radius).
-        other_indices = _indices_array(other_indices)
-        out = np.full(other_indices.shape, self.bounds(own_idx)[1], dtype=np.float64)
-        cd = getattr(bs.traf, "cd", None)
-        if cd is None or len(cd.confpairs) == 0:
-            return out
-        own_id = bs.traf.id[own_idx]
-        rows = {bs.traf.id[int(j)]: r for r, j in enumerate(other_indices)}
-        dcpa = np.asarray(cd.dcpa, dtype=np.float64)
-        for k, (left, right) in enumerate(cd.confpairs):
-            if left == own_id and k < dcpa.size and right in rows:
-                out[rows[right]] = dcpa[k] / nm
-        return out
-
+        fill = _per_own(own, lambda o: self.bounds(o)[1])
+        return _cd_pair_values("dcpa", own, other, fill, divisor=nm)
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_rpz_m() / nm))
 
 
 @dataclass(frozen=True)
-class VerticalSepAtCpaFt(PairObsField):
+class VerticalSepAtCpaFt(_BroadcastPairs, PairObsField):
     """Predicted absolute vertical separation at horizontal CPA, in feet.
 
     The horizontal CPA time is computed from current traffic vectors, for every
@@ -3072,16 +3182,12 @@ class VerticalSepAtCpaFt(PairObsField):
         float | None, "altitude ft upper bound; None = CD PZ height at runtime"
     ] = None
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        other_indices = _indices_array(other_indices)
-        tcpa_s = np.maximum(_pair_horizontal_tcpa_s(own_idx, other_indices), 0.0)
-        rel_alt_m = bs.traf.alt[other_indices] - float(bs.traf.alt[own_idx])
-        rel_vs_ms = bs.traf.vs[other_indices] - float(bs.traf.vs[own_idx])
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        tcpa_s = np.maximum(_pair_horizontal_tcpa_s(own, other), 0.0)
+        alt, vs = _traf_array("alt"), _traf_array("vs")
+        rel_alt_m = alt[other] - alt[own]
+        rel_vs_ms = vs[other] - vs[own]
         return np.abs(rel_alt_m + rel_vs_ms * tcpa_s) * _M_TO_FT
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(
             lambda: (0.0, _cd_hpz_m() * _M_TO_FT)
@@ -3089,7 +3195,7 @@ class VerticalSepAtCpaFt(PairObsField):
 
 
 @dataclass(frozen=True)
-class _ConflictGeomPairField(PairObsField):
+class _ConflictGeomPairField(_BroadcastPairs, PairObsField):
     """Intruder field sourced from the shared per-step conflict geometry.
 
     Reads :class:`~bluesky_sandbox.sim.geometry.conflict.ConflictView` - the *same*
@@ -3102,14 +3208,9 @@ class _ConflictGeomPairField(PairObsField):
 
     _geom_attr: ClassVar[str] = ""
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        view = ConflictView(int(own_idx), others=others)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        view = _GeomPairs(own, other)
         return np.asarray(getattr(view, self._geom_attr), dtype=np.float64)
-
 
 @dataclass(frozen=True)
 class _WindowedConflictPairField(_ConflictGeomPairField):
@@ -3225,11 +3326,8 @@ class ConflictVerticalSepAtCpaFt(_WindowedConflictPairField):
         float | None, "altitude ft upper bound; None = CD PZ height at runtime"
     ] = None
 
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        view = ConflictView(int(own_idx), others=others)
-        return windowed_min_vsep_ft(view, *self._window_zone())
-
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        return windowed_min_vsep_ft(_GeomPairs(own, other), *self._window_zone())
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_hpz_m() * _M_TO_FT))
 
@@ -3284,11 +3382,8 @@ class ConflictHorizontalSepAtCpaNm(_WindowedConflictPairField):
         float | None, "distance nm upper bound; None = CD PZ radius at runtime"
     ] = None
 
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        view = ConflictView(int(own_idx), others=others)
-        return windowed_min_hsep_nm(view, *self._window_zone())
-
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        return windowed_min_hsep_nm(_GeomPairs(own, other), *self._window_zone())
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_rpz_m() / nm))
 
@@ -3337,11 +3432,9 @@ class ConflictSignedVerticalSepAtEntryFt(_WindowedConflictPairField):
         float | None, "altitude ft upper bound; None = +CD PZ height at runtime"
     ] = None
 
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        view = ConflictView(int(own_idx), others=others)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        view = _GeomPairs(own, other)
         return windowed_signed_vsep_at_entry_ft(view, *self._window_zone())
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         hpz_ft = _cd_hpz_m() * _M_TO_FT
         return self._dynamic_or_configured_bounds(lambda: (-hpz_ft, hpz_ft))
@@ -3406,16 +3499,10 @@ class ConflictTlosS(_WindowedConflictPairField):
         float | None, "time s upper bound; None = CD lookahead at runtime"
     ] = None
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        view = ConflictView(int(own_idx), others=others)
-        tinconf = predicted_tlos_s(view, *self._window_zone())
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        tinconf = predicted_tlos_s(_GeomPairs(own, other), *self._window_zone())
         # +inf (no conflict) -> high bound (safe); <= 0 (already in LoS) -> 0.
-        return np.clip(tinconf, 0.0, self.bounds(own_idx)[1])
-
+        return np.clip(tinconf, 0.0, _per_own(own, lambda o: self.bounds(o)[1]))
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_lookahead_s()))
 
@@ -3485,20 +3572,17 @@ class InConf(_WindowedConflictPairField):
             )
         return look
 
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        view = ConflictView(int(own_idx), others=others)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         # ``+inf`` (no valid conflict window) compares False against any finite
         # horizon, so the horizon test alone is the full detection predicate.
-        tinconf = predicted_tlos_s(view, *self._window_zone())
+        tinconf = predicted_tlos_s(_GeomPairs(own, other), *self._window_zone())
         return (tinconf <= self._horizon_s()).astype(np.float32)
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class InLosNow(PairObsField):
+class InLosNow(_BroadcastPairs, PairObsField):
     """1.0 when the intruder is *currently* inside the ownship's protected zone.
 
     The loss-of-separation predicate itself: ``horizontal < rpz AND |dalt| < hpz``,
@@ -3540,12 +3624,8 @@ class InLosNow(PairObsField):
     low: Annotated[float, "indicator lower bound"] = 0.0
     high: Annotated[float, "indicator upper bound"] = 1.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        view = ConflictView(int(own_idx), others=others)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        view = _GeomPairs(own, other)
         # Strict ``<`` on both axes, matching BlueSky's own LoS test (and the
         # keep-mask/cost predicates built on this view): a pair sitting exactly
         # ON the zone boundary is not yet a loss of separation.
@@ -3553,26 +3633,27 @@ class InLosNow(PairObsField):
             view.dalt_now_ft < _cd_hpz_m() * _M_TO_FT
         )
         return in_los.astype(np.float32)
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 def _fix_projection(
-    own_idx: int,
+    own_idx: Any,
     other_indices: Any,
     route_offset: int,
     own_eta_mode: str = "projection",
-) -> tuple[np.ndarray, np.ndarray, float, np.ndarray] | None:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Project observed motion onto the *ownship's* active fix (a merge signal).
 
-    Returns ``(approach_dist_nm, intruder_eta_s, own_eta_s, vsep_at_fix_ft)``
+    Returns ``(approach_dist_nm, intruder_eta_s, own_eta_s, vsep_at_fix_ft,
+    has_fix)``, broadcast over the ``own`` / ``other`` index arrays
     where each intruder's straight-line motion is projected to the closest
     approach of the ownship's own fix ``F`` (offset ``0`` = active leg, ``1`` =
     next leg): how near its current trajectory passes ``F`` (horizontal), when
     (ETA), and the signed altitude gap at the merge (intruder minus ownship,
-    each projected to its own fix arrival by its vertical speed). ``None`` when
-    the ownship has no usable fix there.
+    each projected to its own fix arrival by its vertical speed). ``has_fix`` is
+    False for an ownship with no usable fix there; its other values are
+    placeholders the caller replaces.
 
     Privacy: uses only ``F`` (the ownship's *own* plan, offset 0/1 both being
     own legs) and each intruder's *observed* position/velocity/altitude/VS
@@ -3617,27 +3698,31 @@ def _fix_projection(
         raise ValueError(
             f"own_eta_mode must be 'projection' or 'route', got {own_eta_mode!r}."
         )
-    fix = _active_route_waypoint(int(own_idx), route_offset)
-    if fix is None:
-        return None
-    others = _indices_array(other_indices)
-    fix_lat, fix_lon = float(fix[0]), float(fix[1])
+    own = _indices_array(own_idx)
+    other = _indices_array(other_indices)
+    fixes = [_active_route_waypoint(int(o), route_offset) for o in own.ravel()]
+    has_fix = np.array([fix is not None for fix in fixes]).reshape(own.shape)
+    # A fix-less ownship projects onto (0, 0) - finite arithmetic, masked out.
+    fix_lat = np.array(
+        [0.0 if fix is None else float(fix[0]) for fix in fixes], dtype=np.float64
+    ).reshape(own.shape)
+    fix_lon = np.array(
+        [0.0 if fix is None else float(fix[1]) for fix in fixes], dtype=np.float64
+    ).reshape(own.shape)
+    lat, lon = _traf_array("lat"), _traf_array("lon")
+    trk, gs = _traf_array("trk"), _traf_array("gs")
+    alt, vs = _traf_array("alt"), _traf_array("vs")
 
-    def _eta_and_cpa(lats: np.ndarray, lons: np.ndarray, trks: np.ndarray, gss: np.ndarray):
-        # Position of each aircraft relative to the fix, east/north metres.
-        qdr, dist_nm = qdrdist(
-            np.full(np.shape(lats), fix_lat),
-            np.full(np.shape(lons), fix_lon),
-            lats,
-            lons,
-        )
+    def _eta_and_cpa(idx: np.ndarray):
+        # Position of each aircraft relative to its ownship's fix, east/north m.
+        qdr, dist_nm = qdrdist(fix_lat, fix_lon, lat[idx], lon[idx])
         qdrrad = np.radians(np.asarray(qdr, dtype=np.float64))
         dist_m = np.asarray(dist_nm, dtype=np.float64) * nm
         r_e = dist_m * np.sin(qdrrad)
         r_n = dist_m * np.cos(qdrrad)
-        trkrad = np.radians(np.asarray(trks, dtype=np.float64))
-        v_e = np.asarray(gss, dtype=np.float64) * np.sin(trkrad)
-        v_n = np.asarray(gss, dtype=np.float64) * np.cos(trkrad)
+        trkrad = np.radians(trk[idx])
+        v_e = gs[idx] * np.sin(trkrad)
+        v_n = gs[idx] * np.cos(trkrad)
         v2 = np.maximum(v_e * v_e + v_n * v_n, 1e-6)
         # Future closest approach only (t* clamped >= 0): an aircraft receding
         # from the fix reads its current distance, not a past pass.
@@ -3647,35 +3732,28 @@ def _fix_projection(
         cpa_nm = np.sqrt(cpa_e * cpa_e + cpa_n * cpa_n) / nm
         return tstar, cpa_nm
 
-    intr_eta, intr_cpa_nm = _eta_and_cpa(
-        bs.traf.lat[others], bs.traf.lon[others],
-        bs.traf.trk[others], bs.traf.gs[others],
-    )
+    intr_eta, intr_cpa_nm = _eta_and_cpa(other)
     if own_eta_mode == "route":
         # The ownship knows its own plan, so its ETA is a property of the route
         # and the speed it is flying - not of the heading it happens to hold
         # this step. See the docstring for why the two sides differ.
-        _own_qdr, own_dist_nm = qdrdist(
-            fix_lat, fix_lon, float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx])
+        _own_qdr, own_dist_nm = qdrdist(fix_lat, fix_lon, lat[own], lon[own])
+        own_eta_s = (
+            np.asarray(own_dist_nm, dtype=np.float64) * nm / np.maximum(gs[own], 1e-3)
         )
-        own_eta_s = float(own_dist_nm) * nm / max(float(bs.traf.gs[own_idx]), 1e-3)
     else:
-        own_eta, _own_cpa = _eta_and_cpa(
-            np.array([bs.traf.lat[own_idx]]), np.array([bs.traf.lon[own_idx]]),
-            np.array([bs.traf.trk[own_idx]]), np.array([bs.traf.gs[own_idx]]),
-        )
-        own_eta_s = float(own_eta[0])
+        own_eta_s, _own_cpa = _eta_and_cpa(own)
     # Altitude each aircraft is projected to hold when it reaches the fix
     # (current alt + VS x its own ETA); the merge conflict is where these
     # coincide. Signed intruder-minus-ownship, in feet.
-    own_alt_at_fix = float(bs.traf.alt[own_idx]) + float(bs.traf.vs[own_idx]) * own_eta_s
-    intr_alt_at_fix = bs.traf.alt[others] + bs.traf.vs[others] * intr_eta
+    own_alt_at_fix = alt[own] + vs[own] * own_eta_s
+    intr_alt_at_fix = alt[other] + vs[other] * intr_eta
     vsep_ft = (intr_alt_at_fix - own_alt_at_fix) * _M_TO_FT
-    return intr_cpa_nm, intr_eta, own_eta_s, vsep_ft
+    return intr_cpa_nm, intr_eta, own_eta_s, vsep_ft, has_fix
 
 
 @dataclass(frozen=True)
-class IntruderFixApproachDistNm(PairObsField):
+class IntruderFixApproachDistNm(_BroadcastPairs, PairObsField):
     """How near an intruder's *observed* path passes the ownship's active fix, nm.
 
     Projects the intruder's current position/velocity to its closest approach
@@ -3706,24 +3784,17 @@ class IntruderFixApproachDistNm(PairObsField):
     low: Annotated[float, "distance nm lower bound"] = 0.0
     high: Annotated[float, "distance nm upper bound (also the no-fix sentinel)"] = 100.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        proj = _fix_projection(
-            own_idx, others, self.route_offset, self.own_eta_mode
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        cpa_nm, _eta, _own_eta, _vsep, has_fix = _fix_projection(
+            own, other, self.route_offset, self.own_eta_mode
         )
-        if proj is None:
-            return np.full(others.shape, float(self.high), dtype=np.float64)
-        return proj[0]
-
+        return np.where(has_fix, cpa_nm, float(self.high))
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class IntruderFixArrivalDeltaS(PairObsField):
+class IntruderFixArrivalDeltaS(_BroadcastPairs, PairObsField):
     """Signed queue order at the ownship's fix: intruder ETA minus ownship ETA, s.
 
     Both ETAs come from projecting *observed* motion onto the ownship's own fix
@@ -3755,25 +3826,17 @@ class IntruderFixArrivalDeltaS(PairObsField):
     low: Annotated[float, "time s lower bound"] = -600.0
     high: Annotated[float, "time s upper bound"] = 600.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        proj = _fix_projection(
-            own_idx, others, self.route_offset, self.own_eta_mode
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        _cpa, intr_eta, own_eta, _vsep, has_fix = _fix_projection(
+            own, other, self.route_offset, self.own_eta_mode
         )
-        if proj is None:
-            return np.zeros(others.shape, dtype=np.float64)
-        _cpa_nm, intr_eta, own_eta, _vsep = proj
-        return intr_eta - own_eta
-
+        return np.where(has_fix, intr_eta - own_eta, 0.0)
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class IntruderFixVerticalSepFt(PairObsField):
+class IntruderFixVerticalSepFt(_BroadcastPairs, PairObsField):
     """Signed altitude gap at the ownship's fix: intruder minus ownship, ft.
 
     Both aircraft are projected to the fix by their observed vertical speed
@@ -3810,18 +3873,11 @@ class IntruderFixVerticalSepFt(PairObsField):
     low: Annotated[float, "altitude ft lower bound"] = -5000.0
     high: Annotated[float, "altitude ft upper bound"] = 5000.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        others = _indices_array(other_indices)
-        proj = _fix_projection(
-            own_idx, others, self.route_offset, self.own_eta_mode
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        _cpa, _eta, _own_eta, vsep_ft, has_fix = _fix_projection(
+            own, other, self.route_offset, self.own_eta_mode
         )
-        if proj is None:
-            return np.zeros(others.shape, dtype=np.float64)
-        return proj[3]
-
+        return np.where(has_fix, vsep_ft, 0.0)
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -3880,7 +3936,7 @@ class IntruderCommMessage(_CommBacked, PairObsField):
 
 
 @dataclass(frozen=True)
-class BrgFromOwnDeg(PairObsField):
+class BrgFromOwnDeg(_BroadcastPairs, PairObsField):
     """Ownship-relative intruder bearing in degrees.
 
     The true bearing from ownship to the intruder, signed in ``[-180, 180]``
@@ -3904,19 +3960,15 @@ class BrgFromOwnDeg(PairObsField):
     low: Annotated[float, "bearing degrees"] = -180.0
     high: Annotated[float, "bearing degrees"] = 180.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        qdr, _dist = _pair_qdr_dist(own_idx, other_indices)
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        qdr, _dist = _pair_qdr_dist(own, other)
         return qdr
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class BrgFromOwnRelTrkDeg(PairObsField):
+class BrgFromOwnRelTrkDeg(_BroadcastPairs, PairObsField):
     """Ownship-relative intruder bearing in the ownship track frame, degrees.
 
     The true bearing from ownship to the intruder minus the ownship track, so
@@ -3945,15 +3997,9 @@ class BrgFromOwnRelTrkDeg(PairObsField):
     low: Annotated[float, "bearing degrees"] = -180.0
     high: Annotated[float, "bearing degrees"] = 180.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        qdr, _dist = _pair_qdr_dist(own_idx, other_indices)
-        return (
-            np.asarray(qdr, dtype=np.float64) - float(bs.traf.trk[own_idx]) + 540.0
-        ) % 360.0 - 180.0
-
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
+        qdr, _dist = _pair_qdr_dist(own, other)
+        return (qdr - _traf_array("trk")[own] + 540.0) % 360.0 - 180.0
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -3962,7 +4008,7 @@ class BrgFromOwnRelTrkDeg(PairObsField):
 # BlueSky CD parameters (lookahead, protected zone) and per-intruder risk      #
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
-class ConflictRisk(PairObsField):
+class ConflictRisk(_BroadcastPairs, PairObsField):
     """Per-intruder graded conflict risk, ``1 - tcpa/lookahead`` in ``[0, 1]``.
 
     The per-element version of a CD-based safety cost: for an intruder BlueSky's
@@ -3983,26 +4029,13 @@ class ConflictRisk(PairObsField):
     low: Annotated[float, "risk fraction"] = 0.0
     high: Annotated[float, "risk fraction"] = 1.0
 
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
+    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         # BlueSky ConflictDetection caches ``tcpa`` per ``confpairs`` row each sim
         # step. Non-conflict rows default to the lookahead horizon -> risk 0;
         # conflict rows use their CD tcpa, graded toward 1 as the conflict nears.
         lookahead = _cd_lookahead_s()
-        other_indices = _indices_array(other_indices)
-        tcpa = np.full(other_indices.shape, lookahead, dtype=np.float64)
-        cd = getattr(bs.traf, "cd", None)
-        if cd is not None and len(cd.confpairs) > 0:
-            own_id = bs.traf.id[own_idx]
-            rows = {bs.traf.id[int(j)]: r for r, j in enumerate(other_indices)}
-            cd_tcpa = np.asarray(cd.tcpa, dtype=np.float64)
-            for k, (left, right) in enumerate(cd.confpairs):
-                if left == own_id and k < cd_tcpa.size and right in rows:
-                    tcpa[rows[right]] = cd_tcpa[k]
+        tcpa = _cd_pair_values("tcpa", own, other, lookahead)
         risk = 1.0 - np.maximum(tcpa, 0.0) / lookahead
         return np.clip(risk, 0.0, 1.0).astype(np.float32)
-
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()

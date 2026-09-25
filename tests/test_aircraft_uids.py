@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from bluesky_sandbox.config import EnvConfig
+from bluesky_sandbox.interface.fields import observations as obs
 from bluesky_sandbox.core.spawning import _CallsignIssuer
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
@@ -35,7 +36,9 @@ class _Scenario:
         return EpisodeSpec(
             airspace_bounds=None,
             spawn=SpawnConfig(regions=[]),
-            queryables={"sector": QueryRegion(bounds=_SECTOR, track_temporal_state=True)},
+            queryables={
+                "sector": QueryRegion(bounds=_SECTOR, track_temporal_state=True)
+            },
             max_aircraft=0,
         )
 
@@ -159,3 +162,30 @@ def test_the_issuer_rereads_a_log_bluesky_cleared():
 
 def test_the_spawner_hands_the_runtime_log_to_the_issuer(env):
     assert env._spawn_generator._callsigns._created is env._runtime.created_callsigns
+
+
+def test_a_reused_callsign_starts_with_no_lag_history():
+    # Deleted and re-created between two observations, so the env never sees
+    # the callsign leave: only uid-keyed history can tell the two apart.
+    lagged = obs.CasKts().lagged(steps=1)
+    env = BlueskyEnv(
+        scenario=_Scenario(),
+        config=EnvConfig(dt=12.0, obs_fields=[obs.CasKts(), lagged], action_fields=[]),
+    )
+    try:
+        env.reset(seed=0)
+        assert bs.traf.cre("AAA001", "B744", 52.0, 4.55, 90, 8_000 * 0.3048, 125)
+        assembler = env._observation_assembler  # hand-made aircraft aren't agents
+        for _ in range(2):
+            env.step({})
+            old_cas = float(assembler.get_obs(["AAA001"])["AAA001"][0])
+
+        bs.traf.delete(_index("AAA001"))
+        assert bs.traf.cre("AAA001", "B744", 40.0, -30.0, 90, 8_000 * 0.3048, 160)
+        env.step({})
+        live, lag = (float(v) for v in assembler.get_obs(["AAA001"])["AAA001"])
+        assert abs(live - old_cas) > 20.0, "the two aircraft must fly different speeds"
+        # One observation of its own: the lag holds that, not the old aircraft's.
+        assert lag == live
+    finally:
+        env.close()

@@ -8,6 +8,9 @@ from dataclasses import field as dataclass_field
 from enum import StrEnum
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
+import bluesky as bs
+import numpy as np
+
 ContextT = TypeVar("ContextT")
 
 
@@ -556,6 +559,31 @@ class PairObsField(_BoundedField, ABC):
     def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
         """Return pair observations for one ownship and multiple intruders."""
         return [self.get_pair(own_idx, int(other_idx)) for other_idx in other_indices]
+
+    def get_pair_matrix(self, own_indices: Any) -> np.ndarray:
+        """Pair observations for several ownships against EVERY live aircraft.
+
+        Row ``r`` holds ownship ``own_indices[r]`` against aircraft
+        ``0 .. ntraf-1``; the entry for the ownship itself is undefined and
+        never read. The observation assembler calls this once per field per
+        step instead of :meth:`get_pairs` once per ownship, so a field that
+        computes all pairs at once pays its per-call cost once.
+
+        The default assembles rows from :meth:`get_pairs`. Overrides must
+        agree with it value for value - ``tests/test_field_batching.py``
+        checks every field.
+        """
+        n = int(bs.traf.ntraf)
+        rows = []
+        for own in np.asarray(own_indices, dtype=np.intp).ravel():
+            others = np.array([j for j in range(n) if j != own], dtype=np.intp)
+            values = np.asarray(self.get_pairs(int(own), others), dtype=np.float64)
+            row = np.full((n, *values.shape[1:]), np.nan)
+            row[others] = values
+            rows.append(row)
+        if not rows:
+            return np.empty((0, n))
+        return np.stack(rows)
 
     @abstractmethod
     def bounds(self, own_idx: int) -> tuple[float, float]:
