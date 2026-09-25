@@ -82,15 +82,18 @@ def _normalize_field_value(field, value, idx: int) -> list[float]:
                 f"values, got {len(values)}."
             )
         return values
-    values = _flatten_field_values(value)
-    if len(values) != 1:
+    # float64, not _flatten_field_values: rounding the raw value to float32
+    # before normalizing would round twice, and the batched intruder path
+    # (normalize_many) rounds once - the same aircraft would then read a
+    # last-bit different value in its own row than in everyone else's.
+    raw = np.asarray(value, dtype=np.float64).reshape(-1)
+    if raw.size != 1:
         raise ValueError(
             f"Observation field {field.meta.name!r} uses "
             f"{normalizer.__class__.__name__}, which expects one raw value, "
-            f"got {len(values)}."
+            f"got {raw.size}."
         )
-    value = values[0]
-    return normalizer.normalize(field, value, idx)
+    return normalizer.normalize(field, float(raw[0]), idx)
 
 
 def _normalize_field_values_batch(field, values, idx: int) -> np.ndarray:
