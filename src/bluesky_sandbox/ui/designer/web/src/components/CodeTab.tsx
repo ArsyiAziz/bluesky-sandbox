@@ -7,6 +7,7 @@ import { scopeKey } from "../code/intel";
 import { registerPythonIntel, useIntel } from "../code/pythonEditor";
 import { Picker } from "./panel/Picker";
 import { useRefresh } from "../refresh";
+import { Resizer, useStoredSize } from "./Resizer";
 
 const TASK_INFO_BODY_TEMPLATE = `task = info["task"]
 task["metric"] = 0.0
@@ -124,6 +125,9 @@ export default function CodeTab({
   onShowSpaces: () => void;
 }) {
   const [generated, setGenerated] = useState<Record<string, string>>({});
+  const codeTabRef = useRef<HTMLDivElement | null>(null);
+  const [treeW, setTreeW, resetTreeW] = useStoredSize("designer.code.treeWidth", 220, 160, () => window.innerWidth * 0.3);
+  const [sideW, setSideW, resetSideW] = useStoredSize("designer.code.sideWidth", 300, 220, () => window.innerWidth * 0.45);
   const [pkg, setPkg] = useState<string>("");
   const [selected, setSelected] = useState<string>("design.py");
   const [genError, setGenError] = useState<string | null>(null);
@@ -461,8 +465,8 @@ export default function CodeTab({
     && (selectedTaskInfoEntry == null || selectedTaskInfoProviderReference);
 
   return (
-    <div className="code-tab">
-      <aside className="file-tree">
+    <div className="code-tab" ref={codeTabRef}>
+      <aside className="file-tree" style={{ width: treeW }}>
         <div className="tree-group">design</div>
         <FileItem path={SPEC_FILE} active={isSpec} onClick={() => setSelected(SPEC_FILE)} />
 
@@ -603,6 +607,12 @@ export default function CodeTab({
         {genError && <div className="error-text small">{genError}</div>}
       </aside>
 
+      <Resizer
+        axis="x"
+        label="Resize the file list"
+        onDrag={(x) => setTreeW(x - (codeTabRef.current?.getBoundingClientRect().left ?? 0))}
+        onReset={resetTreeW}
+      />
       <div className="editor-pane">
         {replacedHook && replacedHook.batch in hooks && (
           <div className="hook-notice small">
@@ -706,7 +716,8 @@ export default function CodeTab({
         />
       </div>
 
-      <aside className="inspector">
+      <Resizer axis="x" label="Resize the side panel" onDrag={(x) => setSideW(window.innerWidth - x)} onReset={resetSideW} />
+      <aside className="inspector" style={{ width: sideW }}>
         <AvailablePanel intel={intel} scope={scopeKey(editorPath)} onInsert={insertAtCursor} />
         <h3>Validation</h3>
         {!validation && <p className="muted">…</p>}

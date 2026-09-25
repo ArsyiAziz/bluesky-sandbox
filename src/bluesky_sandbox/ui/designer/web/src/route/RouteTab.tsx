@@ -5,7 +5,7 @@
 // a drag edits it: from a node's dot into space adds a step after it, onto a
 // later node on its path branches around the steps between; a node dragged
 // along its path moves there; a waypoint dropped on a line is inserted there.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -26,6 +26,7 @@ import "@xyflow/react/dist/style.css";
 import type { SpecDict } from "../api";
 import { Picker } from "../components/panel/Picker";
 import RouteMap from "./RouteMap";
+import { Resizer, useStoredSize } from "../components/Resizer";
 import {
   type Addr,
   type RouteStep,
@@ -134,6 +135,13 @@ export default function RouteTab({
   const routeNames = Object.keys(routes);
   const [active, setActive] = useState<string | null>(routeNames[0] ?? null);
   const [selId, setSelId] = useState<string | null>(null);
+  // The panes' sizes: the route list's and inspector's widths, and the graph's
+  // share of the height it and the map preview split.
+  const [listW, setListW, resetListW] = useStoredSize("designer.route.listWidth", 220, 160, () => window.innerWidth * 0.3);
+  const [inspW, setInspW, resetInspW] = useStoredSize("designer.route.inspectorWidth", 280, 220, () => window.innerWidth * 0.4);
+  const [graphPct, setGraphPct, resetGraphPct] = useStoredSize("designer.route.graphPercent", 58, 20, () => 85);
+  const tabRef = useRef<HTMLDivElement | null>(null);
+  const mainRef = useRef<HTMLDivElement | null>(null);
   // A node being dragged along its path, and where it is.
   const [drag, setDrag] = useState<{ id: string; x: number } | null>(null);
   // The edge a waypoint is being dragged over.
@@ -288,8 +296,8 @@ export default function RouteTab({
   const usedBy = (name: string) => spawnRegions.filter((r) => r.route === name).length;
 
   return (
-    <div className="route-tab">
-      <aside className="route-list">
+    <div className="route-tab" ref={tabRef}>
+      <aside className="route-list" style={{ width: listW }}>
         <div className="route-list-head">
           <span>routes</span>
           <button onClick={addRoute} title="add a route">
@@ -314,8 +322,14 @@ export default function RouteTab({
         ))}
         {routeNames.length === 0 && <p className="muted small">No routes yet.</p>}
       </aside>
+      <Resizer
+        axis="x"
+        label="Resize the route list"
+        onDrag={(x) => setListW(x - (tabRef.current?.getBoundingClientRect().left ?? 0))}
+        onReset={resetListW}
+      />
 
-      <div className="route-main">
+      <div className="route-main" ref={mainRef}>
         {current && (
           <div className="route-head">
             <input
@@ -343,7 +357,7 @@ export default function RouteTab({
           </div>
         )}
 
-        <div className="route-graph-area">
+        <div className="route-graph-area" style={{ flex: `0 0 ${graphPct}%` }}>
           {current ? (
             <div className="route-graph">
               <ReactFlow
@@ -386,7 +400,15 @@ export default function RouteTab({
           )}
 
           {current && (
-            <div className="route-inspector">
+            <Resizer
+              axis="x"
+              label="Resize the inspector"
+              onDrag={(x) => setInspW(window.innerWidth - x)}
+              onReset={resetInspW}
+            />
+          )}
+          {current && (
+            <div className="route-inspector" style={{ width: inspW }}>
               <RouteStepInspector
                 selNode={selNode}
                 steps={steps}
@@ -403,6 +425,17 @@ export default function RouteTab({
           )}
         </div>
 
+        <Resizer
+          axis="y"
+          label="Resize the graph and the map"
+          onDrag={(y) => {
+            const box = mainRef.current?.getBoundingClientRect();
+            const head = mainRef.current?.querySelector(".route-head")?.getBoundingClientRect().height ?? 0;
+            // The graph's share is of the whole column, header included.
+            if (box) setGraphPct(((y - box.top - head) / box.height) * 100);
+          }}
+          onReset={resetGraphPct}
+        />
         <div className="route-bottom">
         <RouteMap
           spec={spec}

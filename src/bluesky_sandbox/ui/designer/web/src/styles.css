@@ -286,7 +286,6 @@ button:disabled {
 }
 
 .route-list {
-  width: 220px;
   flex: none;
   overflow: auto;
   padding: 8px;
@@ -384,7 +383,6 @@ button:disabled {
 
 .route-graph-area {
   display: flex;
-  flex: 1 1 58%;
   min-height: 0;
   border-bottom: 1px solid var(--border);
 }
@@ -403,7 +401,7 @@ button:disabled {
 }
 
 .route-inspector {
-  width: 280px;
+  flex: none;
   border-left: 1px solid var(--border);
   background: var(--panel);
   overflow: auto;
@@ -428,7 +426,7 @@ button:disabled {
 
 .route-bottom {
   position: relative;
-  flex: 1 1 42%;
+  flex: 1;
   min-height: 0;
 }
 
@@ -681,7 +679,7 @@ button:disabled {
 }
 
 .file-tree {
-  width: 220px;
+  flex: none;
   background: #1b1b1b;
   border-right: 1px solid var(--border);
   overflow: auto;
@@ -728,7 +726,7 @@ button:disabled {
 }
 
 .inspector {
-  width: 300px;
+  flex: none;
   border-left: 1px solid var(--border);
   background: var(--panel);
   padding: 12px;
@@ -934,6 +932,29 @@ button:disabled {
 
 /* Drag handle between the map and the design panel. The hit area is wider
    than the visible line so it is grabbable without pixel-hunting. */
+/* A divider between panes: a thin hit strip that lights when grabbed. */
+.resizer {
+  flex: none;
+  z-index: 6;
+  background: transparent;
+  transition: background 120ms ease;
+  touch-action: none;
+}
+.resizer-x {
+  width: 6px;
+  margin: 0 -3px;
+  cursor: col-resize;
+}
+.resizer-y {
+  height: 6px;
+  margin: -3px 0;
+  cursor: row-resize;
+}
+.resizer:hover,
+.resizer.dragging {
+  background: var(--accent);
+}
+
 .panel-resizer {
   flex: 0 0 auto;
   width: 6px;
@@ -3197,7 +3218,6 @@ button:disabled {
 }
 
 .spaces-side {
-  width: 450px;
   flex: none;
   overflow: auto;
   padding: 6px 12px 30px;
