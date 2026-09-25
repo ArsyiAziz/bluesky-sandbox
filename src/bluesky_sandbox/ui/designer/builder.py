@@ -29,6 +29,7 @@ from types import ModuleType
 from typing import Any
 
 from bluesky_sandbox.config import EnvConfig, apply_performance_model
+from bluesky_sandbox.env import BATCHABLE_HOOKS
 from bluesky_sandbox.interface.fields import actions as _actions
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.interface.fields.base import (
@@ -908,6 +909,14 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
     install_code_modules(spec.code)
 
     env = spec.env
+    for hook in BATCHABLE_HOOKS:
+        if (env.hooks.get(hook) or "").strip() and (
+            env.hooks.get(f"{hook}_batch") or ""
+        ).strip():
+            raise BuildError(
+                f"the design defines both {hook} and {hook}_batch; keep one - "
+                "the per-agent hook or its batched counterpart."
+            )
     intruder_fields = (
         None
         if env.intruder_obs_fields is None

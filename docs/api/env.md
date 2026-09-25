@@ -74,6 +74,28 @@ context.raw_action["alt_delta_ft"]           # what the action field was set to,
    :members: RawObservation, StepValues
 ```
 
+## `bluesky_sandbox.core.batch`
+
+Batched hooks: `reward_batch`, `terminated_batch` and `truncated_batch` are called
+once per step with every agent's step stacked into arrays, instead of once per
+agent. Each is optional; a task defines a hook one way or the other, never both.
+
+```python
+class MyEnv(BlueskyEnv):
+    def reward_batch(self, batch):              # one value per batch.acids
+        alt_err = batch.raw_obs["ownship"]["active_route_waypoint_alt_diff_ft"]   # (n_agents,)
+        close = batch.raw_obs["intruders"]["dist_to_own_nm"] < 5.0                 # (n_agents, n_intruders)
+        return -np.abs(alt_err) / 1000.0 - close.sum(axis=1)
+```
+
+A task-info provider with `batched = True` is called the same way, `provider(batch)`,
+writing into `batch.infos[k]`.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.core.batch
+   :members: StepBatch, RawBatch
+```
+
 ## `bluesky_sandbox.core.runtime`
 
 The BlueSky process lifecycle — startup, stepping, teardown.

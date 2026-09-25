@@ -498,7 +498,7 @@ _OUTCOME_HOOKS = ("reward", "terminated", "truncated")
 
 def _hook_category(name: str) -> str:
     """Bucket a hook for the GUI picker — derived from its name, not hard-coded."""
-    if name in _OUTCOME_HOOKS:
+    if name.removesuffix("_batch") in _OUTCOME_HOOKS:
         return "task outcome"
     if name.startswith("define_"):
         return "definitions"
@@ -530,6 +530,23 @@ def _hook_default(fn) -> str | None:
 # Per-hook starter bodies for hooks where a blank scaffold isn't obvious. Keyed
 # by hook name; everything else falls back to the generic scaffold in the GUI.
 _HOOK_SCAFFOLDS: dict[str, str] = {
+    "reward_batch": (
+        "# Every agent's reward at once, one per batch.acids, in that order.\n"
+        "# batch.raw_obs[\"ownship\"][name] is (n_agents,); batch.raw_obs[\"intruders\"]\n"
+        "# [name] is (n_agents, n_intruders). batch.terminated / .truncated are set.\n"
+        "# Replaces reward: a design defines one of the two.\n"
+        "return [0.0] * len(batch)"
+    ),
+    "terminated_batch": (
+        "# Every agent's termination at once, one bool per batch.acids.\n"
+        "# Replaces terminated: a design defines one of the two.\n"
+        "return [False] * len(batch)"
+    ),
+    "truncated_batch": (
+        "# Every agent's truncation at once, one bool per batch.acids.\n"
+        "# Replaces truncated: a design defines one of the two.\n"
+        "return [False] * len(batch)"
+    ),
     "define_agent_context": (
         "# Build the per-aircraft `context.data` payload (any object).\n"
         "# Available: self.episode_queryables, acid (callsign), acidx (traffic index).\n"

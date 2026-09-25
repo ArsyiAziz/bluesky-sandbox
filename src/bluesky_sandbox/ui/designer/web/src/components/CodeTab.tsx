@@ -808,7 +808,13 @@ export default function CodeTab({
     terminated: "return False",
     truncated: "return False",
   };
-  const shownHooks = [...DEFAULT_HOOKS, ...Object.keys(hooks).filter((n) => !DEFAULT_HOOKS.includes(n))];
+  // A batched hook (reward_batch) replaces its per-agent one, which is then
+  // hidden - unless it came back with code of its own, so the clash shows.
+  const replaced = (name: string) => `${name}_batch` in hooks && !(name in hooks);
+  const shownHooks = [
+    ...DEFAULT_HOOKS.filter((n) => !replaced(n)),
+    ...Object.keys(hooks).filter((n) => !DEFAULT_HOOKS.includes(n)),
+  ];
   const selectedHookSetup = selected === "hooksetup";
   const selectedHook = selected.startsWith("hook:") ? selected.slice(5) : null;
   const selectedTaskInfoSetup = selected === "taskinfo:setup";
@@ -838,6 +844,14 @@ export default function CodeTab({
     if (!spec) return;
     onSpecChange({ ...spec, env: { ...spec.env, hooks: { ...hooks, [name]: body } } });
   };
+  // A hook body without its comments or blank lines: what it actually does.
+  const hookCode = (body: string) =>
+    body
+      .split("\n")
+      .filter((line) => line.trim() && !line.trim().startsWith("#"))
+      .join("\n")
+      .trim();
+
   const removeHook = (name: string) => {
     if (!spec || DEFAULT_HOOKS.includes(name)) return;
     const next = { ...hooks };
@@ -846,8 +860,21 @@ export default function CodeTab({
     if (selected === `hook:${name}`) setSelected(`hook:reward`);
   };
   const addHook = (name: string) => {
-    if (!name || hooks[name]) return;
-    setHook(name, scaffoldHook(hookMeta(name)));
+    if (!spec || !name || hooks[name]) return;
+    const next = { ...hooks, [name]: scaffoldHook(hookMeta(name)) };
+    // A batched hook replaces its per-agent one: a design defines one of them.
+    const perAgent = name.endsWith("_batch") ? name.slice(0, -"_batch".length) : "";
+    if (DEFAULT_HOOKS.includes(perAgent)) {
+      const code = hookCode(hooks[perAgent] ?? "");
+      if (code && code !== DEFAULT_BODIES[perAgent]) {
+        const ok = window.confirm(
+          `${name} replaces ${perAgent}, whose code will be removed (undo restores it). Continue?`,
+        );
+        if (!ok) return;
+      }
+      delete next[perAgent];
+    }
+    onSpecChange({ ...spec, env: { ...spec.env, hooks: next } });
     setSelected(`hook:${name}`);
   };
 

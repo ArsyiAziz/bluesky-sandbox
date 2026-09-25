@@ -49,9 +49,26 @@ class StepValues:
         """Forget the previous step's actions."""
         self._actions.clear()
 
+    @staticmethod
+    def traffic() -> tuple[float, tuple[str, ...]]:
+        """What the values depend on: the sim time and the live aircraft."""
+        return float(bs.sim.simt), tuple(bs.traf.id)
+
+    def check_current(self, since: tuple[float, tuple[str, ...]]) -> None:
+        """Refuse to build raw values for traffic that has changed since ``since``.
+
+        A context or batch kept past its step would otherwise mix its aircraft
+        indices with the new traffic's values, without a word.
+        """
+        if self.traffic() != since:
+            raise RuntimeError(
+                "these raw values belong to an earlier step; the traffic has "
+                "changed since. Read them during the step, or copy what you need."
+            )
+
     def _current(self) -> None:
         """Drop the values if the traffic has moved on since they were computed."""
-        stamp = (float(bs.sim.simt), tuple(bs.traf.id))
+        stamp = self.traffic()
         if stamp != self._stamp:
             self._stamp = stamp
             self._values.clear()
@@ -132,6 +149,7 @@ class RawObservation(Mapping[str, Mapping[str, Any]]):
         }
         self._acidx = acidx
         self._owns = owns
+        self._traffic = values.traffic()
         self._built: dict[str, dict[str, Any]] = {}
 
     def __getitem__(self, part: str) -> dict[str, Any]:
@@ -142,6 +160,7 @@ class RawObservation(Mapping[str, Mapping[str, Any]]):
                     f"no observation part {part!r}; this environment has "
                     f"{sorted(self._parts)}"
                 )
+            self._values.check_current(self._traffic)
             built = self._build(part, self._parts[part])
             self._built[part] = built
         return built

@@ -21,6 +21,13 @@ from bluesky_sandbox.config import (
     EnvConfig,
     resolve_spawn_aircraft_types,
 )
+from bluesky_sandbox.core.batch import (
+    RawBatch,
+    StepBatch,
+    intruder_indices,
+    stack_actions,
+    stack_observations,
+)
 from bluesky_sandbox.core.layout import (
     Slot,
     action_layout,
@@ -31,6 +38,7 @@ from bluesky_sandbox.core.step_values import (
     RawObservation,
     StepValues,
     raw_action_values,
+    unique_names_of,
 )
 from bluesky_sandbox.interface.fields._common import reset_field_state
 from bluesky_sandbox.interface.fields._state import set_action_space_bounds
@@ -173,6 +181,10 @@ class BlueskyBaseEnvironment(ParallelEnv):
         * ``None`` - no rendering (default).
     """
 
+    #: Hooks the task defines batched (``reward`` for ``reward_batch``...);
+    #: set per task class by :class:`~bluesky_sandbox.env.BlueskyEnv`.
+    _batched_hooks: frozenset[str] = frozenset()
+
     metadata = {
         "name": "bluesky-base-v0",
         "render_modes": [*get_args(RenderMode)],
@@ -244,6 +256,8 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._query_batch_cache: dict[tuple, Any] = {}
         # Raw field values this step, shared by the observation and the hooks.
         self._step_values = StepValues()
+        # This step for every agent at once, built on first use by a batched hook.
+        self._batch: StepBatch | None = None
         self._agent_context_cache_enabled = False
 
         # Aircraft scheduled to spawn later in the episode (spawn_time > 0).
@@ -377,6 +391,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
     ) -> tuple[AgentObservations, AgentInfos]:
         self._clear_agent_context_cache()
         self._step_values.clear()
+        self._batch = None
         self._rng = np.random.default_rng(seed)
         self._wind.reset()
         self.episode_spec = self.scenario.sample(self._rng)
@@ -430,6 +445,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
     ) -> tuple[AgentObservations, AgentRewards, DoneFlags, DoneFlags, AgentInfos]:
         self._clear_agent_context_cache()
         self._step_values.begin_step()
+        self._batch = None
         self._delete_marked_aircraft()
         self._spawn_generator.drain(self._rng)
         self._traffic_monitor.begin_step()
@@ -687,14 +703,49 @@ class BlueskyBaseEnvironment(ParallelEnv):
         return self._step_values.action(agent)
 
     def _raw_observation(self, acidx: int) -> RawObservation:
+        return RawObservation(
+            self._step_values, self._observation_parts(), acidx, self._agent_indices
+        )
+
+    def _observation_parts(self) -> dict[str, Any]:
+        """The observation's parts and the fields in each, keyed as it is."""
         config = self.config
-        parts = {
+        return {
             "ownship": config.obs_fields,
             "intruders": config.intruder_obs_fields,
             "critic_ownship": config.critic_obs_fields,
             "critic_intruders": config.critic_intruder_obs_fields,
         }
-        return RawObservation(self._step_values, parts, acidx, self._agent_indices)
+
+    def _step_batch(
+        self,
+        agent_ids: Sequence[Callsign],
+        observations: AgentObservations,
+        infos: AgentInfos,
+    ) -> StepBatch:
+        """This step for ``agent_ids`` at once, built once per step."""
+        if self._batch is not None and self._batch.acids == tuple(agent_ids):
+            return self._batch
+        index = self._live_agent_index()
+        acidx = np.array([index[acid] for acid in agent_ids], dtype=np.intp)
+        raw_action, has_action = stack_actions(
+            unique_names_of(self.config.action_fields),
+            [self._step_values.action(acid) for acid in agent_ids],
+        )
+        self._batch = StepBatch(
+            acids=tuple(agent_ids),
+            acidx=acidx,
+            obs=stack_observations([observations[acid] for acid in agent_ids]),
+            raw_obs=RawBatch(self._step_values, self._observation_parts(), acidx),
+            raw_action=raw_action,
+            has_action=has_action,
+            intruder_idx=intruder_indices(acidx),
+            infos=[infos[acid] for acid in agent_ids],
+            rng=self._rng,
+            _query=self.query_batch,
+            _context=self.agent_context,
+        )
+        return self._batch
 
     def _agent_indices(self) -> np.ndarray:
         """The controlled agents' traffic indices: the observation's ownships."""
@@ -912,27 +963,43 @@ class BlueskyBaseEnvironment(ParallelEnv):
         actions: AgentActions,
         infos: AgentInfos,
     ) -> tuple[DoneFlags, DoneFlags]:
+        batched = self._batched_hooks & {"terminated", "truncated"}
+        contexts: dict[Callsign, AgentStepContext] = {}
+
+        def decide(hook: str) -> DoneFlags:
+            if hook in batched:
+                batch = self._step_batch(agent_ids, observations, infos)
+                flags = _one_per_agent(
+                    getattr(self._hooks, f"{hook}_batch")(batch), batch, f"{hook}_batch"
+                ).astype(bool)
+                setattr(batch, hook, flags)
+                return dict(zip(agent_ids, map(bool, flags)))
+            flags = {}
+            for acid in agent_ids:
+                info = infos[acid]
+                if acid not in contexts:
+                    contexts[acid] = self.agent_context(info["acidx"])
+                flags[acid] = getattr(self._hooks, hook)(
+                    observations[acid],
+                    actions.get(acid),
+                    contexts[acid],
+                    info,
+                    self._rng,
+                )
+            return flags
+
+        if batched:
+            return decide("terminated"), decide("truncated")
+        # Both per agent: one agent's pair, then the next's - the order hooks
+        # drawing from rng have always seen.
         terminations: DoneFlags = {}
         truncations: DoneFlags = {}
         for acid in agent_ids:
-            obs = observations[acid]
-            action = actions.get(acid)
             info = infos[acid]
             context = self.agent_context(info["acidx"])
-            terminations[acid] = self._hooks.terminated(
-                obs,
-                action,
-                context,
-                info,
-                self._rng,
-            )
-            truncations[acid] = self._hooks.truncated(
-                obs,
-                action,
-                context,
-                info,
-                self._rng,
-            )
+            args = (observations[acid], actions.get(acid), context, info, self._rng)
+            terminations[acid] = self._hooks.terminated(*args)
+            truncations[acid] = self._hooks.truncated(*args)
         return terminations, truncations
 
     def _compute_rewards(
@@ -943,6 +1010,15 @@ class BlueskyBaseEnvironment(ParallelEnv):
         truncations: DoneFlags,
         infos: AgentInfos,
     ) -> AgentRewards:
+        if "reward" in self._batched_hooks:
+            agent_ids = list(observations)
+            batch = self._step_batch(agent_ids, observations, infos)
+            batch.terminated = np.array([terminations[a] for a in agent_ids], bool)
+            batch.truncated = np.array([truncations[a] for a in agent_ids], bool)
+            rewards = _one_per_agent(
+                self._hooks.reward_batch(batch), batch, "reward_batch"
+            )
+            return {acid: float(r) for acid, r in zip(agent_ids, rewards)}
         return {
             a: self._hooks.reward(
                 observations[a],
@@ -963,6 +1039,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
         infos: AgentInfos,
     ) -> None:
         for provider in self.config.task_info_providers:
+            if getattr(provider, "batched", False):
+                provider(self._step_batch(list(observations), observations, infos))
+                continue
             for acid in observations:
                 info = infos[acid]
                 context = self.agent_context(info["acidx"])
@@ -1010,3 +1089,14 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
     def _ownship_bounds(self, idx: int, fields) -> tuple[np.ndarray, np.ndarray]:
         return self._observation_assembler.ownship_bounds(idx, fields)
+
+
+def _one_per_agent(values: Any, batch: StepBatch, hook: str) -> np.ndarray:
+    """A batched hook's result, checked to hold one value per agent."""
+    array = np.asarray(values)
+    if array.shape != (len(batch),):
+        raise ValueError(
+            f"{hook} returned shape {array.shape}; it must return one value per "
+            f"agent, shape ({len(batch)},), in the order of batch.acids."
+        )
+    return array

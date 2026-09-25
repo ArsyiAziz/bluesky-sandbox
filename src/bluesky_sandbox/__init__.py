@@ -3,6 +3,7 @@ __version__ = "0.1.0"
 import sys as _sys
 
 from bluesky_sandbox.core.base_environment import AircraftControlState
+from bluesky_sandbox.core.batch import StepBatch
 from bluesky_sandbox.core.layout import (
     Slot,
     action_layout,
@@ -188,6 +189,7 @@ __all__ = [
     "Slot",
     "SpawnConfig",
     "SpawnRegion",
+    "StepBatch",
     "StepEvent",
     "StepTime",
     "SwitchActionMixin",

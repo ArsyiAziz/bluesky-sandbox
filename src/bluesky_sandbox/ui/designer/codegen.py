@@ -431,11 +431,16 @@ def _emit_hooks(hooks: dict[str, str]) -> str:
     """Emit env hook overrides.
 
     reward/terminated/truncated are always emitted (body from ``hooks`` or their
-    default); other hooks are emitted only when the user customized them -
-    uncustomized ones inherit the base behavior (no ``super()`` boilerplate).
+    default) unless the design defines their batched counterpart instead; other
+    hooks are emitted only when the user customized them - uncustomized ones
+    inherit the base behavior (no ``super()`` boilerplate).
     """
     sigs = {h["name"]: h["def_signature"] for h in _hook_catalog()}
-    names = list(_DEFAULT_HOOK_BODIES) + [n for n in sorted(hooks) if n not in _DEFAULT_HOOK_BODIES]
+    # A batched hook replaces its per-agent one, which is then not written.
+    batched = {name for name in _DEFAULT_HOOK_BODIES if hooks.get(f"{name}_batch")}
+    names = [n for n in _DEFAULT_HOOK_BODIES if n not in batched] + [
+        n for n in sorted(hooks) if n not in _DEFAULT_HOOK_BODIES
+    ]
     blocks: list[str] = []
     for name in names:
         sig = sigs.get(name)

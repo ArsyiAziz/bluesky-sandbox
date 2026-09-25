@@ -1,12 +1,16 @@
-"""A design's setup code runs the same in-process as in its generated package.
+"""A design's code runs the same in-process as in its generated package.
 
 The task-info setup, the inline task-info entries and the hook setup are one
 module: ``setup.py`` in a generated package, and the module the builder runs.
 A helper one block defines is visible to the others either way - a task-info
-entry calling a hook-setup helper used to fail in-process only.
+entry calling a hook-setup helper used to fail in-process only. A batched hook
+replaces its per-agent one in the package, and never sits beside it.
 """
 
 from __future__ import annotations
+
+import importlib
+import sys
 
 import pytest
 
@@ -100,4 +104,39 @@ def test_the_builder_runs_the_code_the_package_writes():
 )
 def test_an_error_names_its_block_and_line(design, where):
     with pytest.raises(BuildError, match=f"error in {where}"):
+        build_design_config(design)
+
+
+# --- batched hooks ---------------------------------------------------------------
+def _batched_design() -> S.DesignSpec:
+    design = _design(hook_setup="import numpy as np")
+    design.env.hooks["reward_batch"] = (
+        'return batch.raw_obs["ownship"]["alt_ft"] * 0.0 + len(batch)'
+    )
+    return design
+
+
+def test_a_batched_hook_replaces_its_per_agent_one_in_the_package():
+    env_py = codegen.generate_task(_batched_design(), "task_pkg")["task_pkg/env.py"]
+    assert "def reward_batch(self, batch):" in env_py
+    assert "def reward(self" not in env_py
+    assert "def terminated(self" in env_py  # still per agent
+
+
+def test_the_generated_env_uses_the_batched_hook(tmp_path):
+    codegen.write_task(_batched_design(), "batch_pkg", tmp_path)
+    sys.path.insert(0, str(tmp_path))
+    try:
+        env_cls = importlib.import_module("batch_pkg").Env
+        assert env_cls._batched_hooks == frozenset({"reward"})
+    finally:
+        sys.path.remove(str(tmp_path))
+        for name in [n for n in sys.modules if n.split(".")[0] == "batch_pkg"]:
+            del sys.modules[name]
+
+
+def test_a_design_with_a_hook_both_ways_is_refused():
+    design = _batched_design()
+    design.env.hooks["reward"] = "return 1.0"
+    with pytest.raises(BuildError, match="both reward and reward_batch"):
         build_design_config(design)

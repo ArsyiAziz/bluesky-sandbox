@@ -14,6 +14,7 @@ from bluesky_sandbox.core.base_environment import (
     ViewSpec,
     overridable,
 )
+from bluesky_sandbox.core.batch import StepBatch
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
     EnvObsField,
@@ -27,7 +28,6 @@ from bluesky_sandbox.interface.task import (
     WaypointReadoutItem,
 )
 from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
-
 
 # The runtime's public API, inherited from ``BlueskyBaseEnvironment``. These are
 # not task hooks: the environment calls them on itself, and because the two
@@ -70,6 +70,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
                 ...
         """
         super().__init_subclass__(**kwargs)
+        cls._batched_hooks = _batched_hooks(cls)
         shadowed = sorted(
             (_RUNTIME_API & set(vars(cls))) - set(allow_runtime_override)
         )
@@ -243,6 +244,33 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """Per-agent truncation (time limit / give-up condition)."""
         return False
 
+    # Batched counterparts: one call for every agent, with a StepBatch. Each is
+    # optional - define it instead of the per-agent hook, never as well.
+    @overridable
+    def reward_batch(self, batch: StepBatch) -> np.ndarray:
+        """Every agent's reward at once: one per ``batch.acids``, in that order.
+
+        Instead of :meth:`reward`. ``batch.terminated`` / ``batch.truncated``
+        hold this step's decisions.
+        """
+        raise NotImplementedError
+
+    @overridable
+    def terminated_batch(self, batch: StepBatch) -> np.ndarray:
+        """Every agent's termination at once: one bool per ``batch.acids``.
+
+        Instead of :meth:`terminated`.
+        """
+        raise NotImplementedError
+
+    @overridable
+    def truncated_batch(self, batch: StepBatch) -> np.ndarray:
+        """Every agent's truncation at once: one bool per ``batch.acids``.
+
+        Instead of :meth:`truncated`.
+        """
+        raise NotImplementedError
+
     def read_aircraft_obs_field(
         self,
         idx: int,
@@ -275,3 +303,25 @@ class BlueskyEnv(BlueskyBaseEnvironment):
     ) -> tuple[Any, ...]:
         """Read several raw per-aircraft observation values in order."""
         return tuple(self.read_aircraft_obs_field(idx, field) for field in fields)
+
+
+#: The per-agent hooks that have a batched counterpart, ``<hook>_batch``.
+BATCHABLE_HOOKS = ("reward", "terminated", "truncated")
+
+
+def _batched_hooks(cls: type) -> frozenset[str]:
+    """The hooks ``cls`` defines batched. Defining a hook both ways is an error:
+    the environment would have no way to tell which to call."""
+    batched = set()
+    for hook in BATCHABLE_HOOKS:
+        batch_hook = f"{hook}_batch"
+        per_agent = getattr(cls, hook) is not getattr(BlueskyEnv, hook)
+        batch = getattr(cls, batch_hook) is not getattr(BlueskyEnv, batch_hook)
+        if per_agent and batch:
+            raise TypeError(
+                f"{cls.__name__} defines both {hook}() and {hook}_batch(); define "
+                "one - the per-agent hook, or its batched counterpart."
+            )
+        if batch:
+            batched.add(hook)
+    return frozenset(batched)
