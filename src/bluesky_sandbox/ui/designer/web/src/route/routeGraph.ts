@@ -52,6 +52,8 @@ export type GNode = {
   y: number;
   // Branch-only: per-option weights + the option entry node ids (for labels).
   optionCount?: number;
+  // Merge-only: the branch step it closes.
+  of?: Addr;
 };
 export type GEdge = {
   id: string;
@@ -63,8 +65,8 @@ export type GEdge = {
   optionIndex?: number;
 };
 
-const COL = 200;
-const ROW = 90;
+const COL = 140;
+const ROW = 60;
 
 type Sub = {
   nodes: GNode[];
@@ -100,7 +102,7 @@ function layoutStep(step: RouteStep, addr: Addr, col: number, rowTop: number): S
     const midRow = rowTop + rows / 2 - 0.5;
     const mergeCol = col + 1 + maxOptCols;
     nodes.push({ id: branchId, kind: "branch", label: "⎇", addr, x: col * COL, y: midRow * ROW, optionCount: options.length });
-    nodes.push({ id: mergeId, kind: "merge", label: "", addr: null, x: mergeCol * COL, y: midRow * ROW });
+    nodes.push({ id: mergeId, kind: "merge", label: "", addr: null, of: addr, x: mergeCol * COL, y: midRow * ROW });
     options.forEach((_, oi) => {
       const w = step.weights?.[oi];
       const entries = optEntries[oi].length ? optEntries[oi] : [mergeId];
@@ -245,6 +247,106 @@ export function setOptionWeight(route: RouteStep[], choiceAddr: Addr, optionInde
   // Equal weights mean uniform → store none, keeping the spec minimal.
   choice.weights = weights.every((w) => w === weights[0]) ? undefined : weights;
   return next;
+}
+
+// --- Gestures: what a drag on the graph means for the step-list ---------------
+
+// Where a node sits: the list holding it (by address prefix) and its index
+// there. The spawn node sits before the route's first step; a merge node sits
+// where its branch step does, so what follows a merge follows the branch.
+function place(node: GNode): { prefix: Addr; index: number } | null {
+  if (node.kind === "start") return { prefix: [], index: -1 };
+  const addr = node.kind === "merge" ? node.of : node.addr;
+  if (!addr) return null;
+  return { prefix: addr.slice(0, -1), index: addr[addr.length - 1] };
+}
+
+// Add `step` right after `node`. From a branch node, it becomes a new option.
+export function addFrom(route: RouteStep[], node: GNode, step: RouteStep): RouteStep[] {
+  if (node.kind === "branch" && node.addr) return addOption(route, node.addr, step);
+  const at = place(node);
+  if (!at) return route;
+  const next = clone(route);
+  const { list } = locate(next, [...at.prefix, 0]);
+  list.splice(at.index + 1, 0, step);
+  return next;
+}
+
+// Put `step` on the edge `edge`: before the node it enters, or - on an edge
+// into a merge - at the end of the option it closes.
+export function insertOnEdge(route: RouteStep[], nodes: GNode[], edge: GEdge, step: RouteStep): RouteStep[] {
+  const byId = (id: string) => nodes.find((n) => n.id === id);
+  const source = byId(edge.source);
+  const target = byId(edge.target);
+  if (!source || !target) return route;
+  if (target.kind !== "merge" && target.addr) return insertBefore(route, target.addr, step);
+  // An empty option: the edge runs from the branch straight to its merge.
+  if (source.kind === "branch" && source.addr && edge.optionIndex != null) {
+    const next = clone(route);
+    const { list, index } = locate(next, source.addr);
+    (list[index] as Choice).choice[edge.optionIndex].push(step);
+    return next;
+  }
+  return addFrom(route, source, step);
+}
+
+// Where in `to`'s list a skip from `from` would land, or null when there is no
+// such skip: both must be on one path, with at least one step between them. A
+// merge closing the branch `from` is inside counts as that path's end.
+function skipSpan(from: GNode, to: GNode, route: RouteStep[]): { prefix: Addr; start: number; end: number } | null {
+  const a = place(from);
+  if (!a) return null;
+  let end: number;
+  if (to.kind === "merge") {
+    if (!to.of || !addrEq(a.prefix.slice(0, -1), to.of)) return null;
+    end = locate(route, [...a.prefix, 0]).list.length;
+  } else {
+    const b = to.addr && place(to);
+    if (!b || !addrEq(a.prefix, b.prefix)) return null;
+    end = b.index;
+  }
+  return end - a.index >= 2 ? { prefix: a.prefix, start: a.index + 1, end } : null;
+}
+
+export function canSkip(route: RouteStep[], from: GNode, to: GNode): boolean {
+  return skipSpan(from, to, route) !== null;
+}
+
+// A branch around the steps between `from` and `to`: one option takes them,
+// the other goes straight on.
+export function skipBetween(route: RouteStep[], from: GNode, to: GNode): RouteStep[] {
+  const span = skipSpan(from, to, route);
+  if (!span) return route;
+  const next = clone(route);
+  const { list } = locate(next, [...span.prefix, 0]);
+  const between = list.splice(span.start, span.end - span.start);
+  list.splice(span.start, 0, { choice: [between, []] });
+  return next;
+}
+
+// Move the step at `addr` to `toIndex` within its own list.
+export function moveWithin(route: RouteStep[], addr: Addr, toIndex: number): RouteStep[] {
+  const next = clone(route);
+  const { list, index } = locate(next, addr);
+  if (toIndex === index) return route;
+  const [step] = list.splice(index, 1);
+  list.splice(toIndex, 0, step);
+  return next;
+}
+
+// The index a step dragged to x lands at among the steps of its own list.
+export function dropIndex(nodes: GNode[], node: GNode, x: number): number {
+  if (!node.addr) return 0;
+  const prefix = node.addr.slice(0, -1);
+  const siblings = nodes.filter(
+    (n) =>
+      n.id !== node.id &&
+      n.addr &&
+      n.kind !== "merge" &&
+      n.addr.length === node.addr!.length &&
+      addrEq(n.addr.slice(0, -1), prefix),
+  );
+  return siblings.filter((n) => n.x < x).length;
 }
 
 export { addrEq, addrKey };

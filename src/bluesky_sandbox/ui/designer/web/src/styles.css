@@ -363,7 +363,7 @@ button:disabled {
 .rf-subroute { background: #3a2f44; border-color: #6b4f8e; }
 .rf-start { background: #243524; border-color: #3f6b3f; }
 .rf-branch { background: #44381f; border-color: #8e6b2f; border-radius: 50%; padding: 6px 8px; }
-.rf-merge { background: #333; border-radius: 50%; width: 10px; height: 10px; padding: 0; }
+.rf-merge { background: #333; border-radius: 50%; padding: 0; }
 
 .rf-node-x {
   background: none;
@@ -375,14 +375,80 @@ button:disabled {
 }
 .rf-node-x:hover { color: #f87171; }
 
+/* A node's dots show on hover: drag from the right one to add or branch. */
 .rf-handle {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   background: var(--muted);
   border: none;
-  opacity: 0.5;
+  opacity: 0;
+  transition: opacity 0.1s;
 }
-.rf-merge .rf-handle { opacity: 0; }
+.react-flow__node:hover .rf-handle.react-flow__handle-right,
+.rf-merge:hover .rf-handle { opacity: 1; }
+.rf-handle.react-flow__handle-right:hover { background: var(--accent); }
+/* While a connection is dragged, the targets it may end on light up. */
+.react-flow__handle.connectingto.valid { opacity: 1; background: #4ade80; }
+.react-flow__handle.connectingto:not(.valid) { opacity: 1; background: #f87171; }
+.rf-merge { width: 12px; height: 12px; }
+
+/* An edge's drop band, and the edge a waypoint is dragged over. */
+.rf-edge-drop {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 18;
+  pointer-events: stroke;
+}
+.react-flow__edge-path.rf-edge-over {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.route-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.route-palette .route-palette-item {
+  cursor: grab;
+  text-transform: none;
+  font-size: 11px;
+}
+
+.route-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.route-popover {
+  position: fixed;
+  z-index: 41;
+  width: 200px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+.route-popover input {
+  width: 100%;
+  margin-bottom: 4px;
+}
+.route-popover-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow: auto;
+}
+.route-popover-list button {
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+}
+.route-popover-list button:hover {
+  background: #2a2d2e;
+}
 
 .map-area {
   position: relative;

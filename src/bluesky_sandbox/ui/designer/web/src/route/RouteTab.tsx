@@ -1,17 +1,25 @@
 // The Route tab: a guided node-graph editor for a route (top) over a read-only
 // map preview (bottom). The graph is decompiled from the route's nested
-// step-list; edits go through pure step-list transforms (routeGraph ops), so the
-// route stays valid. Drag is for pan/zoom only — structure is edited via the
-// inspector and by clicking waypoints on the map.
-import { useMemo, useState } from "react";
+// step-list; every edit is a pure step-list transform (routeGraph ops), so the
+// route stays valid. Besides the inspector and clicking waypoints on the map,
+// a drag edits it: from a node's dot into space adds a step after it, onto a
+// later node on its path branches around the steps between; a node dragged
+// along its path moves there; a waypoint dropped on a line is inserted there.
+import { useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
+  BaseEdge,
   Controls,
   Handle,
   Position,
-  type Node,
+  getBezierPath,
+  useReactFlow,
+  type Connection,
   type Edge,
+  type EdgeProps,
+  type Node,
+  type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -24,13 +32,22 @@ import {
   addrKey,
   appendAfter,
   appendToEnd,
+  addFrom,
   addOption,
   branchAfter,
+  canSkip,
   deleteAt,
+  dropIndex,
+  insertOnEdge,
+  moveWithin,
   removeOption,
   routeToGraph,
   setOptionWeight,
+  skipBetween,
 } from "./routeGraph";
+
+// What a dragged waypoint chip carries.
+const STEP_MIME = "application/x-route-step";
 
 const emptySpawn = (): SpecDict => ({ type: "spawn_config", regions: [], aircraft_type: null, route: null, routes: {} });
 
@@ -44,7 +61,7 @@ type NodeData = {
 function StepNode({ data }: NodeProps<Node<NodeData>>) {
   return (
     <div className={`rf-node rf-${data.kind} ${data.selected ? "sel" : ""}`}>
-      <Handle type="target" position={Position.Left} className="rf-handle" />
+      <Handle type="target" position={Position.Left} className="rf-handle" isConnectableStart={false} />
       <span className="rf-node-label">{data.label}</span>
       {data.onDelete && (
         <button className="rf-node-x" title="remove" onClick={(e) => { e.stopPropagation(); data.onDelete!(); }}>✕</button>
@@ -54,7 +71,56 @@ function StepNode({ data }: NodeProps<Node<NodeData>>) {
   );
 }
 
+type EdgeData = {
+  over: boolean;
+  onOver: (over: boolean) => void;
+  onDropStep: (value: string) => void;
+};
+
+// An edge with a wide, invisible band a dragged waypoint can be dropped on.
+function InsertEdge(props: EdgeProps<Edge<EdgeData>>) {
+  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, label, data } = props;
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  const accepts = (e: React.DragEvent) => e.dataTransfer.types.includes(STEP_MIME);
+  return (
+    <>
+      <BaseEdge id={id} path={path} label={label} labelX={labelX} labelY={labelY} className={data?.over ? "rf-edge-over" : ""} />
+      <path
+        d={path}
+        className="rf-edge-drop"
+        onDragOver={(e) => {
+          if (!accepts(e)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          data?.onOver(true);
+        }}
+        onDragLeave={() => data?.onOver(false)}
+        onDrop={(e) => {
+          if (!accepts(e)) return;
+          e.preventDefault();
+          data?.onOver(false);
+          data?.onDropStep(e.dataTransfer.getData(STEP_MIME));
+        }}
+      />
+    </>
+  );
+}
+
+// Fit the graph in view when its nodes come or go, so a step added past the
+// edge is not left out of sight.
+const FIT = { maxZoom: 1, padding: 0.25 };
+function FitOnChange({ signature }: { signature: string }) {
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    // After the new nodes are measured.
+    const handle = requestAnimationFrame(() => fitView({ ...FIT, duration: 150 }));
+    return () => cancelAnimationFrame(handle);
+  }, [signature, fitView]);
+  return null;
+}
+
 const NODE_TYPES = { step: StepNode };
+const EDGE_TYPES = { insert: InsertEdge };
 
 export default function RouteTab({
   spec,
@@ -67,6 +133,12 @@ export default function RouteTab({
   const routeNames = Object.keys(routes);
   const [active, setActive] = useState<string | null>(routeNames[0] ?? null);
   const [selId, setSelId] = useState<string | null>(null);
+  // A node being dragged along its path, and where it is.
+  const [drag, setDrag] = useState<{ id: string; x: number } | null>(null);
+  // The edge a waypoint is being dragged over.
+  const [overEdge, setOverEdge] = useState<string | null>(null);
+  // A drag from a node's dot let go in empty space: what to add there.
+  const [adding, setAdding] = useState<{ from: string; x: number; y: number } | null>(null);
   const current = active && routes[active] ? active : routeNames[0] ?? null;
   const steps = current ? routes[current] ?? [] : [];
 
@@ -135,26 +207,60 @@ export default function RouteTab({
   // Waypoint names appearing in this route (for the map's sampled-waypoint links).
   const routeWaypoints = graph.nodes.filter((n) => n.kind === "waypoint").map((n) => n.label);
 
+  const movable = (kind: string) => kind === "waypoint" || kind === "subroute" || kind === "branch";
   const rfNodes: Node<NodeData>[] = graph.nodes.map((n) => ({
     id: n.id,
     type: "step",
-    position: { x: n.x, y: n.y },
+    // A dragged node follows the pointer along its row only: it moves within
+    // its path, not out of it.
+    position: { x: drag?.id === n.id ? drag.x : n.x, y: n.y },
     data: {
       label: n.kind === "start" ? spawnName ?? "spawn" : n.label || (n.kind === "merge" ? "●" : ""),
       kind: n.kind,
       selected: n.id === selId,
       onDelete: n.addr && (n.kind === "waypoint" || n.kind === "subroute") ? () => setSteps(deleteAt(steps, n.addr!)) : undefined,
     },
-    draggable: false,
+    draggable: movable(n.kind),
     selectable: n.kind !== "merge",
   }));
-  const rfEdges: Edge[] = graph.edges.map((e) => ({
+  const nodeById = (id: string | null | undefined) => graph.nodes.find((n) => n.id === id);
+  const rfEdges: Edge<EdgeData>[] = graph.edges.map((e) => ({
     id: e.id,
+    type: "insert",
     source: e.source,
     target: e.target,
     label: e.label,
     animated: false,
+    data: {
+      over: overEdge === e.id,
+      onOver: (over: boolean) => setOverEdge(over ? e.id : null),
+      onDropStep: (value: string) => setSteps(insertOnEdge(steps, graph.nodes, e, stepFromValue(value))),
+    },
   }));
+
+  const onNodesChange = (changes: NodeChange<Node<NodeData>>[]) => {
+    for (const c of changes) if (c.type === "position" && c.position) setDrag({ id: c.id, x: c.position.x });
+  };
+  const onNodeDragStop = (_: unknown, node: Node) => {
+    const g = nodeById(node.id);
+    setDrag(null);
+    if (g?.addr) setSteps(moveWithin(steps, g.addr, dropIndex(graph.nodes, g, node.position.x)));
+  };
+  const isValidConnection = (c: Edge | Connection) => {
+    const from = nodeById(c.source);
+    const to = nodeById(c.target);
+    return Boolean(from && to && canSkip(steps, from, to));
+  };
+  const onConnect = (c: Connection) => {
+    const from = nodeById(c.source);
+    const to = nodeById(c.target);
+    if (from && to) setSteps(skipBetween(steps, from, to));
+  };
+  const onConnectEnd = (event: MouseEvent | TouchEvent, state: { fromNode?: { id: string } | null; toNode?: unknown }) => {
+    if (state.toNode || !state.fromNode) return;
+    const point = "changedTouches" in event ? event.changedTouches[0] : event;
+    setAdding({ from: state.fromNode.id, x: point.clientX, y: point.clientY });
+  };
 
   // A step to add, chosen from the waypoint / subroute picker.
   const stepFromValue = (v: string): RouteStep => (v.startsWith("rt:") ? { route: v.slice(3) } : v);
@@ -213,16 +319,36 @@ export default function RouteTab({
                 nodes={rfNodes}
                 edges={rfEdges}
                 nodeTypes={NODE_TYPES}
+                edgeTypes={EDGE_TYPES}
+                colorMode="dark"
                 onNodeClick={(_, n) => setSelId(n.id)}
                 onPaneClick={() => setSelId(null)}
-                nodesConnectable={false}
-                nodesDraggable={false}
+                onNodesChange={onNodesChange}
+                onNodeDragStop={onNodeDragStop}
+                isValidConnection={isValidConnection}
+                onConnect={onConnect}
+                onConnectEnd={onConnectEnd}
                 fitView
+                fitViewOptions={FIT}
                 proOptions={{ hideAttribution: true }}
               >
                 <Background />
                 <Controls showInteractive={false} />
+                <FitOnChange signature={`${current}:${graph.nodes.map((n) => n.id).join(",")}`} />
               </ReactFlow>
+              {adding && (
+                <AddPopover
+                  x={adding.x}
+                  y={adding.y}
+                  options={addOptions}
+                  onPick={(v) => {
+                    const from = nodeById(adding.from);
+                    if (from) setSteps(addFrom(steps, from, stepFromValue(v)));
+                    setAdding(null);
+                  }}
+                  onClose={() => setAdding(null)}
+                />
+              )}
             </div>
           ) : (
             <div className="route-empty muted">Create a route to start composing it.</div>
@@ -349,6 +475,73 @@ function RouteStepInspector({
           </label>
         </>
       )}
+
+      <div className="sub-label">drag onto a line</div>
+      <div className="route-palette">
+        {addOptions.map((o) => (
+          <span
+            key={o.value}
+            className="geo-row-kind route-palette-item"
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(STEP_MIME, o.value);
+              e.dataTransfer.effectAllowed = "copy";
+            }}
+            title={`drag onto a line in the graph to insert ${o.label} there`}
+          >
+            {o.label}
+          </span>
+        ))}
+      </div>
+      <p className="muted small">
+        Drag a node's dot into space to add after it, or onto a later node on its path to branch around
+        the steps between. Drag a node sideways to move it along its path.
+      </p>
     </div>
+  );
+}
+
+// The steps to add, opened where a drag from a node's dot was let go.
+function AddPopover({
+  x,
+  y,
+  options,
+  onPick,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  options: { value: string; label: string; category: string }[];
+  onPick: (value: string) => void;
+  onClose: () => void;
+}) {
+  const [filter, setFilter] = useState("");
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const shown = options.filter((o) => o.label.toLowerCase().includes(filter.toLowerCase()));
+  return (
+    <>
+      <div className="route-popover-backdrop" onClick={onClose} />
+      <div className="route-popover" style={{ left: x, top: y }}>
+        <input
+          autoFocus
+          placeholder="add after…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && shown[0] && onPick(shown[0].value)}
+        />
+        <div className="route-popover-list">
+          {shown.map((o) => (
+            <button key={o.value} onClick={() => onPick(o.value)}>
+              {o.label}
+            </button>
+          ))}
+          {shown.length === 0 && <span className="muted small">nothing matches</span>}
+        </div>
+      </div>
+    </>
   );
 }
