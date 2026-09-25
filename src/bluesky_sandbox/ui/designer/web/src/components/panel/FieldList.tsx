@@ -180,20 +180,19 @@ export function FieldList({
         />
       )}
 
-      <FieldPicker
-        kind={label === "action" ? "action" : "obs"}
-        placeholder={pickerLabel}
-        options={options}
-        onAdd={addField}
-      />
-
-      {onAddScaffold && (
-        <div className="row">
+      <div className="field-add">
+        <FieldPicker
+          kind={label === "action" ? "action" : "obs"}
+          placeholder={pickerLabel}
+          options={options}
+          onAdd={addField}
+        />
+        {onAddScaffold && (
           <button onClick={onAddScaffold} title="create a new custom field in custom_fields.py and edit it in the Code tab">
-            + custom {label === "action" ? "action" : "observation"}
+            + custom
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

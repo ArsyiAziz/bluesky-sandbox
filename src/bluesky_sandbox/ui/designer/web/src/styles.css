@@ -147,19 +147,40 @@ body {
   }
 }
 
-button,
-select,
-input {
-  background: #333;
+/* Base controls, at zero specificity so any component's own rule wins. A
+   button reads as raised, a field as sunk into the panel; both are the same
+   height, and focus shows the same ring on each. */
+:where(button, select, input, textarea) {
+  font: inherit;
+  font-size: 12px;
   color: var(--text);
-  border: 1px solid var(--border);
+}
+:where(button) {
+  background: #2f2f31;
+  border: 1px solid #474749;
+  border-radius: 4px;
+  padding: 4px 10px;
+  line-height: 16px;
+  cursor: pointer;
+}
+:where(button:not(:disabled):hover) {
+  background: #3a3a3c;
+  border-color: #58585a;
+}
+:where(select, input:not([type="checkbox"], [type="radio"], [type="range"])) {
+  background: #1b1b1c;
+  border: 1px solid #474749;
   border-radius: 4px;
   padding: 4px 8px;
-  font-size: 12px;
+  line-height: 16px;
 }
-
-button {
-  cursor: pointer;
+:where(input, textarea)::placeholder {
+  color: #6c6c6c;
+}
+:where(button, select, input, textarea):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
 }
 
 button:disabled {
@@ -1746,6 +1767,7 @@ button:disabled {
   }
 }
 
+/* A picker opens a list, but holds a value: it reads as a field. */
 .picker-trigger {
   display: flex;
   align-items: center;
@@ -1753,6 +1775,7 @@ button:disabled {
   gap: 6px;
   width: 100%;
   text-align: left;
+  background: #1b1b1c;
 }
 
 .picker-trigger.open {
@@ -2867,7 +2890,8 @@ button:disabled {
 .field-rows {
   display: flex;
   flex-direction: column;
-  margin-bottom: 6px;
+  gap: 4px;
+  margin-bottom: 8px;
 }
 
 .field-row {
@@ -2875,18 +2899,22 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   column-gap: 8px;
-  padding: 3px 6px;
-  border-radius: 3px;
+  row-gap: 2px;
+  padding: 5px 8px;
+  border: 1px solid #363638;
+  border-radius: 4px;
+  background: #1f1f20;
   font-size: 12px;
   cursor: pointer;
 }
 
 .field-row:hover {
-  background: #2a2d2e;
+  border-color: #5a5a5c;
+  background: #262628;
 }
 
 .field-row.invalid {
-  box-shadow: inset 2px 0 0 #f87171;
+  border-color: #f87171;
 }
 
 .field-row-name {
@@ -2931,6 +2959,20 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A field list's add row: pick a built-in field, or write a custom one. */
+.field-add {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.field-add > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.field-add > button {
+  flex: none;
 }
 
 /* Spaces tab: the field editor beside the spaces it builds. */
