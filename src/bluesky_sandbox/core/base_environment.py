@@ -232,6 +232,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
         self._aircraft_spawn_time: dict[str, float] = {}
         self._agent_context_cache: dict[str, AgentStepContext] = {}
+        self._query_batch_cache: dict[tuple, Any] = {}
         self._agent_context_cache_enabled = False
 
         # Aircraft scheduled to spawn later in the episode (spawn_time > 0).
@@ -742,7 +743,29 @@ class BlueskyBaseEnvironment(ParallelEnv):
     def _clear_agent_context_cache(self) -> None:
         """Drop cached per-agent context objects after lifecycle boundaries."""
         self._agent_context_cache.clear()
+        self._query_batch_cache.clear()
         self._agent_context_cache_enabled = False
+
+    def query_batch(self, name: str, indices) -> Any:
+        """Queryable ``name`` for many aircraft at once, as arrays.
+
+        The batched counterpart of ``agent_context(idx).query(name)`` for
+        observation fields, cached for the same scope as the contexts - so
+        every field reading one queryable shares one computation.
+        """
+        indices = tuple(int(i) for i in indices)
+        key = (name, indices)
+        cached = self._query_batch_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            queryable = self.episode_queryables[name]
+        except KeyError as exc:
+            raise KeyError(f"queryable {name!r} is not configured") from exc
+        batch = self._query_state_monitor.batch(name, queryable, indices)
+        if self._agent_context_cache_enabled:
+            self._query_batch_cache[key] = batch
+        return batch
 
     def agent_context(self, idx: int) -> AgentStepContext:
         """Return the agent-bound context for one aircraft index.

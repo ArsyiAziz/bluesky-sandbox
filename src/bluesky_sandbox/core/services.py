@@ -22,6 +22,9 @@ from bluesky_sandbox.interface.task import (
     StepEvent,
     StepTime,
 )
+from bluesky_sandbox.interface.task.types import (
+    _raise_queryable_temporal_state_unavailable,
+)
 from bluesky_sandbox.interface.wrappers.observations.normalizer import Normalizer
 from bluesky_sandbox.sim.bounds import contains_many
 from bluesky_sandbox.sim.performance.speeds import within_speed_tolerance_many
@@ -852,6 +855,11 @@ class QueryStateMonitor:
             within_lateral & within_altitude & within_speed,
         )
 
+    def batch(self, name: str, queryable, indices) -> QueryBatch:
+        """:meth:`query` for many aircraft at once, as arrays - see
+        :class:`QueryBatch`."""
+        return QueryBatch(self, name, queryable, indices)
+
     def query(self, acid: str, acidx: int, name: str, queryable):
         track_temporal_state = bool(getattr(queryable, "track_temporal_state", False))
         if isinstance(queryable, Waypoint) and not track_temporal_state:
@@ -974,6 +982,220 @@ class QueryStateMonitor:
                 total_s=total,
                 during_step_s=during_step_s,
             ),
+        )
+
+
+class QueryBatch:
+    """One queryable's result for many aircraft, as arrays by attribute path.
+
+    The batched form of :meth:`QueryStateMonitor.query`: ``values(path)`` is
+    the attribute ``path`` of each aircraft's result (``"current.distance_nm"``,
+    ``"route.active"``, ``"time.total_s"``, ...) as one array, computed the same
+    way. Observation fields read these instead of building a result object per
+    aircraft. A path the query cannot answer - temporal state on a queryable
+    that does not track it - raises exactly as the result's attribute would.
+
+    Waypoints and regions are computed as arrays; any other queryable falls
+    back to one result per aircraft.
+    """
+
+    def __init__(self, monitor, name: str, queryable, indices) -> None:
+        self._monitor = monitor
+        self._name = name
+        self._queryable = queryable
+        self.indices = np.asarray(indices, dtype=np.intp).ravel()
+        self._tracked = bool(getattr(queryable, "track_temporal_state", False))
+        self._values: dict[str, np.ndarray] = {}
+        self._route_indices: list[int | None] | None = None
+        self._results: list | None = None
+
+    def values(self, path: str) -> np.ndarray:
+        if path not in self._values:
+            self._values[path] = self._compute(path)
+        return self._values[path]
+
+    def _compute(self, path: str) -> np.ndarray:
+        queryable = self._queryable
+        if isinstance(queryable, Waypoint):
+            return self._waypoint(path)
+        if isinstance(queryable, QueryRegion):
+            return self._region(path)
+        return self._fallback(path)
+
+    # --- per aircraft, for queryables with no array form -------------------
+    def _fallback(self, path: str) -> np.ndarray:
+        if self._results is None:
+            monitor, ids = self._monitor, bs.traf.id
+            self._results = [
+                monitor.query(ids[int(i)], int(i), self._name, self._queryable)
+                for i in self.indices
+            ]
+        values = []
+        for result in self._results:
+            value = result
+            for part in path.split("."):
+                value = getattr(value, part)
+            values.append(value)
+        return np.asarray(values, dtype=np.float64)
+
+    # --- table-backed temporal state ----------------------------------------
+    def _unavailable(self, attribute: str):
+        # A result without temporal tracking raises on access; so does a batch,
+        # as long as it holds any aircraft (an empty one reads nothing).
+        if self.indices.size:
+            _raise_queryable_temporal_state_unavailable()
+        return np.zeros(0, dtype=np.float64)
+
+    def _table_cells(self, column: str) -> tuple[np.ndarray, np.ndarray]:
+        """``(values, present)``: ``column`` of the monitor table per aircraft."""
+        monitor = self._monitor
+        table = monitor._table
+        col = table.col.get(self._name)
+        rows = [_row_at(table, monitor.env, int(i)) for i in self.indices]
+        present = np.array(
+            [row is not None and col is not None for row in rows], dtype=bool
+        )
+        values = np.zeros(self.indices.size, dtype=np.float64)
+        if present.any():
+            at = np.array([row for row in rows if row is not None], dtype=np.intp)
+            values[present] = table[column][at[: present.sum()], col]
+        return values, present
+
+    def _during_step(self) -> np.ndarray:
+        substeps, present = self._table_cells("held_step_substeps")
+        return (present & (substeps > 0)).astype(np.float64)
+
+    def _total_s(self) -> np.ndarray:
+        total, _present = self._table_cells("held_total_s")
+        return total
+
+    # --- regions ------------------------------------------------------------
+    def _region(self, path: str) -> np.ndarray:
+        if path == "current.inside":
+            idx = self.indices
+            alt_ft = np.asarray(bs.traf.alt, dtype=np.float64)[idx] / ft
+            lat = np.asarray(bs.traf.lat, dtype=np.float64)[idx]
+            lon = np.asarray(bs.traf.lon, dtype=np.float64)[idx]
+            inside = contains_many(self._queryable.bounds, lat, lon, alt_ft)
+            if inside is None:
+                inside = [self._queryable.contains_aircraft(int(i)) for i in idx]
+            return np.asarray(inside, dtype=bool).astype(np.float64)
+        if path in ("step.inside", "time.total_s"):
+            if not self._tracked:
+                return self._unavailable(path)
+            return self._during_step() if path == "step.inside" else self._total_s()
+        return self._fallback(path)
+
+    # --- waypoints ----------------------------------------------------------
+    def _route_index_of(self) -> list[int | None]:
+        """The route index the monitor recorded for each aircraft, if any."""
+        if self._route_indices is None:
+            monitor = self._monitor
+            self._route_indices = [
+                monitor._route_index(int(i), self._name) for i in self.indices
+            ]
+        return self._route_indices
+
+    def _waypoint(self, path: str) -> np.ndarray:
+        group = path.split(".", 1)[0]
+        if group == "current":
+            self._waypoint_current()
+            return self._values[path]
+        if group == "route":
+            self._waypoint_route()
+            return self._values[path]
+        if path == "step.satisfied":
+            if not self._tracked:
+                return np.zeros(self.indices.size, dtype=np.float64)
+            return self._during_step()
+        if path == "time.total_s":
+            return self._total_s() if self._tracked else self._unavailable(path)
+        if path == "step.min_distance_nm":
+            if not self._tracked:
+                return self._unavailable(path)
+            minimum, present = self._table_cells("min_distance_nm")
+            current = self.values("current.distance_nm")
+            return np.where(present & np.isfinite(minimum), minimum, current)
+        return self._fallback(path)
+
+    def _waypoint_current(self) -> None:
+        """Every ``current.*`` array, as :meth:`Waypoint.current_state` computes
+        each field: against the route's copy of the fix when the monitor knows
+        where it sits in the route, else the configured target."""
+        queryable, idx = self._queryable, self.indices
+        n = idx.size
+        target = queryable.target
+        lat = np.full(n, float(target.lat))
+        lon = np.full(n, float(target.lon))
+        alt_ft = np.full(n, np.nan if target.alt_ft is None else target.alt_ft)
+        speed_kts = np.full(n, np.nan if target.speed_kts is None else target.speed_kts)
+        for k, route_idx in enumerate(self._route_index_of()):
+            if route_idx is None:
+                continue
+            routed = queryable.target_from_route(int(idx[k]), route_idx)
+            lat[k], lon[k] = routed.lat, routed.lon
+            alt_ft[k] = np.nan if routed.alt_ft is None else routed.alt_ft
+            speed_kts[k] = np.nan if routed.speed_kts is None else routed.speed_kts
+
+        traf_lat = np.asarray(bs.traf.lat, dtype=np.float64)[idx]
+        traf_lon = np.asarray(bs.traf.lon, dtype=np.float64)[idx]
+        qdr, dist = qdrdist(traf_lat, traf_lon, lat, lon)
+        qdr = np.asarray(qdr, dtype=np.float64)
+        dist = np.asarray(dist, dtype=np.float64)
+        alt_diff = np.asarray(bs.traf.alt, dtype=np.float64)[idx] / ft - alt_ft
+        track_error = (qdr - np.asarray(bs.traf.trk, dtype=np.float64)[idx] + 540.0) % (
+            360.0
+        ) - 180.0
+
+        within_lateral = (
+            np.ones(n, dtype=bool)
+            if target.reach_radius_nm is None
+            else dist <= target.reach_radius_nm
+        )
+        within_altitude = (
+            np.ones(n, dtype=bool)
+            if target.alt_tolerance_ft is None
+            else np.isnan(alt_ft) | (np.abs(alt_diff) <= target.alt_tolerance_ft)
+        )
+        # The vectorized tolerance reads the first ``ntraf`` rows: give it a
+        # target for the asked-for aircraft and "unconstrained" everywhere else.
+        ntraf = int(bs.traf.ntraf)
+        target_cas_ms = np.full(ntraf, np.nan)
+        target_cas_ms[idx] = speed_kts * kts
+        within_speed = within_speed_tolerance_many(
+            ntraf,
+            target_cas_ms,
+            target.speed_tolerance_kts,
+            target.speed_tolerance_mach,
+        )[idx]
+        satisfied = within_lateral & within_altitude & within_speed
+
+        self._values.update(
+            {
+                "current.distance_nm": dist,
+                "current.bearing_deg": qdr,
+                "current.track_error_deg": track_error,
+                "current.alt_diff_ft": alt_diff,
+                "current.satisfied": satisfied.astype(np.float64),
+            }
+        )
+
+    def _waypoint_route(self) -> None:
+        """Every ``route.*`` array; the route walk is per aircraft."""
+        queryable, idx = self._queryable, self.indices
+        states = [
+            queryable.route_state(int(i), route_idx)
+            for i, route_idx in zip(idx, self._route_index_of(), strict=True)
+        ]
+        self._values.update(
+            {
+                "route.index": np.array(
+                    [-1.0 if s.index is None else float(s.index) for s in states]
+                ),
+                "route.active": np.array([float(s.active) for s in states]),
+                "route.reached": np.array([float(s.reached) for s in states]),
+                "route.future": np.array([float(s.future) for s in states]),
+            }
         )
 
 

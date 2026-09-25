@@ -9,6 +9,7 @@ import numpy as np
 
 from bluesky_sandbox.sim.queryables import WaypointResult
 
+from ._common import _BroadcastObs
 from .base import (
     EnvObsField,
     ObsMeta,
@@ -22,7 +23,7 @@ from .base import (
 
 
 @dataclass(frozen=True)
-class QueryableObsField(EnvObsField):
+class QueryableObsField(_BroadcastObs, EnvObsField):
     query_name: str = ""
     low: float = 0.0
     high: float = 1.0
@@ -46,6 +47,15 @@ class QueryableObsField(EnvObsField):
     def query_result_for(self, query_name: str, idx: int):
         return self.bound_env.agent_context(idx).query(query_name)
 
+    def _column(self, indices: np.ndarray, path: str, name: str | None = None):
+        """Attribute ``path`` of every aircraft's query result, as one array.
+
+        Observations read this batched form; ``query_result`` is the same
+        result for one aircraft, as an object.
+        """
+        name = self.query_name if name is None else name
+        return self.bound_env.query_batch(name, indices).values(path)
+
 
 @dataclass(frozen=True)
 class WaypointResultObsField(QueryableObsField):
@@ -53,10 +63,19 @@ class WaypointResultObsField(QueryableObsField):
         result = self.query_result(idx)
         if not isinstance(result, WaypointResult):
             raise TypeError(
-                f"{self.query_name!r} must return WaypointResult, "
-                f"got {type(result)!r}"
+                f"{self.query_name!r} must return WaypointResult, got {type(result)!r}"
             )
         return result
+
+    def _waypoint_column(self, indices: np.ndarray, path: str) -> np.ndarray:
+        result_type = getattr(self.bound_queryable, "result_type", None)
+        if not (
+            isinstance(result_type, type) and issubclass(result_type, WaypointResult)
+        ):
+            raise TypeError(
+                f"{self.query_name!r} must return WaypointResult, got {result_type!r}"
+            )
+        return self._column(indices, path)
 
 
 @dataclass(frozen=True)
@@ -91,6 +110,42 @@ class ActiveWaypointObsField(QueryableObsField):
                 return candidate
         return None
 
+    def _active_choice(self, indices: np.ndarray) -> tuple[list[str], np.ndarray]:
+        """The waypoint queryables considered, and for each aircraft the position
+        of its active one among them (``-1`` for none) - as ``active_waypoint``
+        chooses: the first whose route leg is active, else the first still ahead.
+        """
+        queryables = self.bound_env.episode_queryables
+        names = [
+            name
+            for name in (self.query_names or tuple(queryables))
+            if name in queryables
+            and isinstance(getattr(queryables[name], "result_type", None), type)
+            and issubclass(queryables[name].result_type, WaypointResult)
+        ]
+        active = np.full(len(indices), -1, dtype=np.intp)
+        future = np.full(len(indices), -1, dtype=np.intp)
+        for j in reversed(range(len(names))):  # so the first match wins
+            active = np.where(
+                self._column(indices, "route.active", names[j]) > 0, j, active
+            )
+            future = np.where(
+                self._column(indices, "route.future", names[j]) > 0, j, future
+            )
+        return names, np.where(active >= 0, active, future)
+
+    def _active_values(
+        self, indices: np.ndarray, path: str, missing: float = 0.0
+    ) -> np.ndarray:
+        """``path`` of each aircraft's active waypoint result, ``missing`` if none."""
+        names, chosen = self._active_choice(indices)
+        values = np.full(len(indices), missing, dtype=np.float64)
+        for j, name in enumerate(names):
+            mask = chosen == j
+            if mask.any():
+                values[mask] = self._column(indices, path, name)[mask]
+        return values
+
 
 @dataclass(frozen=True)
 class QueryRegionInside(QueryableObsField):
@@ -111,8 +166,8 @@ class QueryRegionInside(QueryableObsField):
             ObsQuantity.DISTANCE,
         )
 
-    def get(self, idx: int) -> float:
-        return 1.0 if bool(self.query_result(idx)) else 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._column(indices, "current.inside")
 
 
 @dataclass(frozen=True)
@@ -135,9 +190,8 @@ class QueryRegionInsideDuringStep(QueryableObsField):
             ObsQuantity.PHASE,
         )
 
-    def get(self, idx: int) -> float:
-        result = self.query_result(idx)
-        return 1.0 if bool(result.step.inside) else 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._column(indices, "step.inside")
 
 
 @dataclass(frozen=True)
@@ -162,10 +216,8 @@ class QueryRegionInsideTimeTotalS(QueryableObsField):
             ObsQuantity.TIME,
         )
 
-    def get(self, idx: int) -> float:
-        result = self.query_result(idx)
-        time = getattr(result, "time", None)
-        return float(getattr(time, "total_s", 0.0))
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._column(indices, "time.total_s")
 
 
 @dataclass(frozen=True)
@@ -187,8 +239,8 @@ class WaypointDistanceNm(WaypointResultObsField):
             ObsQuantity.DISTANCE,
         )
 
-    def get(self, idx: int) -> float:
-        return self.waypoint_result(idx).current.distance_nm
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, "current.distance_nm")
 
 
 @dataclass(frozen=True)
@@ -214,8 +266,8 @@ class WaypointBearingDeg(WaypointResultObsField):
             circular=True,
         )
 
-    def get(self, idx: int) -> float:
-        return self.waypoint_result(idx).current.bearing_deg
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, "current.bearing_deg")
 
 
 @dataclass(frozen=True)
@@ -241,8 +293,8 @@ class WaypointTrackErrorDeg(WaypointResultObsField):
             circular=True,
         )
 
-    def get(self, idx: int) -> float:
-        return self.waypoint_result(idx).current.track_error_deg
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, "current.track_error_deg")
 
 
 @dataclass(frozen=True)
@@ -265,8 +317,8 @@ class WaypointAltDiffFt(WaypointResultObsField):
             ObsQuantity.ALTITUDE,
         )
 
-    def get(self, idx: int) -> float:
-        return self.waypoint_result(idx).current.alt_diff_ft
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, "current.alt_diff_ft")
 
 
 @dataclass(frozen=True)
@@ -292,9 +344,8 @@ class WaypointRouteIndex(WaypointResultObsField):
             ObsQuantity.PHASE,
         )
 
-    def get(self, idx: int) -> float:
-        route_index = self.waypoint_result(idx).route.index
-        return -1.0 if route_index is None else float(route_index)
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, "route.index")
 
 
 @dataclass(frozen=True)
@@ -309,8 +360,8 @@ class _WaypointRouteFlag(WaypointResultObsField):
             ObsQuantity.PHASE,
         )
 
-    def get(self, idx: int) -> float:
-        return 1.0 if bool(getattr(self.waypoint_result(idx).route, self.flag_name)) else 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, f"route.{self.flag_name}")
 
 
 @dataclass(frozen=True)
@@ -378,8 +429,8 @@ class WaypointSatisfied(WaypointResultObsField):
             ObsQuantity.PHASE,
         )
 
-    def get(self, idx: int) -> float:
-        return 1.0 if self.waypoint_result(idx).current.satisfied else 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, "current.satisfied")
 
 
 @dataclass(frozen=True)
@@ -405,8 +456,8 @@ class WaypointSatisfiedDuringStep(WaypointResultObsField):
             ObsQuantity.PHASE,
         )
 
-    def get(self, idx: int) -> float:
-        return 1.0 if bool(self.waypoint_result(idx).step.satisfied) else 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, "step.satisfied")
 
 
 @dataclass(frozen=True)
@@ -434,10 +485,8 @@ class WaypointSatisfiedTimeTotalS(WaypointResultObsField):
             ObsQuantity.TIME,
         )
 
-    def get(self, idx: int) -> float:
-        result = self.waypoint_result(idx)
-        time = getattr(result, "time", None)
-        return float(getattr(time, "total_s", 0.0))
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, "time.total_s")
 
 
 @dataclass(frozen=True)
@@ -460,10 +509,8 @@ class WaypointMinDistanceNm(WaypointResultObsField):
             ObsQuantity.DISTANCE,
         )
 
-    def get(self, idx: int) -> float:
-        result = self.waypoint_result(idx)
-        step = getattr(result, "step", None)
-        return float(getattr(step, "min_distance_nm", result.current.distance_nm))
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._waypoint_column(indices, "step.min_distance_nm")
 
 
 @dataclass(frozen=True)
@@ -483,8 +530,9 @@ class ActiveWaypointAvailable(ActiveWaypointObsField):
     def meta(self) -> ObsMeta:
         return ObsMeta("active_waypoint_available", Unit.SWITCH, ObsQuantity.PHASE)
 
-    def get(self, idx: int) -> float:
-        return 1.0 if self.active_waypoint(idx) is not None else 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        _names, chosen = self._active_choice(indices)
+        return (chosen >= 0).astype(np.float64)
 
 
 @dataclass(frozen=True)
@@ -507,11 +555,8 @@ class ActiveWaypointRouteIndex(ActiveWaypointObsField):
     def meta(self) -> ObsMeta:
         return ObsMeta("active_waypoint_route_index", Unit.UNITLESS, ObsQuantity.PHASE)
 
-    def get(self, idx: int) -> float:
-        active = self.active_waypoint(idx)
-        if active is None or active[1].route.index is None:
-            return -1.0
-        return float(active[1].route.index)
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._active_values(indices, "route.index", missing=-1.0)
 
 
 @dataclass(frozen=True)
@@ -548,15 +593,11 @@ class ActiveWaypointOneHot(ActiveWaypointObsField):
             np.ones(size, dtype=np.float32),
         )
 
-    def get(self, idx: int) -> np.ndarray:
-        values = np.zeros(self.output_size(), dtype=np.float32)
-        active = self.active_waypoint(idx)
-        if active is None:
-            return values
-        try:
-            values[self.query_names.index(active[0])] = 1.0
-        except ValueError:
-            return values
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        names, chosen = self._active_choice(indices)
+        values = np.zeros((len(indices), self.output_size()), dtype=np.float32)
+        for k in np.flatnonzero(chosen >= 0):
+            values[k, self.query_names.index(names[chosen[k]])] = 1.0
         return values
 
 
@@ -576,9 +617,8 @@ class ActiveWaypointDistanceNm(ActiveWaypointObsField):
     def meta(self) -> ObsMeta:
         return ObsMeta("active_waypoint_distance_nm", Unit.NM, ObsQuantity.DISTANCE)
 
-    def get(self, idx: int) -> float:
-        active = self.active_waypoint(idx)
-        return 0.0 if active is None else active[1].current.distance_nm
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._active_values(indices, "current.distance_nm")
 
 
 @dataclass(frozen=True)
@@ -605,9 +645,8 @@ class ActiveWaypointBearingDeg(ActiveWaypointObsField):
             circular=True,
         )
 
-    def get(self, idx: int) -> float:
-        active = self.active_waypoint(idx)
-        return 0.0 if active is None else active[1].current.bearing_deg
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._active_values(indices, "current.bearing_deg")
 
 
 @dataclass(frozen=True)
@@ -627,9 +666,8 @@ class ActiveWaypointAltDiffFt(ActiveWaypointObsField):
     def meta(self) -> ObsMeta:
         return ObsMeta("active_waypoint_alt_diff_ft", Unit.FT, ObsQuantity.ALTITUDE)
 
-    def get(self, idx: int) -> float:
-        active = self.active_waypoint(idx)
-        return 0.0 if active is None else active[1].current.alt_diff_ft
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._active_values(indices, "current.alt_diff_ft")
 
 
 @dataclass(frozen=True)
@@ -656,8 +694,5 @@ class ActiveWaypointTrackErrorDeg(ActiveWaypointObsField):
             circular=True,
         )
 
-    def get(self, idx: int) -> float:
-        active = self.active_waypoint(idx)
-        if active is None:
-            return 0.0
-        return active[1].current.track_error_deg
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return self._active_values(indices, "current.track_error_deg")
