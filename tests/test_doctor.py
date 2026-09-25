@@ -10,7 +10,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from bluesky.tools import geo
-from bluesky.traffic.asas import statebased
 
 from bluesky_sandbox import doctor
 
@@ -35,6 +34,10 @@ def test_python_geo_is_reported_but_not_a_failure(monkeypatch):
 
 
 def test_a_missing_compiled_detector_fails_the_check(monkeypatch):
+    # Not at module level: importing BlueSky's traffic package before
+    # bs.init() breaks its performance-model selection for later tests.
+    from bluesky.traffic.asas import statebased  # noqa: PLC0415
+
     monkeypatch.delattr(statebased, "CStateBased")
     lines, ok = doctor._compiled_modules()
     assert not ok
