@@ -12,7 +12,6 @@ import ast
 import dataclasses
 import inspect
 import math
-import pathlib
 import re
 import sys
 import textwrap
@@ -613,107 +612,6 @@ def hooks() -> list[dict[str, Any]]:
     return sorted(out, key=lambda d: d["name"])
 
 
-# The task-info providers the designer can scaffold. The provider SOURCE is
-# emitted into the task package rather than imported from the library: what
-# counts as a cost, how many channels there are and what their limits mean is
-# the task's business, so the code shaping it ships with the task and stays
-# editable. The library keeps only the protocols these are written against.
-def _autocost_source() -> str:
-    """The provider class the designer writes into a generated task.
-
-    Kept as a real .py template rather than a string literal in this module:
-    it carries docstrings of its own, so embedding it would fight the quoting,
-    and as a file it stays lintable and editable like ordinary source.
-    """
-    return (
-        pathlib.Path(__file__).parent / "templates" / "autocost_provider.py"
-    ).read_text().rstrip()
-
-
-_TASK_INFO_TYPES: list[dict[str, Any]] = [
-    {
-        "name": "AutoCostConstraintTaskInfoProvider",
-        "doc": (
-            "Constraint costs derived from a cost function: an extrinsic term "
-            "for true violations and an optional intrinsic term for dense risk "
-            "before one occurs. The class is written into your task package so "
-            "you can change how costs are shaped."
-        ),
-        "params": [
-            {"name": "names", "type": "tuple[str, ...]", "required": True, "default": None},
-            {"name": "limits", "type": "np.ndarray", "required": True, "default": None},
-            {"name": "extrinsic_cost_fn", "type": "ConstraintFn", "required": True, "default": None},
-            {"name": "intrinsic_cost_fn", "type": "ConstraintFn | None", "required": False, "default": None},
-        ],
-        "category": "task info",
-    },
-]
-
-
-def task_info_types() -> list[dict[str, Any]]:
-    """Task-info providers the designer can scaffold into a task package.
-
-    A static list, not a scan of the library: the providers are no longer part
-    of :mod:`bluesky_sandbox.interface.task`, which now declares only the
-    protocols. Each entry carries the source the designer writes into the
-    generated task.
-    """
-    return [dict(item, scaffold=_task_info_scaffold(item["name"])) for item in _TASK_INFO_TYPES]
-
-
-def _snake_name(name: str) -> str:
-    name = name.removesuffix("TaskInfoProvider")
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower() or "task_info"
-
-
-def _task_info_scaffold(cls_name: str) -> dict[str, str]:
-    name = _snake_name(cls_name)
-    provider_var = f"{name.upper()}_TASK_INFO_PROVIDER"
-    if cls_name == "AutoCostConstraintTaskInfoProvider":
-        setup = f'''from dataclasses import dataclass
-from typing import Any
-
-import numpy as np
-
-from bluesky_sandbox.interface.task import (
-    AgentStepContext,
-    BaseAgentInfo,
-    BaseObs,
-    ConstraintFn,
-)
-
-
-# The cost -> constraint-info adapter, defined here rather than imported: what
-# counts as a cost is the task\'s business. Edit freely.
-{_autocost_source()}
-
-def {name}_extrinsic_cost(obs, action, info, context, rng):
-    # True task violation cost. This is what defines constraint violations.
-    return np.array([0.0], dtype=np.float32)
-
-
-def {name}_intrinsic_cost(obs, action, info, context, rng):
-    # Optional dense nonnegative risk before the true violation occurs.
-    return np.array([0.0], dtype=np.float32)
-
-
-{provider_var} = AutoCostConstraintTaskInfoProvider(
-    names=("constraint",),
-    limits=np.array([0.0], dtype=np.float32),
-    extrinsic_cost_fn={name}_extrinsic_cost,
-    intrinsic_cost_fn={name}_intrinsic_cost,
-)
-'''
-    else:
-        raise ValueError(f"no scaffold for task-info provider {cls_name!r}")
-    return {
-        "name": name,
-        "provider_var": provider_var,
-        "setup": setup,
-        "body": provider_var,
-    }
-
-
 def distributions() -> list[dict[str, Any]]:
     """Every ``scipy.stats`` distribution with its parameter names.
 
@@ -905,7 +803,6 @@ def catalog(model: str | None = None) -> dict[str, Any]:
         "aircraft": aircraft_by_model(),
         "hooks": hooks(),
         "scenario_hooks": scenario_hooks(),
-        "task_info_types": task_info_types(),
         "drivers": drivers(),
         "colors": colors(),
         "distributions": distributions(),

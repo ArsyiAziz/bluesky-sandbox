@@ -51,7 +51,7 @@ def setup_names(source: str) -> set[str]:
 def direct_provider(provider: TaskInfoSpec, defined: set[str]) -> str | None:
     """The setup name an entry's body refers to, when the body is only that name.
 
-    ``AUTO_COST_PROVIDER`` as a body means "this object is the provider", not a
+    ``MY_PROVIDER`` as a body means "this object is the provider", not a
     function whose body evaluates the name and discards it.
     """
     body = provider.body.strip()

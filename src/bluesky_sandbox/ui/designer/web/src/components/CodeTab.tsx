@@ -18,81 +18,11 @@ type TaskInfoEntry = {
   body: string;
 };
 
-type TaskInfoType = {
-  name: string;
-  doc?: string;
-  category?: string;
-  params?: { name: string; type?: string; required?: boolean; default?: any }[];
-  scaffold?: {
-    name: string;
-    provider_var: string;
-    setup: string;
-    body: string;
-  };
-};
-
-function pythonIdentifier(name: string): string {
-  const cleaned = name.replace(/[^A-Za-z0-9_]/g, "_");
-  return /^[A-Za-z_]/.test(cleaned) ? cleaned : `_${cleaned}`;
-}
-
-function replaceEvery(source: string, search: string, replacement: string): string {
-  return source.split(search).join(replacement);
-}
-
-function appendSetupBlock(existing: string, block: string): string {
-  const seenImports = new Set(
-    existing
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith("import ") || line.startsWith("from ")),
-  );
-  const lines = block
-    .trim()
-    .split("\n")
-    .filter((line) => {
-      const trimmed = line.trim();
-      if (!(trimmed.startsWith("import ") || trimmed.startsWith("from "))) return true;
-      if (seenImports.has(trimmed)) return false;
-      seenImports.add(trimmed);
-      return true;
-    });
-  const next = lines.join("\n").trim();
-  if (!next) return existing;
-  return `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${next}\n`;
-}
-
-function specializeTaskInfoScaffold(type: TaskInfoType, providerName: string): { setup: string; body: string } {
-  const scaffold = type.scaffold;
-  if (!scaffold) return { setup: "", body: TASK_INFO_BODY_TEMPLATE };
-  const sourceName = scaffold.name;
-  const targetName = pythonIdentifier(providerName);
-  const targetVar = `${targetName.toUpperCase()}_TASK_INFO_PROVIDER`;
-  return {
-    setup: replaceEvery(
-      replaceEvery(scaffold.setup, scaffold.provider_var, targetVar),
-      `${sourceName}_`,
-      `${targetName}_`,
-    ),
-    body: replaceEvery(scaffold.body, scaffold.provider_var, targetVar),
-  };
-}
-
 // The setup value a task-info entry names, when its body is only that name -
 // then the entry is that provider object, as the builder reads it.
 function taskInfoProvider(entry: TaskInfoEntry | null, intel: Intel | null) {
   const body = entry?.body.trim() ?? "";
   return intel?.names.setup?.find((member) => member.name === body);
-}
-
-// The provider type of such an entry: the class of the object it names.
-function taskInfoTypeForEntry(
-  entry: TaskInfoEntry | null,
-  types: TaskInfoType[],
-  intel: Intel | null,
-): TaskInfoType | undefined {
-  const provider = taskInfoProvider(entry, intel);
-  return provider ? types.find((type) => type.name === provider.detail) : undefined;
 }
 
 // VS Code-like view of the task's *code structure* (not raw JSON). Editable
@@ -141,7 +71,6 @@ export default function CodeTab({
   // spec.SCENARIO_HOOKS) rather than a list duplicated here, so adding a hook
   // server-side surfaces it in the editor with no frontend change.
   const [scenarioHookCatalog, setScenarioHookCatalog] = useState<any[]>([]);
-  const [taskInfoTypes, setTaskInfoTypes] = useState<TaskInfoType[]>([]);
   // The header a new custom code module starts with (catalog.scaffolds).
   const [moduleHeader, setModuleHeader] = useState<string>("");
 
@@ -152,13 +81,11 @@ export default function CodeTab({
       .then((c) => {
         setHookCatalog(c?.hooks ?? []);
         setScenarioHookCatalog(c?.scenario_hooks ?? []);
-        setTaskInfoTypes(c?.task_info_types ?? []);
         setModuleHeader(c?.scaffolds?.module_header ?? "");
       })
       .catch(() => {
         setHookCatalog([]);
         setScenarioHookCatalog([]);
-        setTaskInfoTypes([]);
       });
   }, [refreshKey]);
 
@@ -206,7 +133,6 @@ export default function CodeTab({
       ? taskInfo[selectedTaskInfo]
       : null;
   const selectedTaskInfoProviderReference = Boolean(taskInfoProvider(selectedTaskInfoEntry, intel));
-  const selectedTaskInfoType = taskInfoTypeForEntry(selectedTaskInfoEntry, taskInfoTypes, intel);
   const hookMeta = (name: string) => hookCatalog.find((h) => h.name === name);
   const hookBody = (name: string) => hooks[name] ?? DEFAULT_BODIES[name] ?? "";
 
@@ -339,28 +265,13 @@ export default function CodeTab({
     return `${base}_${i}`;
   };
 
-  const addTaskInfoProvider = (typeName: string) => {
+  // A task-info provider is the task's own code: a new one starts from a body
+  // that writes under info["task"].
+  const addTaskInfoProvider = () => {
     if (!spec) return;
-    const taskInfoType = taskInfoTypes.find((type) => type.name === typeName);
-    const baseName = taskInfoType?.scaffold?.name ?? "task_info";
-    const providerName = uniqueTaskInfoName(baseName);
-    const scaffold = taskInfoType ? specializeTaskInfoScaffold(taskInfoType, providerName) : { setup: "", body: TASK_INFO_BODY_TEMPLATE };
-    const nextProviders = [
-      ...taskInfo,
-      {
-        name: providerName,
-        body: scaffold.body,
-      },
-    ];
-    onSpecChange({
-      ...spec,
-      env: {
-        ...spec.env,
-        task_info_setup: appendSetupBlock(taskInfoSetup, scaffold.setup),
-        task_info: nextProviders,
-      },
-    });
-    setSelected(taskInfoType ? "taskinfo:setup" : `taskinfo:${nextProviders.length - 1}`);
+    const nextProviders = [...taskInfo, { name: uniqueTaskInfoName("task_info"), body: TASK_INFO_BODY_TEMPLATE }];
+    onSpecChange({ ...spec, env: { ...spec.env, task_info: nextProviders } });
+    setSelected(`taskinfo:${nextProviders.length - 1}`);
   };
 
   // Regenerate the structural files when the (valid) spec settles.
@@ -491,21 +402,9 @@ export default function CodeTab({
           editable
           onClick={() => setSelected("taskinfo:setup")}
         />
-        <Picker
-          className="hook-add"
-          placeholder="+ task info…"
-          title="add task-info provider"
-          onChange={addTaskInfoProvider}
-          options={[
-            { value: "custom", label: "custom", description: "Free-form task diagnostics provider.", category: "custom" },
-            ...taskInfoTypes.map((type) => ({
-              value: type.name,
-              label: type.name,
-              description: type.doc,
-              category: type.category ?? "task info",
-            })),
-          ]}
-        />
+        <button className="hook-add" title="add a task-info provider: code that writes under info[&quot;task&quot;]" onClick={addTaskInfoProvider}>
+          + task info
+        </button>
         {taskInfo.map((provider, i) => (
           <FileItem
             key={`${provider.name}-${i}`}
@@ -777,16 +676,9 @@ export default function CodeTab({
             {selectedTaskInfoProviderReference ? (
               <>
                 <p className="small">
-                  Constructor-backed provider object. Edit its constructor arguments and callback functions in <code>task info/setup</code>.
+                  Provider object defined in <code>task info/setup</code>. Edit its class, constructor arguments and
+                  callbacks there.
                 </p>
-                {selectedTaskInfoType?.params?.length ? (
-                  <dl className="summary">
-                    <dt>type</dt>
-                    <dd>{selectedTaskInfoType.name}</dd>
-                    <dt>constructor</dt>
-                    <dd>{selectedTaskInfoType.params.map((param: any) => param.name).join(", ")}</dd>
-                  </dl>
-                ) : null}
               </>
             ) : (
               <>

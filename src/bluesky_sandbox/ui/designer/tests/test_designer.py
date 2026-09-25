@@ -900,40 +900,26 @@ def test_env_hooks_catalog_and_codegen():
     print("  env hooks: introspected catalog + customized-only codegen OK")
 
 
-def test_task_info_types_offer_the_auto_cost_scaffold():
-    task_info_types = {item["name"] for item in catalog.task_info_types()}
-    # Only the auto-cost provider is offered; the others were removed from the
-    # library because a task defines its own against the protocols.
-    assert {"AutoCostConstraintTaskInfoProvider"} == task_info_types
-    by_type = {item["name"]: item for item in catalog.task_info_types()}
-    autocost_scaffold = by_type["AutoCostConstraintTaskInfoProvider"]["scaffold"]
-    assert "def auto_cost_constraint_extrinsic_cost" in autocost_scaffold["setup"]
-    assert "def auto_cost_constraint_intrinsic_cost" in autocost_scaffold["setup"]
-    assert "AutoCostConstraintTaskInfoProvider(" in autocost_scaffold["setup"]
-
-
-def test_codegen_task_info_provider_object_scaffold():
+def test_codegen_task_info_provider_object():
+    # A task-info entry whose body only names a setup object uses that object
+    # as the provider: the class and instance land in setup.py, env.py lists it.
     spec = _example_design_spec()
-    scaffold = {
-        item["name"]: item for item in catalog.task_info_types()
-    }["AutoCostConstraintTaskInfoProvider"]["scaffold"]
-    var = scaffold["provider_var"]
-    spec.env.task_info_setup = scaffold["setup"]
-    spec.env.task_info = [S.TaskInfoSpec("constraints", scaffold["body"])]
+    var = "CONSTRAINTS_PROVIDER"
+    spec.env.task_info_setup = (
+        "class ConstraintProvider:\n"
+        "    def __call__(self, obs, action, info, context, rng):\n"
+        "        info[\"task\"][\"constraints\"] = {\"cost\": 0.0}\n"
+        "\n\n"
+        f"{var} = ConstraintProvider()\n"
+    )
+    spec.env.task_info = [S.TaskInfoSpec("constraints", var)]
 
     files = codegen.generate_task(spec, "Constraint Demo")
     pkg = next(iter(files)).split("/", 1)[0]
     env_py = files[f"{pkg}/env.py"]
     setup_py = files[f"{pkg}/setup.py"]
-    # The provider CLASS is written into the task, not imported from the
-    # library - that is the whole point of scaffolding it.
-    assert "class AutoCostConstraintTaskInfoProvider:" in setup_py
-    assert "from bluesky_sandbox.interface.task import AutoCostConstraintTaskInfoProvider" not in setup_py
-    # ...and the library still supplies the protocols it is written against.
-    assert "from bluesky_sandbox.interface.task import (" in setup_py
-    # The provider object is module-level setup, so it lands in setup.py; env.py
-    # keeps the hook that references it.
-    assert f"{var} = AutoCostConstraintTaskInfoProvider(" in setup_py
+    assert "class ConstraintProvider:" in setup_py
+    assert f"{var} = ConstraintProvider()" in setup_py
     assert "def constraints(obs, action, info, context, rng)" not in setup_py
     assert f"return [{var}]" in env_py
     assert var in env_py.split("class ")[0]  # imported
