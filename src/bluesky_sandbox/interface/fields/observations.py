@@ -38,6 +38,7 @@ from ._common import (
     _MIN_GS_MS,
     _MS_TO_FTMIN,
     _MS_TO_KTS,
+    _BroadcastObs,
     _indices_array,
     _signed_angle_delta_deg,
     _traf_array,
@@ -110,7 +111,7 @@ def _with_derived_bounds(
 
 
 @dataclass(frozen=True)
-class LatDeg(ObsField):
+class LatDeg(_BroadcastObs, ObsField):
     """Latitude in degrees.
 
     Metadata:
@@ -123,10 +124,7 @@ class LatDeg(ObsField):
     low: Annotated[float, "latitude degrees"] = -90.0
     high: Annotated[float, "latitude degrees"] = 90.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.lat[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.lat[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -134,7 +132,7 @@ class LatDeg(ObsField):
 
 
 @dataclass(frozen=True)
-class LonDeg(ObsField):
+class LonDeg(_BroadcastObs, ObsField):
     """Longitude in degrees.
 
     Metadata:
@@ -147,10 +145,7 @@ class LonDeg(ObsField):
     low: Annotated[float, "longitude degrees"] = -180.0
     high: Annotated[float, "longitude degrees"] = 180.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.lon[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.lon[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -158,7 +153,7 @@ class LonDeg(ObsField):
 
 
 @dataclass(frozen=True)
-class HdgDeg(ObsField):
+class HdgDeg(_BroadcastObs, ObsField):
     """Aircraft heading in degrees.
 
     Metadata:
@@ -172,10 +167,7 @@ class HdgDeg(ObsField):
     low: Annotated[float, "heading degrees"] = 0.0
     high: Annotated[float, "heading degrees"] = 360.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.hdg[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.hdg[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -183,7 +175,7 @@ class HdgDeg(ObsField):
 
 
 @dataclass(frozen=True)
-class TrkDeg(ObsField):
+class TrkDeg(_BroadcastObs, ObsField):
     """Aircraft track angle in degrees.
 
     Metadata:
@@ -197,10 +189,7 @@ class TrkDeg(ObsField):
     low: Annotated[float, "track degrees"] = 0.0
     high: Annotated[float, "track degrees"] = 360.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.trk[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.trk[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -681,7 +670,7 @@ class _AltitudeEnvelopeM(ObsField):
 
 
 @dataclass(frozen=True)
-class AltFt(_AltitudeEnvelopeBounds, _AltitudeEnvelopeFt):
+class AltFt(_BroadcastObs, _AltitudeEnvelopeBounds, _AltitudeEnvelopeFt):
     """Aircraft altitude in feet.
 
     Metadata:
@@ -696,15 +685,12 @@ class AltFt(_AltitudeEnvelopeBounds, _AltitudeEnvelopeFt):
 
     meta = ObsMeta("alt_ft", Unit.FT, ObsQuantity.ALTITUDE, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.alt[idx] * _M_TO_FT
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.alt[_indices_array(indices)] * _M_TO_FT
 
 
 @dataclass(frozen=True)
-class AltM(_AltitudeEnvelopeBounds, _AltitudeEnvelopeM):
+class AltM(_BroadcastObs, _AltitudeEnvelopeBounds, _AltitudeEnvelopeM):
     """Aircraft altitude in metres.
 
     Metadata:
@@ -719,10 +705,7 @@ class AltM(_AltitudeEnvelopeBounds, _AltitudeEnvelopeM):
 
     meta = ObsMeta("alt_m", Unit.M, ObsQuantity.ALTITUDE, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.alt[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.alt[_indices_array(indices)]
 
 
@@ -780,7 +763,7 @@ class _SpeedEnvelopeMs(ObsField):
 
 
 @dataclass(frozen=True)
-class CasKts(_CasEnvelopeBounds, _SpeedEnvelopeKts):
+class CasKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
     """Calibrated airspeed in knots.
 
     Metadata:
@@ -795,15 +778,12 @@ class CasKts(_CasEnvelopeBounds, _SpeedEnvelopeKts):
 
     meta = ObsMeta("cas_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.cas[idx] * _MS_TO_KTS
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.cas[_indices_array(indices)] * _MS_TO_KTS
 
 
 @dataclass(frozen=True)
-class CasMs(_CasEnvelopeBounds, _SpeedEnvelopeMs):
+class CasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
     """Calibrated airspeed in m/s.
 
     Metadata:
@@ -818,15 +798,12 @@ class CasMs(_CasEnvelopeBounds, _SpeedEnvelopeMs):
 
     meta = ObsMeta("cas_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.cas[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.cas[_indices_array(indices)]
 
 
 @dataclass(frozen=True)
-class TasKts(_TasEnvelopeBounds, _SpeedEnvelopeKts):
+class TasKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
     """True airspeed in knots.
 
     Metadata:
@@ -838,15 +815,12 @@ class TasKts(_TasEnvelopeBounds, _SpeedEnvelopeKts):
 
     meta = ObsMeta("tas_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.tas[idx] * _MS_TO_KTS
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.tas[_indices_array(indices)] * _MS_TO_KTS
 
 
 @dataclass(frozen=True)
-class TasMs(_TasEnvelopeBounds, _SpeedEnvelopeMs):
+class TasMs(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeMs):
     """True airspeed in m/s.
 
     Metadata:
@@ -858,15 +832,12 @@ class TasMs(_TasEnvelopeBounds, _SpeedEnvelopeMs):
 
     meta = ObsMeta("tas_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.tas[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.tas[_indices_array(indices)]
 
 
 @dataclass(frozen=True)
-class VsFtMin(ObsField):
+class VsFtMin(_BroadcastObs, ObsField):
     """Vertical speed in ft/min.
 
     Metadata:
@@ -891,10 +862,7 @@ class VsFtMin(ObsField):
         "vertical speed ft/min upper bound; None = perf.vsmax at runtime",
     ] = None
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.vs[idx] * _MS_TO_FTMIN
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.vs[_indices_array(indices)] * _MS_TO_FTMIN
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -909,7 +877,7 @@ class VsFtMin(ObsField):
 
 
 @dataclass(frozen=True)
-class VsMs(ObsField):
+class VsMs(_BroadcastObs, ObsField):
     """Vertical speed in m/s.
 
     Metadata:
@@ -934,10 +902,7 @@ class VsMs(ObsField):
         "vertical speed m/s upper bound; None = perf.vsmax at runtime",
     ] = None
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.vs[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.vs[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -952,7 +917,7 @@ class VsMs(ObsField):
 
 
 @dataclass(frozen=True)
-class AxMs2(ObsField):
+class AxMs2(_BroadcastObs, ObsField):
     """Longitudinal (TAS) acceleration in m/s^2 - the aircraft's current speed
     rate. ~0 when holding speed; a physical, orientation-invariant measure of
     speed-axis smoothness (pair with a rate-based action penalty).
@@ -974,10 +939,7 @@ class AxMs2(ObsField):
     low: Annotated[float, "accel m/s^2 normalization scale (low)"] = -3.0
     high: Annotated[float, "accel m/s^2 normalization scale (high)"] = 3.0
 
-    def get(self, idx: Any) -> Any:
-        return float(bs.traf.ax[idx])
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return np.asarray(bs.traf.ax, dtype=np.float64)[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -985,7 +947,7 @@ class AxMs2(ObsField):
 
 
 @dataclass(frozen=True)
-class MachNumber(ObsField):
+class MachNumber(_BroadcastObs, ObsField):
     """Ownship Mach number (``bs.traf.M``).
 
     At cruise altitude the speed envelope is Mach-limited, not CAS-limited, so
@@ -1005,10 +967,7 @@ class MachNumber(ObsField):
     low: Annotated[float, "Mach normalization scale (low)"] = 0.0
     high: Annotated[float, "Mach normalization scale (high)"] = 1.0
 
-    def get(self, idx: Any) -> Any:
-        return float(bs.traf.M[idx])
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return np.asarray(bs.traf.M, dtype=np.float64)[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -1016,7 +975,7 @@ class MachNumber(ObsField):
 
 
 @dataclass(frozen=True)
-class CrossoverAltMarginFt(ObsField):
+class CrossoverAltMarginFt(_BroadcastObs, ObsField):
     """Signed altitude margin to the CAS/Mach crossover, in feet.
 
     ``alt - crossoveralt(cas, Mmo)``: **positive above** the crossover (the
@@ -1036,13 +995,7 @@ class CrossoverAltMarginFt(ObsField):
     low: Annotated[float, "crossover-margin ft normalization scale (low)"] = -20000.0
     high: Annotated[float, "crossover-margin ft normalization scale (high)"] = 20000.0
 
-    def get(self, idx: Any) -> Any:
-        cas = float(bs.traf.cas[idx])
-        alt = float(bs.traf.alt[idx])
-        mmo = float(bs.traf.perf.mmo[idx])
-        return (alt - float(crossoveralt(cas, mmo))) * _M_TO_FT
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         i = _indices_array(indices)
         cas = np.asarray(bs.traf.cas, dtype=np.float64)[i]
         alt = np.asarray(bs.traf.alt, dtype=np.float64)[i]
@@ -1054,7 +1007,7 @@ class CrossoverAltMarginFt(ObsField):
 
 
 @dataclass(frozen=True)
-class TimeInEnvS(_TimeInEnvBacked, ObsField):
+class TimeInEnvS(_BroadcastObs, _TimeInEnvBacked, ObsField):
     """Seconds since ownship entered the environment - its age, not sim clock.
 
     The quantity the time-limit truncation is stated against
@@ -1089,10 +1042,7 @@ class TimeInEnvS(_TimeInEnvBacked, ObsField):
     low: Annotated[float, "seconds lower bound"] = 0.0
     high: Annotated[float, "seconds upper bound; set to the task's time budget"] = 3600.0
 
-    def get(self, idx: Any) -> Any:
-        return get_time_in_env(bs.traf.id[idx])
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         ids = bs.traf.id
         return np.asarray(
@@ -1118,7 +1068,7 @@ class TimeInEnvS(_TimeInEnvBacked, ObsField):
 
 
 @dataclass(frozen=True)
-class PerfVminKts(ObsField):
+class PerfVminKts(_BroadcastObs, ObsField):
     """Minimum operating CAS from the performance model, in knots.
 
     How slow this airframe *can* fly - the sequencing floor: an intruder with
@@ -1136,10 +1086,7 @@ class PerfVminKts(ObsField):
     low: Annotated[float, "fleet-wide CAS scale (low), knots"] = 60.0
     high: Annotated[float, "fleet-wide CAS scale (high), knots"] = 250.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.perf.vmin[idx] * _MS_TO_KTS
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vmin[_indices_array(indices)] * _MS_TO_KTS
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -1147,7 +1094,7 @@ class PerfVminKts(ObsField):
 
 
 @dataclass(frozen=True)
-class PerfVmaxKts(ObsField):
+class PerfVmaxKts(_BroadcastObs, ObsField):
     """Maximum operating CAS from the performance model, in knots.
 
     How fast this airframe *can* fly - whether the aircraft ahead can
@@ -1164,10 +1111,7 @@ class PerfVmaxKts(ObsField):
     low: Annotated[float, "fleet-wide CAS scale (low), knots"] = 120.0
     high: Annotated[float, "fleet-wide CAS scale (high), knots"] = 400.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.perf.vmax[idx] * _MS_TO_KTS
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vmax[_indices_array(indices)] * _MS_TO_KTS
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -1175,7 +1119,7 @@ class PerfVmaxKts(ObsField):
 
 
 @dataclass(frozen=True)
-class PerfVsMaxFtMin(ObsField):
+class PerfVsMaxFtMin(_BroadcastObs, ObsField):
     """Maximum climb rate from the performance model, in ft/min.
 
     Vertical escape capacity - can this aircraft climb out of a conflict
@@ -1194,10 +1138,7 @@ class PerfVsMaxFtMin(ObsField):
     low: Annotated[float, "fleet-wide climb-rate scale (low), ft/min"] = 0.0
     high: Annotated[float, "fleet-wide climb-rate scale (high), ft/min"] = 6000.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.perf.vsmax[idx] * _MS_TO_FTMIN
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vsmax[_indices_array(indices)] * _MS_TO_FTMIN
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -1205,7 +1146,7 @@ class PerfVsMaxFtMin(ObsField):
 
 
 @dataclass(frozen=True)
-class PerfVsMinFtMin(ObsField):
+class PerfVsMinFtMin(_BroadcastObs, ObsField):
     """Maximum DESCENT rate from the performance model, in ft/min (negative).
 
     The counterpart to :class:`PerfVsMaxFtMin`, which is climb only. Distinct
@@ -1225,10 +1166,7 @@ class PerfVsMinFtMin(ObsField):
     low: Annotated[float, "fleet-wide descent-rate scale (low), ft/min"] = -6000.0
     high: Annotated[float, "fleet-wide descent-rate scale (high), ft/min"] = 0.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.perf.vsmin[idx] * _MS_TO_FTMIN
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vsmin[_indices_array(indices)] * _MS_TO_FTMIN
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -1236,7 +1174,7 @@ class PerfVsMinFtMin(ObsField):
 
 
 @dataclass(frozen=True)
-class PerfCeilingFt(ObsField):
+class PerfCeilingFt(_BroadcastObs, ObsField):
     """Altitude ceiling from the performance model, in ft.
 
     How much vertical room is left above. Also the quantity that scales a
@@ -1255,10 +1193,7 @@ class PerfCeilingFt(ObsField):
     low: Annotated[float, "fleet-wide ceiling scale (low), ft"] = 0.0
     high: Annotated[float, "fleet-wide ceiling scale (high), ft"] = 60000.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.perf.hmax[idx] * _M_TO_FT
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.perf.hmax[_indices_array(indices)] * _M_TO_FT
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -1266,7 +1201,7 @@ class PerfCeilingFt(ObsField):
 
 
 @dataclass(frozen=True)
-class PerfMassT(ObsField):
+class PerfMassT(_BroadcastObs, ObsField):
     """CURRENT aircraft mass from the performance model, in tonnes.
 
     Unlike :class:`MtowT`, which is a static per-type constant, this is the live
@@ -1283,10 +1218,7 @@ class PerfMassT(ObsField):
     low: Annotated[float, "fleet-wide mass scale (low), t"] = 0.0
     high: Annotated[float, "fleet-wide mass scale (high), t"] = 600.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.perf.mass[idx] / 1000.0
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.perf.mass[_indices_array(indices)] / 1000.0
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -1294,7 +1226,7 @@ class PerfMassT(ObsField):
 
 
 @dataclass(frozen=True)
-class TurnRadiusNm(ObsField):
+class TurnRadiusNm(_BroadcastObs, ObsField):
     """Coordinated-turn radius at current TAS and bank-angle limit, in nm.
 
     ``R = V^2 / (g * tan(phi))`` with ``V = bs.traf.tas`` and ``phi`` the
@@ -1316,10 +1248,7 @@ class TurnRadiusNm(ObsField):
     low: Annotated[float, "turn radius scale (low), nm"] = 0.0
     high: Annotated[float, "turn radius scale (high), nm"] = 20.0
 
-    def get(self, idx: Any) -> Any:
-        return float(self.get_many([idx])[0])
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         tas = np.maximum(np.asarray(bs.traf.tas)[indices], 1e-6)
         # Bank *limit* (authority), not ap.turnphi - turnphi is a transient
@@ -1355,7 +1284,7 @@ def _mtow_kg(actype: str) -> float:
 
 
 @dataclass(frozen=True)
-class MtowT(ObsField):
+class MtowT(_BroadcastObs, ObsField):
     """Maximum takeoff weight of the aircraft type, in tonnes.
 
     The continuous stand-in for wake/size class (ICAO wake categories are
@@ -1373,10 +1302,7 @@ class MtowT(ObsField):
     low: Annotated[float, "fleet-wide mass scale (low), tonnes"] = 0.0
     high: Annotated[float, "fleet-wide mass scale (high), tonnes"] = 600.0
 
-    def get(self, idx: Any) -> Any:
-        return _mtow_kg(bs.traf.type[idx]) / 1000.0
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         types = bs.traf.type
         return np.asarray(
             [_mtow_kg(types[int(i)]) / 1000.0 for i in _indices_array(indices)],
@@ -1388,7 +1314,7 @@ class MtowT(ObsField):
 
 
 @dataclass(frozen=True)
-class FlightPhaseOneHot(ObsField):
+class FlightPhaseOneHot(_BroadcastObs, ObsField):
     """Flight phase as a one-hot vector.
 
     Metadata:
@@ -1429,18 +1355,7 @@ class FlightPhaseOneHot(ObsField):
     def output_size(self) -> int:
         return len(self.phase_values)
 
-    def get(self, idx: Any) -> Any:
-        raw_phase = bs.traf.perf.phase[idx]
-        one_hot = np.zeros(len(self.phase_values), dtype=np.float32)
-        for phase_idx, phase_value in enumerate(self.phase_values):
-            if _phase_matches(raw_phase, phase_value):
-                one_hot[phase_idx] = 1.0
-                return one_hot
-        if self.unknown_index is not None:
-            one_hot[self.unknown_index] = 1.0
-        return one_hot
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         values = np.zeros((indices.size, len(self.phase_values)), dtype=np.float32)
         for row, raw_phase in enumerate(bs.traf.perf.phase[indices]):
@@ -1467,7 +1382,7 @@ class FlightPhaseOneHot(ObsField):
 
 
 @dataclass(frozen=True)
-class LaggedObs(_LagHistoryBacked, ObsField):
+class LaggedObs(_BroadcastObs, _LagHistoryBacked, ObsField):
     """An ownship field's value from ``steps`` environment steps ago.
 
     Built by :meth:`ObsField.lagged`. Bounds, normalizer and output size all
@@ -1516,10 +1431,7 @@ class LaggedObs(_LagHistoryBacked, ObsField):
         size = getattr(inner, "output_size", None)
         return int(size()) if callable(size) else 1
 
-    def get(self, idx: Any) -> Any:
-        return self.get_many([int(idx)])[0]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         inner = self._field()
         idxs = _indices_array(indices).ravel()
         ring = _lag_ring("obs", self._key, self.steps)
@@ -1629,7 +1541,7 @@ class LaggedPair(_LagHistoryBacked, PairObsField):
 
 
 @dataclass(frozen=True)
-class PrevActionNorm(_LastActionBacked, ObsField):
+class PrevActionNorm(_BroadcastObs, _LastActionBacked, ObsField):
     """Ownship's previous action ``a_{t-1}`` (as the policy emitted it).
 
     Surfaces the last policy output so an action-rate reward penalty
@@ -1711,10 +1623,7 @@ class PrevActionNorm(_LastActionBacked, ObsField):
             np.full(size, 1.0, dtype=np.float32),
         )
 
-    def get(self, idx: Any) -> Any:
-        return self._lookup(bs.traf.id[idx])
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         if indices.size == 0:
             return np.zeros((0, self.dim), dtype=np.float32)
@@ -1723,7 +1632,7 @@ class PrevActionNorm(_LastActionBacked, ObsField):
 
 
 @dataclass(frozen=True)
-class GsKts(_TasEnvelopeBounds, _SpeedEnvelopeKts):
+class GsKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
     """Ground speed in knots.
 
     Metadata:
@@ -1739,15 +1648,12 @@ class GsKts(_TasEnvelopeBounds, _SpeedEnvelopeKts):
 
     meta = ObsMeta("gs_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.gs[idx] * _MS_TO_KTS
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.gs[_indices_array(indices)] * _MS_TO_KTS
 
 
 @dataclass(frozen=True)
-class GsMs(_TasEnvelopeBounds, _SpeedEnvelopeMs):
+class GsMs(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeMs):
     """Ground speed in m/s.
 
     Metadata:
@@ -1763,15 +1669,12 @@ class GsMs(_TasEnvelopeBounds, _SpeedEnvelopeMs):
 
     meta = ObsMeta("gs_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.gs[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.gs[_indices_array(indices)]
 
 
 @dataclass(frozen=True)
-class ApHdgDeg(ObsField):
+class ApHdgDeg(_BroadcastObs, ObsField):
     """Autopilot selected heading in degrees.
 
     Metadata:
@@ -1785,10 +1688,7 @@ class ApHdgDeg(ObsField):
     low: Annotated[float, "autopilot heading degrees"] = 0.0
     high: Annotated[float, "autopilot heading degrees"] = 360.0
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.ap.trk[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.ap.trk[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -1796,7 +1696,7 @@ class ApHdgDeg(ObsField):
 
 
 @dataclass(frozen=True)
-class ApCasKts(_CasEnvelopeBounds, _SpeedEnvelopeKts):
+class ApCasKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
     """Autopilot selected calibrated airspeed in knots.
 
     Metadata:
@@ -1808,15 +1708,12 @@ class ApCasKts(_CasEnvelopeBounds, _SpeedEnvelopeKts):
 
     meta = ObsMeta("ap_cas_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.selspd[idx] * _MS_TO_KTS
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.selspd[_indices_array(indices)] * _MS_TO_KTS
 
 
 @dataclass(frozen=True)
-class ApCasMs(_CasEnvelopeBounds, _SpeedEnvelopeMs):
+class ApCasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
     """Autopilot selected calibrated airspeed in m/s.
 
     Metadata:
@@ -1828,10 +1725,7 @@ class ApCasMs(_CasEnvelopeBounds, _SpeedEnvelopeMs):
 
     meta = ObsMeta("ap_cas_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.selspd[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.selspd[_indices_array(indices)]
 
 
@@ -1848,10 +1742,7 @@ class ApAltFt(AltFt):
 
     meta = ObsMeta("ap_alt_ft", Unit.FT, ObsQuantity.ALTITUDE, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.selalt[idx] * _M_TO_FT
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.selalt[_indices_array(indices)] * _M_TO_FT
 
 
@@ -1868,25 +1759,19 @@ class ApAltM(AltM):
 
     meta = ObsMeta("ap_alt_m", Unit.M, ObsQuantity.ALTITUDE, dynamic_bounds=True)
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.selalt[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         return bs.traf.selalt[_indices_array(indices)]
 
 
 @dataclass(frozen=True)
-class ApLnavVnavOn(ObsField):
+class ApLnavVnavOn(_BroadcastObs, ObsField):
     """Whether both LNAV and VNAV are enabled."""
 
     meta = ObsMeta("ap_lnav_vnav_on", Unit.SWITCH, ObsQuantity.AUTOPILOT)
     low: Annotated[float, "autopilot switch off"] = 0.0
     high: Annotated[float, "autopilot switch on"] = 1.0
 
-    def get(self, idx: Any) -> Any:
-        return bool(bs.traf.swlnav[idx]) and bool(bs.traf.swvnav[idx])
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         return np.logical_and(bs.traf.swlnav[indices], bs.traf.swvnav[indices])
 
@@ -1895,17 +1780,14 @@ class ApLnavVnavOn(ObsField):
 
 
 @dataclass(frozen=True)
-class ApHdgErrorDeg(ObsField):
+class ApHdgErrorDeg(_BroadcastObs, ObsField):
     """Autopilot selected heading error relative to current track in degrees."""
 
     meta = ObsMeta("ap_hdg_error_deg", Unit.DEG, ObsQuantity.HEADING)
     low: Annotated[float, "autopilot heading error degrees"] = -180.0
     high: Annotated[float, "autopilot heading error degrees"] = 180.0
 
-    def get(self, idx: Any) -> Any:
-        return _signed_angle_delta_deg(bs.traf.ap.trk[idx], bs.traf.trk[idx])
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         return (bs.traf.ap.trk[indices] - bs.traf.trk[indices] + 540.0) % 360.0 - 180.0
 
@@ -1914,7 +1796,7 @@ class ApHdgErrorDeg(ObsField):
 
 
 @dataclass(frozen=True)
-class ApCasErrorKts(_CasEnvelopeBounds, _SpeedEnvelopeKts):
+class ApCasErrorKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
     """Autopilot selected CAS error relative to current CAS in knots."""
 
     meta = ObsMeta(
@@ -1924,10 +1806,7 @@ class ApCasErrorKts(_CasEnvelopeBounds, _SpeedEnvelopeKts):
         dynamic_bounds=True,
     )
 
-    def get(self, idx: Any) -> Any:
-        return (bs.traf.selspd[idx] - bs.traf.cas[idx]) * _MS_TO_KTS
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         return (bs.traf.selspd[indices] - bs.traf.cas[indices]) * _MS_TO_KTS
 
@@ -1945,7 +1824,7 @@ class ApCasErrorKts(_CasEnvelopeBounds, _SpeedEnvelopeKts):
 
 
 @dataclass(frozen=True)
-class ApAltErrorFt(_AltitudeEnvelopeBounds, ObsField):
+class ApAltErrorFt(_BroadcastObs, _AltitudeEnvelopeBounds, ObsField):
     """Autopilot selected altitude error relative to current altitude in feet."""
 
     meta = ObsMeta(
@@ -1963,10 +1842,7 @@ class ApAltErrorFt(_AltitudeEnvelopeBounds, ObsField):
         "autopilot altitude error feet upper bound; None = runtime altitude envelope",
     ] = None
 
-    def get(self, idx: Any) -> Any:
-        return (bs.traf.selalt[idx] - bs.traf.alt[idx]) * _M_TO_FT
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         return (bs.traf.selalt[indices] - bs.traf.alt[indices]) * _M_TO_FT
 
@@ -1984,7 +1860,7 @@ class ApAltErrorFt(_AltitudeEnvelopeBounds, ObsField):
 
 
 @dataclass(frozen=True)
-class ApAltErrorM(_AltitudeEnvelopeBounds, ObsField):
+class ApAltErrorM(_BroadcastObs, _AltitudeEnvelopeBounds, ObsField):
     """Autopilot selected altitude error relative to current altitude in metres."""
 
     meta = ObsMeta(
@@ -2002,10 +1878,7 @@ class ApAltErrorM(_AltitudeEnvelopeBounds, ObsField):
         "autopilot altitude error metres upper bound; None = runtime altitude envelope",
     ] = None
 
-    def get(self, idx: Any) -> Any:
-        return bs.traf.selalt[idx] - bs.traf.alt[idx]
-
-    def get_many(self, indices: Any) -> Any:
+    def _values(self, indices: Any) -> Any:
         indices = _indices_array(indices)
         return bs.traf.selalt[indices] - bs.traf.alt[indices]
 

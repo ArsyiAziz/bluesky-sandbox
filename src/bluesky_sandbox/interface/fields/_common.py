@@ -27,3 +27,20 @@ def _indices_array(indices: Any) -> np.ndarray:
 
 def _traf_array(name: str) -> np.ndarray:
     return np.asarray(getattr(bs.traf, name), dtype=np.float64)
+
+
+class _BroadcastObs:
+    """An ownship field defined by one vectorized function, :meth:`_values`.
+
+    ``get`` and ``get_many`` are that function on one index or many, so they
+    agree by construction - the ownship counterpart of ``_BroadcastPairs``.
+    """
+
+    def _values(self, indices: np.ndarray) -> Any:
+        raise NotImplementedError
+
+    def get(self, idx: Any) -> Any:
+        return self._values(_indices_array([int(idx)]))[0]
+
+    def get_many(self, indices: Any) -> Any:
+        return self._values(_indices_array(indices))
