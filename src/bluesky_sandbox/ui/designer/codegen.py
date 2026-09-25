@@ -29,13 +29,14 @@ import ast
 import copy
 import keyword
 import re
-import textwrap
 from pathlib import Path
 from typing import Any
 
+from . import setup_code
 from .builder import with_inferred_temporal_tracking
 from .catalog import hooks as _hook_catalog
 from .emit import emit_env_sources, emit_scenario_sources
+from .setup_code import PRELUDE
 from .spec import SCENARIO_HOOKS, DesignSpec, TaskInfoSpec
 
 
@@ -183,7 +184,7 @@ __all__ = [
 
 def _scenario_setup_block(scenario_setup: str, existing_imports: str) -> str:
     """Module-level scenario setup, with imports the template already has removed."""
-    body = _dedupe_setup_imports(scenario_setup or "", existing_imports).rstrip()
+    body = setup_code.dedupe_imports(scenario_setup or "", existing_imports).rstrip()
     return f"\n{body}\n" if body else ""
 
 
@@ -418,73 +419,6 @@ CONFIG = EnvConfig(
 '''
 
 
-def _emit_task_info_providers(task_info: list[TaskInfoSpec]) -> str:
-    blocks: list[str] = []
-    seen: set[str] = set()
-    for provider in task_info:
-        name = provider.name.strip()
-        if not name.isidentifier() or keyword.iskeyword(name):
-            raise ValueError(f"invalid task-info provider name {name!r}")
-        if name in seen:
-            raise ValueError(f"duplicate task-info provider name {name!r}")
-        seen.add(name)
-        body = provider.body.rstrip() or "pass"
-        if _task_info_direct_provider_expr(provider) is not None:
-            continue
-        blocks.append(
-            f"def {name}(obs, action, info, context, rng) -> None:\n"
-            f"{textwrap.indent(body, '    ')}\n"
-        )
-    return ("\n\n".join(blocks) + "\n") if blocks else ""
-
-
-def _task_info_provider_names(
-    task_info: list[TaskInfoSpec],
-    task_info_refs: list[str],
-) -> tuple[list[str], list[str]]:
-    inline_names = [
-        _task_info_direct_provider_expr(p) or p.name
-        for p in task_info
-    ]
-    provider_aliases = [f"_task_info_provider_{i}" for i, _ in enumerate(task_info_refs)]
-    provider_names = inline_names + provider_aliases
-    return provider_aliases, provider_names
-
-
-def _task_info_direct_provider_expr(provider: TaskInfoSpec) -> str | None:
-    body = provider.body.strip()
-    if (
-        body.isidentifier()
-        and not keyword.iskeyword(body)
-        and (body.isupper() or body.endswith("_PROVIDER"))
-    ):
-        return body
-    return None
-
-
-def _dedupe_setup_imports(setup: str, existing_source: str = "") -> str:
-    """Drop duplicate exact import lines from generated setup blocks."""
-    seen = {
-        line.strip()
-        for line in existing_source.splitlines()
-        if _is_import_line(line)
-    }
-    out: list[str] = []
-    for line in setup.rstrip().splitlines():
-        stripped = line.strip()
-        if _is_import_line(line):
-            if stripped in seen:
-                continue
-            seen.add(stripped)
-        out.append(line)
-    return "\n".join(out)
-
-
-def _is_import_line(line: str) -> bool:
-    stripped = line.strip()
-    return stripped.startswith(("import ", "from "))
-
-
 # reward/terminated/truncated are always-present hooks (default 0.0 / never done).
 _DEFAULT_HOOK_BODIES = {
     "reward": "return 0.0",
@@ -634,31 +568,6 @@ def training_loop(steps: int = 200, seed: int = 0) -> None:
 '''
 
 
-def _setup_exports(source: str) -> set[str]:
-    """Top-level names a setup module binds - what ``env.py`` may import.
-
-    Underscore-prefixed names are included deliberately: most of the setup
-    block's helpers are private by convention (``_fix_state``, ``_VEL_HIST``),
-    so a ``from .setup import *`` would silently miss exactly the names the
-    hooks depend on. Hence an explicit import list, computed here.
-    """
-    names: set[str] = set()
-    for node in ast.parse(source).body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    names.add(target.id)
-        elif isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name):
-                names.add(node.target.id)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                names.add(alias.asname or alias.name.split(".")[0])
-    return names
-
-
 def _names_used(source: str) -> set[str]:
     """Every identifier ``source`` reads. Used to import only what is needed."""
     return {
@@ -668,17 +577,15 @@ def _names_used(source: str) -> set[str]:
     }
 
 
-def _setup_py(task_info_setup: str, inline_blocks: str, hook_setup: str) -> str:
+def _setup_py(body: str) -> str:
     """The task's module-level setup code, split out of ``env.py``.
 
     ``env.py`` is where someone goes to read what the task *does* - the reward,
     the termination rule, the hooks. Before this split those thirty lines sat
     under three hundred lines of geometry helpers and cost machinery. Same
-    code, same import-time behavior; only the file boundary moved.
+    code, same import-time behavior; only the file boundary moved. The in-process
+    builder runs the same ``body`` (:func:`.setup_code.setup_source`).
     """
-    body = "\n".join(
-        part for part in (task_info_setup.rstrip(), inline_blocks, hook_setup.rstrip()) if part.strip()
-    )
     return f'''"""Module-level setup for this generated task.
 
 Helpers, constants and task-info providers used by the hooks in ``env.py``.
@@ -693,10 +600,7 @@ now rebinds only ``env.py``'s name, and the helpers here keep using the
 original object. Mutate; never reassign.
 """
 
-from __future__ import annotations
-
-from .config import CONFIG
-
+{PRELUDE}
 {body}
 '''
 
@@ -716,11 +620,13 @@ def _env_py(
     module-level helpers it leans on, as two files."""
     hook_overrides = _emit_hooks(hooks)
     training_loop = _emit_training_loop(class_stem) if privileged else ""
-    provider_aliases, provider_names = _task_info_provider_names(
-        task_info,
-        task_info_refs,
-    )
-    inline_blocks = _emit_task_info_providers(task_info)
+    provider_aliases = [
+        f"_task_info_provider_{i}" for i, _ in enumerate(task_info_refs)
+    ]
+    provider_names = [
+        *setup_code.provider_names(task_info, task_info_setup, hook_setup),
+        *provider_aliases,
+    ]
     task_info_imports = "\n".join(
         _ref_import(ref, pkg, alias) for ref, alias in zip(task_info_refs, provider_aliases)
     )
@@ -735,15 +641,9 @@ from bluesky_sandbox.env import BlueskyEnv
 
 from .config import CONFIG
 from .scenario import {class_stem}Scenario"""
-    existing_imports = "\n".join(
-        part for part in (base_imports, task_info_imports) if part
+    setup_source = _setup_py(
+        setup_code.setup_source(task_info_setup, task_info, hook_setup)
     )
-    task_info_setup = _dedupe_setup_imports(task_info_setup, existing_imports)
-    hook_setup = _dedupe_setup_imports(
-        hook_setup,
-        "\n".join(part for part in (existing_imports, task_info_setup) if part),
-    )
-    setup_source = _setup_py(task_info_setup, inline_blocks, hook_setup)
     body = f'''
 
 class {class_stem}Env(BlueskyEnv):
@@ -812,10 +712,10 @@ def main() -> None:
     # Names the header already binds (CONFIG, the Scenario class, provider
     # refs) must not be re-imported from .setup, which re-exports whatever it
     # imported itself.
-    already_bound = _setup_exports(
+    already_bound = setup_code.setup_names(
         "\n".join(part for part in (base_imports, task_info_imports) if part)
     )
-    exports = _setup_exports(setup_source) - already_bound
+    exports = setup_code.setup_names(setup_source) - already_bound
     used = sorted(_names_used(body) & exports)
     setup_import = ""
     if used:

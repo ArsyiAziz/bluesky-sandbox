@@ -20,10 +20,10 @@ from __future__ import annotations
 import copy
 import importlib
 import itertools
-import keyword
 import math
 import sys
 import textwrap
+import traceback
 from collections.abc import Callable
 from types import ModuleType
 from typing import Any
@@ -46,8 +46,9 @@ from bluesky_sandbox.sim.scenario import RandomizedScenario
 from bluesky_sandbox.sim.scenario import transforms as _t
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
+from . import setup_code
 from . import spec as _spec
-from .spec import SCENARIO_HOOKS, DesignSpec, FieldRef, TaskInfoSpec
+from .spec import SCENARIO_HOOKS, DesignSpec, EnvSpec, FieldRef
 
 
 class BuildError(ValueError):
@@ -122,68 +123,74 @@ def resolve_callable(ref: str) -> Callable[..., Any]:
     return obj
 
 
-def build_inline_task_info_providers(
-    setup: str,
-    providers: list[TaskInfoSpec],
-) -> list[Callable[..., Any]]:
-    """Compile designer-authored task-info providers into shared module state."""
-    module = ModuleType(f"{CODE_NS}.task_info_inline")
-    module.__dict__["np"] = __import__("numpy")
-    # Register the synthetic module while the setup runs. ``@dataclass`` looks
-    # its owning class up via ``sys.modules[cls.__module__]`` (to spot InitVar
-    # and resolve string annotations), so a class DEFINED in this setup - which
-    # the task-info scaffolds now do, since providers ship with the task rather
-    # than the library - crashes on a module that was never registered.
+def run_setup_module(env: EnvSpec, config: EnvConfig) -> ModuleType:
+    """Run the design's setup code in one module, as the generated ``setup.py``.
+
+    The code is :func:`.setup_code.setup_source` - the task-info setup, the
+    inline task-info entries as functions, the hook setup - with ``CONFIG``
+    bound to ``config``, so a helper one block defines is visible to the others
+    exactly as it is in a generated package. A line that fails is reported in
+    the block it came from.
+    """
+    try:
+        source, starts = setup_code.located_setup_source(
+            env.task_info_setup, env.task_info, env.hook_setup
+        )
+    except ValueError as e:
+        raise BuildError(str(e)) from e
+    module = ModuleType(f"{CODE_NS}.setup")
+    module.__dict__["CONFIG"] = config
+    # Registered while the code runs: ``@dataclass`` looks a class's module up
+    # in ``sys.modules`` to resolve its annotations.
     sys.modules[module.__name__] = module
     try:
-        if setup.strip():
-            exec(
-                compile(setup, "<designer task_info setup>", "exec"),
-                module.__dict__,
-            )
+        code = compile(
+            "from __future__ import annotations\n" + source,
+            _SETUP_FILENAME,
+            "exec",
+        )
+        exec(code, module.__dict__)
     except Exception as e:
-        raise BuildError(f"error in task-info setup: {e}") from e
+        raise BuildError(_located_setup_error(e, starts)) from e
     finally:
         sys.modules.pop(module.__name__, None)
-
-    compiled: list[Callable[..., Any]] = []
-    seen: set[str] = set()
-    for provider in providers:
-        name = provider.name.strip()
-        if not name.isidentifier() or keyword.iskeyword(name):
-            raise BuildError(f"task-info provider name must be a Python identifier, got {name!r}.")
-        if name in seen:
-            raise BuildError(f"duplicate task-info provider name {name!r}.")
-        seen.add(name)
-        body = provider.body.rstrip() or "pass"
-        if body.isidentifier() and body in module.__dict__:
-            obj = module.__dict__[body]
-            if not callable(obj):
-                raise BuildError(f"task-info provider {name!r} references non-callable {body!r}.")
-            compiled.append(obj)
-            continue
-        indented = textwrap.indent(body, "    ")
-        source = f"def {name}(obs, action, info, context, rng):\n{indented}\n"
-        try:
-            exec(compile(source, f"<designer task_info:{name}>", "exec"), module.__dict__)
-        except Exception as e:
-            raise BuildError(f"error in task-info provider {name!r}: {e}") from e
-        compiled.append(module.__dict__[name])
-    return compiled
+    return module
 
 
-def validate_hook_setup(setup: str) -> None:
-    """Compile and execute hook setup so bad imports fail during validation."""
-    if not setup.strip():
-        return
-    module = ModuleType(f"{CODE_NS}.hook_setup")
-    try:
-        exec(
-            compile(setup, "<designer hook setup>", "exec"),
-            module.__dict__,
-        )
-    except Exception as e:
-        raise BuildError(f"error in hook setup: {e}") from e
+_SETUP_FILENAME = "<designer setup>"
+
+
+def _located_setup_error(error: Exception, starts: list[tuple[str, int]]) -> str:
+    """``error``, prefixed with the block and line of the setup code it came from."""
+    lineno = getattr(error, "lineno", None) if isinstance(error, SyntaxError) else None
+    if lineno is None:
+        frames = [
+            frame for frame in traceback.extract_tb(error.__traceback__)
+            if frame.filename == _SETUP_FILENAME
+        ]
+        lineno = frames[-1].lineno if frames else None
+    if lineno is None or not starts:
+        return f"error in setup code: {error}"
+    where, line = setup_code.locate(starts, lineno - 1)  # the __future__ line
+    if where.startswith("task info "):
+        line -= 1  # counted from the entry's body, not the def line added above it
+    return f"error in {where}, line {line}: {error}"
+
+
+def setup_providers(env: EnvSpec, module: ModuleType) -> list[Callable[..., Any]]:
+    """The design's inline task-info providers, from its setup module."""
+    names = setup_code.provider_names(
+        env.task_info, env.task_info_setup, env.hook_setup
+    )
+    providers = []
+    for spec, name in zip(env.task_info, names):
+        provider = module.__dict__.get(name)
+        if not callable(provider):
+            raise BuildError(
+                f"task-info provider {spec.name!r} references non-callable {name!r}."
+            )
+        providers.append(provider)
+    return providers
 
 
 # --------------------------------------------------------------------------- #
@@ -901,7 +908,6 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
     install_code_modules(spec.code)
 
     env = spec.env
-    validate_hook_setup(env.hook_setup)
     intruder_fields = (
         None
         if env.intruder_obs_fields is None
@@ -939,19 +945,20 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
             wind_kts=env.wind_kts,
             turbulence_kts=env.turbulence_kts,
             gust_tau_s=env.gust_tau_s,
-            task_info_providers=build_inline_task_info_providers(
-                env.task_info_setup,
-                env.task_info,
-            ) + [
-                resolve_callable(p) for p in env.task_info_providers
-            ],
         )
-        return config
     except BuildError:
         raise
     except (ValueError, TypeError) as e:
         # EnvConfig.__post_init__ validates aggressively; surface it cleanly.
         raise BuildError(f"EnvConfig validation failed: {e}") from e
+    # The setup code may read CONFIG, as the generated setup.py's does, so it
+    # runs once the config exists; its providers join the config after.
+    module = run_setup_module(env, config)
+    config.task_info_providers.extend(setup_providers(env, module))
+    config.task_info_providers.extend(
+        resolve_callable(ref) for ref in env.task_info_providers
+    )
+    return config
 
 
 # Re-exported for callers that want to apply derived bounds etc. themselves.
