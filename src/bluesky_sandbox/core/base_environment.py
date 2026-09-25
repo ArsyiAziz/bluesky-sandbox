@@ -127,7 +127,9 @@ F = TypeVar("F", bound=Callable[..., Any])
 AgentActions: TypeAlias = Mapping[str, Any]
 AgentInfos: TypeAlias = dict[str, BaseAgentInfo]
 AgentObservations: TypeAlias = dict[str, BaseObs]
-AgentRewards: TypeAlias = dict[str, float]
+#: A reward or cost: a number, or a 1-D array of components.
+Outcome: TypeAlias = float | np.ndarray
+AgentRewards: TypeAlias = dict[str, Outcome]
 DoneFlags: TypeAlias = dict[str, bool]
 EnvOptions: TypeAlias = Mapping[str, Any]
 
@@ -185,6 +187,8 @@ class BlueskyBaseEnvironment(ParallelEnv):
     #: Hooks the task defines batched (``reward`` for ``reward_batch``...);
     #: set per task class by :class:`~bluesky_sandbox.env.BlueskyEnv`.
     _batched_hooks: frozenset[str] = frozenset()
+    #: The batchable hooks the task defines either way (``cost`` is optional).
+    _defined_hooks: frozenset[str] = frozenset()
 
     metadata = {
         "name": "bluesky-base-v0",
@@ -251,6 +255,8 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 "all of them, rather than BlueskyBaseEnvironment directly."
             )
         self._hooks = cast("BlueskyEnv", self)
+        # The shape each of reward and cost first came in, which it keeps.
+        self._outcome_shapes: dict[str, tuple[int, ...]] = {}
 
         self._aircraft_spawn_time: dict[str, float] = {}
         self._agent_context_cache: dict[str, AgentStepContext] = {}
@@ -501,13 +507,15 @@ class BlueskyBaseEnvironment(ParallelEnv):
             actions,
             infos,
         )
-        rewards = self._compute_rewards(
-            observations,
-            actions,
-            terminations,
-            truncations,
-            infos,
+        rewards = self._compute_outcomes(
+            "reward", observations, actions, terminations, truncations, infos
         )
+        if "cost" in self._defined_hooks:
+            costs = self._compute_outcomes(
+                "cost", observations, actions, terminations, truncations, infos
+            )
+            for acid, cost in costs.items():
+                infos[acid]["cost"] = cost
         for acid in controlled_agents:
             if terminations[acid] or truncations[acid]:
                 infos[acid]["final_observation"] = observations[acid]
@@ -996,35 +1004,58 @@ class BlueskyBaseEnvironment(ParallelEnv):
             truncations[acid] = self._hooks.truncated(*args)
         return terminations, truncations
 
-    def _compute_rewards(
+    def _compute_outcomes(
         self,
+        hook: str,
         observations: AgentObservations,
         actions: AgentActions,
         terminations: DoneFlags,
         truncations: DoneFlags,
         infos: AgentInfos,
     ) -> AgentRewards:
-        if "reward" in self._batched_hooks:
+        """Each agent's ``reward`` or ``cost``: a number, or a 1-D array whose
+        shape is the same for every agent and every step."""
+        if hook in self._batched_hooks:
             agent_ids = list(observations)
             batch = self._step_batch(agent_ids, observations, infos)
             batch.terminated = np.array([terminations[a] for a in agent_ids], bool)
             batch.truncated = np.array([truncations[a] for a in agent_ids], bool)
-            rewards = _one_per_agent(
-                self._hooks.reward_batch(batch), batch, "reward_batch"
-            )
-            return {acid: float(r) for acid, r in zip(agent_ids, rewards)}
+            name = f"{hook}_batch"
+            values = _per_agent_outcomes(getattr(self._hooks, name)(batch), batch, name)
+            return {acid: self._outcome(name, v) for acid, v in zip(agent_ids, values)}
+        per_agent = getattr(self._hooks, hook)
         return {
-            a: self._hooks.reward(
-                observations[a],
-                actions.get(a),
-                terminations[a],
-                truncations[a],
-                self.agent_context(infos[a]["acidx"]),
-                infos[a],
-                self._rng,
+            a: self._outcome(
+                hook,
+                per_agent(
+                    observations[a],
+                    actions.get(a),
+                    terminations[a],
+                    truncations[a],
+                    self.agent_context(infos[a]["acidx"]),
+                    infos[a],
+                    self._rng,
+                ),
             )
             for a in observations
         }
+
+    def _outcome(self, hook: str, value: Any) -> Outcome:
+        """``value`` as a number or 1-D array, checked against the shape
+        ``hook`` returned before."""
+        array = np.asarray(value, dtype=float)
+        if array.ndim > 1:
+            raise ValueError(
+                f"{hook} returned shape {array.shape} for one agent; return a "
+                "number, or a 1-D array of components."
+            )
+        seen = self._outcome_shapes.setdefault(hook.removesuffix("_batch"), array.shape)
+        if array.shape != seen:
+            raise ValueError(
+                f"{hook} returned shape {array.shape}, but it returned {seen} "
+                "before; a reward or cost keeps one shape."
+            )
+        return float(array) if array.ndim == 0 else array
 
     def _populate_task_info(
         self,
@@ -1083,6 +1114,18 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
     def _ownship_bounds(self, idx: int, fields) -> tuple[np.ndarray, np.ndarray]:
         return self._observation_assembler.ownship_bounds(idx, fields)
+
+
+def _per_agent_outcomes(values: Any, batch: StepBatch, hook: str) -> np.ndarray:
+    """A batched reward or cost: one per agent, each a number or a 1-D array."""
+    array = np.asarray(values, dtype=float)
+    if array.ndim not in (1, 2) or array.shape[0] != len(batch):
+        raise ValueError(
+            f"{hook} returned shape {array.shape}; it must return one value per "
+            f"agent in the order of batch.acids - shape ({len(batch)},), or "
+            f"({len(batch)}, k) for k components."
+        )
+    return array
 
 
 def _one_per_agent(values: Any, batch: StepBatch, hook: str) -> np.ndarray:

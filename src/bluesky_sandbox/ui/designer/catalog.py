@@ -23,7 +23,7 @@ from bluesky.tools.aero import ft, nm
 from scipy import stats as ss
 
 from bluesky_sandbox.config import _available_aircraft
-from bluesky_sandbox.env import BlueskyEnv
+from bluesky_sandbox.env import BATCHABLE_HOOKS, BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as _actions
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.config import bluesky_simdt_s
@@ -41,7 +41,7 @@ from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from .emit import _normalizer_import_line
-from .spec import SCENARIO_HOOKS
+from .spec import DEFAULT_HOOKS, SCENARIO_HOOKS
 from .trail import call_trail
 
 
@@ -499,12 +499,11 @@ def scaffolds() -> dict[str, str]:
 
 
 # Always-present task-outcome hooks (never removable in the GUI).
-_OUTCOME_HOOKS = ("reward", "terminated", "truncated")
 
 
 def _hook_category(name: str) -> str:
     """Bucket a hook for the GUI picker — derived from its name, not hard-coded."""
-    if name.removesuffix("_batch") in _OUTCOME_HOOKS:
+    if name.removesuffix("_batch") in BATCHABLE_HOOKS:
         return "task outcome"
     if name.startswith("define_"):
         return "definitions"
@@ -606,7 +605,7 @@ def hooks() -> list[dict[str, Any]]:
                     "returns_none": str(sig.return_annotation) in ("None", "<class 'NoneType'>"),
                     "default": _hook_default(fn),
                     "category": _hook_category(name),
-                    "always_present": name in _OUTCOME_HOOKS,
+                    "always_present": name in DEFAULT_HOOKS,
                     "scaffold": _HOOK_SCAFFOLDS.get(name),
                     "doc": _doc(fn),
                 }

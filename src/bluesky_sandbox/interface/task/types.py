@@ -400,6 +400,10 @@ class BaseAgentInfo(TypedDict):
     final_observation: NotRequired[BaseObs]
     final_observation_agent_ids: NotRequired[tuple[str, ...]]
 
+    # This step's cost, when the task defines ``cost`` or ``cost_batch``: a
+    # number, or an array with one entry per constraint.
+    cost: NotRequired[float | np.ndarray]
+
 
 class AchievedGoalFn(Protocol):
     """Return the achieved goal for one agent after a step."""

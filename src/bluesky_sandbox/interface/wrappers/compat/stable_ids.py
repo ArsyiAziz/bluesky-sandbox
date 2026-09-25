@@ -92,6 +92,10 @@ class StableIDsParallelWrapper(ParallelEnv):
         self._obs_space = env.observation_space(None)
         # Pre-build a per-agent zero "obs" used to pad dead/unspawned slots.
         self._zero_obs = self._make_zero_obs(self._obs_space)
+        # A padded slot's reward and cost: zeros shaped like the real ones,
+        # once a step has shown their shape.
+        self._zero_reward: Any = 0.0
+        self._zero_cost: Any = None
         # Probe the wrapped action space directly so mixed raw/normalized
         # fields keep their declared bounds - a Box, or a Dict of the continuous
         # and binary parts.
@@ -236,7 +240,13 @@ class StableIDsParallelWrapper(ParallelEnv):
             next_obs, rewards, terms, truncs, infos = {}, {}, {}, {}, {}
 
         s_obs: dict[str, Any] = {}
-        s_rew: dict[str, float] = {}
+        s_rew: dict[str, Any] = {}
+        for real, reward in rewards.items():
+            self._zero_reward = np.zeros_like(reward) if np.ndim(reward) else 0.0
+            if "cost" in infos.get(real, {}):
+                cost = infos[real]["cost"]
+                self._zero_cost = np.zeros_like(cost) if np.ndim(cost) else 0.0
+            break
         s_term: dict[str, bool] = {}
         s_trunc: dict[str, bool] = {}
         s_info: dict[str, dict] = {}
@@ -259,18 +269,18 @@ class StableIDsParallelWrapper(ParallelEnv):
                 # ``_padded`` keeps custom monitors from logging these as
                 # synthetic 1-step episodes either way.
                 s_obs[stable] = self._copy_obs(self._zero_obs)
-                s_rew[stable] = 0.0
+                s_rew[stable] = self._padded_reward()
                 if self.hold_background_until_episode_done:
                     s_term[stable] = episode_done
                 else:
                     s_term[stable] = stable in self._used_slots or not spawns_remaining
                 s_trunc[stable] = False
-                s_info[stable] = {"_padded": True}
+                s_info[stable] = self._padded_info()
                 continue
 
             if real in next_obs:
                 s_obs[stable] = next_obs[real]
-                s_rew[stable] = float(rewards.get(real, 0.0))
+                s_rew[stable] = rewards.get(real, self._padded_reward())
                 real_terminal = bool(terms.get(real, False))
                 real_truncated = bool(truncs.get(real, False))
                 real_done = real_terminal or real_truncated
@@ -295,14 +305,23 @@ class StableIDsParallelWrapper(ParallelEnv):
             else:
                 # Real callsign disappeared mid-step.
                 s_obs[stable] = self._copy_obs(self._zero_obs)
-                s_rew[stable] = 0.0
+                s_rew[stable] = self._padded_reward()
                 s_term[stable] = True
                 s_trunc[stable] = False
-                s_info[stable] = {"_padded": True}
+                s_info[stable] = self._padded_info()
                 self._stable_to_real.pop(stable, None)
                 self._real_to_stable.pop(real, None)
 
         return s_obs, s_rew, s_term, s_trunc, s_info
+
+    def _padded_reward(self) -> Any:
+        return np.copy(self._zero_reward) if np.ndim(self._zero_reward) else 0.0
+
+    def _padded_info(self) -> dict:
+        info: dict[str, Any] = {"_padded": True}
+        if self._zero_cost is not None:
+            info["cost"] = np.copy(self._zero_cost) if np.ndim(self._zero_cost) else 0.0
+        return info
 
     def render(self):
         return self.env.render()

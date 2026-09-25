@@ -107,7 +107,7 @@ class StepBatch:
     ``raw_obs`` the raw values by part and field name (:class:`RawBatch`);
     ``raw_action`` each action field's value by name, NaN for an agent given no
     action (``has_action``). ``terminated`` and ``truncated`` are filled in
-    once decided, for ``reward_batch``. ``query(name)`` reads a queryable for
+    once decided, for ``reward_batch`` and ``cost_batch``. ``query(name)`` reads a queryable for
     every agent at once; ``context(k)`` is agent ``k``'s per-agent context.
     """
 

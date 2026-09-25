@@ -73,6 +73,9 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """
         super().__init_subclass__(**kwargs)
         cls._batched_hooks = _batched_hooks(cls)
+        cls._defined_hooks = frozenset(
+            hook for hook in BATCHABLE_HOOKS if _defines(cls, hook)
+        )
         shadowed = sorted(
             (_RUNTIME_API & set(vars(cls))) - set(allow_runtime_override)
         )
@@ -232,8 +235,31 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         _context: AgentStepContext,
         _info: BaseAgentInfo,
         _rng: np.random.Generator,
-    ) -> float:
-        """Per-agent reward for one aircraft this step."""
+    ) -> float | np.ndarray:
+        """Per-agent reward for one aircraft this step.
+
+        A number, or a 1-D array for a reward with several components; its
+        shape must stay the same from step to step.
+        """
+        return 0.0
+
+    @overridable
+    def cost(
+        self,
+        _obs: BaseObs,
+        _action: np.ndarray | None,
+        _terminated: bool,
+        _truncated: bool,
+        _context: AgentStepContext,
+        _info: BaseAgentInfo,
+        _rng: np.random.Generator,
+    ) -> float | np.ndarray:
+        """Per-agent cost for one aircraft this step, for constrained training.
+
+        Optional: define it, or :meth:`cost_batch`, and each agent's info
+        carries ``info["cost"]``. A number, or a 1-D array with one entry per
+        constraint; its shape must stay the same from step to step.
+        """
         return 0.0
 
     @overridable
@@ -264,9 +290,20 @@ class BlueskyEnv(BlueskyBaseEnvironment):
     # optional - define it instead of the per-agent hook, never as well.
     @overridable
     def reward_batch(self, batch: StepBatch) -> np.ndarray:
-        """Every agent's reward at once: one per ``batch.acids``, in that order.
+        """Every agent's reward at once: one per ``batch.acids``, in that order -
+        shape ``(n_agents,)``, or ``(n_agents, k)`` for ``k`` components.
 
         Instead of :meth:`reward`. ``batch.terminated`` / ``batch.truncated``
+        hold this step's decisions.
+        """
+        raise NotImplementedError
+
+    @overridable
+    def cost_batch(self, batch: StepBatch) -> np.ndarray:
+        """Every agent's cost at once: shape ``(n_agents,)``, or
+        ``(n_agents, k)`` for ``k`` constraints, in the order of ``batch.acids``.
+
+        Instead of :meth:`cost`. ``batch.terminated`` / ``batch.truncated``
         hold this step's decisions.
         """
         raise NotImplementedError
@@ -322,7 +359,16 @@ class BlueskyEnv(BlueskyBaseEnvironment):
 
 
 #: The per-agent hooks that have a batched counterpart, ``<hook>_batch``.
-BATCHABLE_HOOKS = ("reward", "terminated", "truncated")
+BATCHABLE_HOOKS = ("reward", "cost", "terminated", "truncated")
+
+
+def _overrides(cls: type, name: str) -> bool:
+    return getattr(cls, name) is not getattr(BlueskyEnv, name)
+
+
+def _defines(cls: type, hook: str) -> bool:
+    """Whether ``cls`` defines ``hook``, per agent or batched."""
+    return _overrides(cls, hook) or _overrides(cls, f"{hook}_batch")
 
 
 def _batched_hooks(cls: type) -> frozenset[str]:
@@ -331,8 +377,8 @@ def _batched_hooks(cls: type) -> frozenset[str]:
     batched = set()
     for hook in BATCHABLE_HOOKS:
         batch_hook = f"{hook}_batch"
-        per_agent = getattr(cls, hook) is not getattr(BlueskyEnv, hook)
-        batch = getattr(cls, batch_hook) is not getattr(BlueskyEnv, batch_hook)
+        per_agent = _overrides(cls, hook)
+        batch = _overrides(cls, batch_hook)
         if per_agent and batch:
             raise TypeError(
                 f"{cls.__name__} defines both {hook}() and {hook}_batch(); define "

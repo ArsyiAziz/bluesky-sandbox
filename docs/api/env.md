@@ -76,9 +76,25 @@ context.raw_action["alt_delta_ft"]           # what the action field was set to,
 
 ## `bluesky_sandbox.core.batch`
 
-Batched hooks: `reward_batch`, `terminated_batch` and `truncated_batch` are called
-once per step with every agent's step stacked into arrays, instead of once per
-agent. Each is optional; a task defines a hook one way or the other, never both.
+Batched hooks: `reward_batch`, `cost_batch`, `terminated_batch` and
+`truncated_batch` are called once per step with every agent's step stacked into
+arrays, instead of once per agent. Each is optional; a task defines a hook one
+way or the other, never both.
+
+A reward, and a cost, is a number or a 1-D array of components - per agent from
+`reward` / `cost`, or shape `(n_agents,)` / `(n_agents, k)` from the batched
+hooks - and keeps one shape from step to step. `cost` is optional: a task that
+defines it gets each agent's cost in `info["cost"]`.
+
+```python
+class MyEnv(BlueskyEnv):
+    def reward(self, obs, action, terminated, truncated, context, info, rng):
+        return np.array([progress(context), -effort(action)])   # two components
+
+    def cost_batch(self, batch):                # (n_agents, 2): one column per constraint
+        dist = batch.raw_obs["intruders"]["dist_to_own_nm"]
+        return np.stack([(dist < 5.0).any(axis=1), (dist < 10.0).sum(axis=1)], axis=1)
+```
 
 ```python
 class MyEnv(BlueskyEnv):
