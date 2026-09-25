@@ -56,6 +56,24 @@ process, say.
    :members:
 ```
 
+## `bluesky_sandbox.core.step_values`
+
+Raw (unnormalized) values, by field name, from the arrays the observation is
+built from - so reading them costs no recomputation:
+
+```python
+raw = context.raw_obs                        # in a hook; env.raw_observation(agent) outside
+raw["ownship"]["alt_ft"]                     # 12000.0, in the field's unit
+raw["intruders"]["dist_to_own_nm"][i]        # intruder i: row i of obs["intruders"]
+raw["intruders"]["acid"][i]                  # its callsign
+context.raw_action["alt_delta_ft"]           # what the action field was set to, ft
+```
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.core.step_values
+   :members: RawObservation, StepValues
+```
+
 ## `bluesky_sandbox.core.runtime`
 
 The BlueSky process lifecycle — startup, stepping, teardown.

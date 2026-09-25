@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Iterator
 from collections.abc import Sequence as SequenceABC
+from typing import Any
 
 import bluesky as bs
 import numpy as np
@@ -178,6 +179,10 @@ class ActionDispatcher:
         return self.env.config
 
     def apply(self, idx: int, action) -> None:
+        self.apply_values(idx, self.denormalize(idx, action))
+
+    def denormalize(self, idx: int, action) -> list[tuple[Any, Any]]:
+        """``(field, value)`` for each action field: the value it is set to."""
         action_fields = self._config().action_fields
         flat_action = np.asarray(action, dtype=np.float32).reshape(-1)
         values = []
@@ -206,6 +211,10 @@ class ActionDispatcher:
                 f"Action has {flat_action.size} values but configured fields "
                 f"consume {cursor}."
             )
+        return values
+
+    def apply_values(self, idx: int, values: list[tuple[Any, Any]]) -> None:
+        """Set each action field to its value, switches ordered around the rest."""
         switch_fields = [
             (field, value)
             for field, value in values
@@ -319,11 +328,13 @@ class ObservationAssembler:
         config = self._config()
         ntraf = bs.traf.ntraf
         all_indices = tuple(range(ntraf))
+        # The raw values, shared with hooks reading them this step.
+        step_values = self.env._step_values
 
         def _ownship_pack(fields):
             specs = tuple((f, _field_output_size(f)) for f in fields)
             dim = sum(size for _f, size in specs)
-            raw = [f.get_many(all_indices) for f, _size in specs]
+            raw = [step_values.values(f) for f, _size in specs]
             return specs, dim, raw
 
         intr_fields = config.intruder_obs_fields or []
@@ -345,15 +356,10 @@ class ObservationAssembler:
         owns = np.array([acidx for acidx, _acid in agent_items], dtype=np.intp)
         own_row = {int(acidx): row for row, acidx in enumerate(owns)}
         own_bounds = config.intruder_obs_bounds == "intruder"
-        pair_matrices: dict[int, np.ndarray] = {}
 
         def _pair_matrix(field) -> np.ndarray:
             # Shared by the actor and critic blocks when both list the field.
-            matrix = pair_matrices.get(id(field))
-            if matrix is None:
-                matrix = np.asarray(field.get_pair_matrix(owns))
-                pair_matrices[id(field)] = matrix
-            return matrix
+            return step_values.pair_matrix(field, owns)
 
         def _intruder_pack(fields):
             """Per field: ``(field, size, kind, data)``. ``kind`` "rows" is
@@ -380,11 +386,9 @@ class ObservationAssembler:
                     else:
                         specs.append((f, size, "raw_matrix", matrix))
                     continue
-                # Coerce to an ndarray: intruder batches are fancy-indexed by
-                # ``other_arr`` below, which fails on the plain list returned
-                # by the default ``ObsField.get_many`` (fields only ever used as
-                # ownship observations never hit that path).
-                values = np.asarray(f.get_many(all_indices))
+                # An ndarray, as intruder batches are fancy-indexed by
+                # ``other_arr`` below.
+                values = step_values.values(f)
                 if one_scale:
                     data = _normalize_field_values_batch(f, values, 0)
                     specs.append((f, size, "rows", data.reshape(ntraf, size)))

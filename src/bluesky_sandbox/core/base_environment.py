@@ -27,6 +27,11 @@ from bluesky_sandbox.core.layout import (
     flatten_action,
     observation_layout,
 )
+from bluesky_sandbox.core.step_values import (
+    RawObservation,
+    StepValues,
+    raw_action_values,
+)
 from bluesky_sandbox.interface.fields._common import reset_field_state
 from bluesky_sandbox.interface.fields._state import set_action_space_bounds
 from bluesky_sandbox.interface.fields.base import StepContext
@@ -237,6 +242,8 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._aircraft_spawn_time: dict[str, float] = {}
         self._agent_context_cache: dict[str, AgentStepContext] = {}
         self._query_batch_cache: dict[tuple, Any] = {}
+        # Raw field values this step, shared by the observation and the hooks.
+        self._step_values = StepValues()
         self._agent_context_cache_enabled = False
 
         # Aircraft scheduled to spawn later in the episode (spawn_time > 0).
@@ -369,6 +376,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         options: EnvOptions | None = None,
     ) -> tuple[AgentObservations, AgentInfos]:
         self._clear_agent_context_cache()
+        self._step_values.clear()
         self._rng = np.random.default_rng(seed)
         self._wind.reset()
         self.episode_spec = self.scenario.sample(self._rng)
@@ -421,6 +429,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         actions: AgentActions,
     ) -> tuple[AgentObservations, AgentRewards, DoneFlags, DoneFlags, AgentInfos]:
         self._clear_agent_context_cache()
+        self._step_values.begin_step()
         self._delete_marked_aircraft()
         self._spawn_generator.drain(self._rng)
         self._traffic_monitor.begin_step()
@@ -444,9 +453,12 @@ class BlueskyBaseEnvironment(ParallelEnv):
             for obs_field in self._stateful_fields:
                 obs_field.on_action_applied(acid, action)
             # Task hooks may consume non-generic action semantics before the
-            # configured action fields dispatch aircraft-control commands.
+            # configured action fields dispatch aircraft-control commands; an
+            # action a hook consumed has no raw values.
             if not self._hooks.on_agent_action(idx, action):
-                self._action_dispatcher.apply(idx, action)
+                values = self._action_dispatcher.denormalize(idx, action)
+                self._step_values.record_action(acid, raw_action_values(values))
+                self._action_dispatcher.apply_values(idx, values)
 
         # A steady field is applied once at reset; only a gusting one needs
         # pushing into BlueSky again each step.
@@ -660,6 +672,37 @@ class BlueskyBaseEnvironment(ParallelEnv):
         """Which columns of each action part belong to which field."""
         return action_layout(self.config)
 
+    def raw_observation(self, agent: str) -> RawObservation:
+        """``agent``'s observation in raw values: ``raw["ownship"]["alt_ft"]``,
+        ``raw["intruders"]["dist_to_own_nm"][i]`` for intruder row ``i``.
+
+        Read from the values the observation was built from this step, so it
+        costs no recomputation; see :class:`~.step_values.RawObservation`.
+        """
+        return self._raw_observation(self._runtime.agent_ids.index(agent))
+
+    def raw_action(self, agent: str) -> Mapping[str, Any]:
+        """The action ``agent`` was given this step, in raw values by field
+        name: what each action field was set to. Empty if it had none."""
+        return self._step_values.action(agent)
+
+    def _raw_observation(self, acidx: int) -> RawObservation:
+        config = self.config
+        parts = {
+            "ownship": config.obs_fields,
+            "intruders": config.intruder_obs_fields,
+            "critic_ownship": config.critic_obs_fields,
+            "critic_intruders": config.critic_intruder_obs_fields,
+        }
+        return RawObservation(self._step_values, parts, acidx, self._agent_indices)
+
+    def _agent_indices(self) -> np.ndarray:
+        """The controlled agents' traffic indices: the observation's ownships."""
+        index = self._live_agent_index()
+        return np.array(
+            [index[acid] for acid in self._controlled_live_agents], dtype=np.intp
+        )
+
     # ------------------------------------------------------------------
     # PettingZoo helpers
     # ------------------------------------------------------------------
@@ -833,6 +876,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
             data=self._hooks.define_agent_context(acid, acidx),
             queryables=self.episode_queryables,
             query_state=self._query_state_monitor,
+            raw_obs=self._raw_observation(acidx),
+            raw_action=self._step_values.action(acid),
+            step_values=self._step_values,
             airspace=self._build_airspace_context(acidx),
             separation=self._traffic_monitor.build_separation_context(acid, acidx),
         )

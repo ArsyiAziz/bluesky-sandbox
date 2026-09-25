@@ -240,7 +240,15 @@ class WaypointReadoutItem:
 
 @dataclass(frozen=True)
 class AgentStepContext:
-    """Agent-bound task/development context for the current step."""
+    """Agent-bound task/development context for the current step.
+
+    ``raw_obs`` is this aircraft's observation in raw values, by part and field
+    name - ``raw_obs["ownship"]["alt_ft"]``, ``raw_obs["intruders"]
+    ["dist_to_own_nm"][i]`` for intruder row ``i``, ``raw_obs["intruders"]
+    ["acid"][i]`` its callsign. ``raw_action`` is the action it was given this
+    step, as the value each action field was set to. Both read the values the
+    step already computed.
+    """
 
     acid: str
     acidx: int
@@ -249,6 +257,13 @@ class AgentStepContext:
     query_state: Any = field(default=None, repr=False)
     airspace: Any = field(default=None, repr=False)
     separation: SeparationContext = field(default_factory=SeparationContext)
+    raw_obs: Mapping[str, Mapping[str, Any]] = field(
+        default_factory=dict, repr=False
+    )
+    raw_action: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    # The step's shared raw values (core.step_values.StepValues), when the
+    # environment built this context; own_value / intruder_values read them.
+    step_values: Any = field(default=None, repr=False)
     _query_result_cache: dict[str, Any] = field(default_factory=dict, repr=False)
     _obs_value_cache: dict[int, Any] = field(default_factory=dict, repr=False)
 
@@ -292,6 +307,9 @@ class AgentStepContext:
         - use this in cost/reward code instead of slicing the observation vector.
         Computed lazily and cached for the step.
         """
+        if self.step_values is not None:
+            value = np.asarray(self.step_values.values(field)[self.acidx])
+            return value.item() if value.ndim == 0 else value
         key = id(field)
         cached = self._obs_value_cache.get(key)
         if cached is not None:
@@ -307,11 +325,18 @@ class AgentStepContext:
         Computed lazily and cached for the step, so repeated reads of the same
         field are free. Returns an empty array when the agent is alone.
         """
+        others = tuple(i for i in range(bs.traf.ntraf) if i != self.acidx)
+        if self.step_values is not None:
+            if not others:
+                return np.empty(0, dtype=np.float64)
+            row = self.step_values.pair_row(
+                field, self.acidx, lambda: np.array([self.acidx], dtype=np.intp)
+            )
+            return np.asarray(row, dtype=np.float64)[list(others)]
         key = id(field)
         cached = self._obs_value_cache.get(key)
         if cached is not None:
             return cached
-        others = tuple(i for i in range(bs.traf.ntraf) if i != self.acidx)
         values = (
             np.empty(0, dtype=np.float64)
             if not others
