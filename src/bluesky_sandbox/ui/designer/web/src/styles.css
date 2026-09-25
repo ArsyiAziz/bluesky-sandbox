@@ -2689,6 +2689,76 @@ button:disabled {
   color: var(--muted);
 }
 
+/* A field in a field list: name, tags, normalizer, and its arguments below. */
+.field-rows {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 6px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.field-row:hover {
+  background: #2a2d2e;
+}
+
+.field-row.invalid {
+  box-shadow: inset 2px 0 0 #f87171;
+}
+
+.field-row-name {
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-row .geo-row-kind {
+  grid-column: 2;
+}
+
+.field-row-norm {
+  grid-column: 3;
+  width: 84px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.field-row-x {
+  grid-column: 4;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0 2px;
+  visibility: hidden;
+}
+
+.field-row:hover .field-row-x {
+  visibility: visible;
+}
+
+.field-row-x:hover {
+  color: #f87171;
+}
+
+.field-row-params {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Spaces tab: the field editor beside the spaces it builds. */
 .spaces-tab {
   display: flex;
@@ -2696,7 +2766,7 @@ button:disabled {
 }
 
 .spaces-side {
-  width: 400px;
+  width: 450px;
   flex: none;
   overflow: auto;
   padding: 6px 12px 30px;

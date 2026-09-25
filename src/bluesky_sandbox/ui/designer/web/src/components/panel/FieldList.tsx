@@ -8,6 +8,7 @@ import { scaffoldClass, type Scaffolds } from "../../specHelpers";
 import { registerPythonIntel } from "../../code/pythonEditor";
 import { FieldPicker } from "./FieldPicker";
 import { Picker } from "./Picker";
+import { normalizerColor } from "../../normColors";
 
 export interface FieldOption {
   name: string;
@@ -85,6 +86,7 @@ export function FieldList({
   allowRelative?: boolean;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
+  const normalizerOrder = normalizers.map((n) => n.name);
   const optByName = (n: string) => options.find((o) => o.name === n);
   const pickerLabel =
     label === "action"
@@ -105,40 +107,56 @@ export function FieldList({
 
   return (
     <div className="field-list">
-      <div className="chips">
+      <div className="field-rows">
         {fields.map((f, i) => {
           const opt = optByName(f.field);
           const custom = f.field.includes(":");
-          const validationProblem = fieldHasValidationProblem(f.field, validationError);
-          const problem = validationProblem;
+          const problem = fieldHasValidationProblem(f.field, validationError);
+          const norm = fieldNormalizer(f);
+          const params = fieldParams(f);
+          const depth = Number(f.transform_kwargs?.depth) || 3;
           return (
-            <span
-              className={problem ? "chip invalid-chip" : "chip"}
+            <div
+              className={problem ? "field-row invalid" : "field-row"}
               key={`${f.field}-${i}`}
-              title={
-                validationProblem
-                    ? validationError
-                    : opt?.doc || f.field
-              }
+              title={problem ? validationError : opt?.doc || f.field}
+              onClick={() => setEditing(i)}
             >
-              {custom ? `⚙ ${f.field.split(":").pop()}` : f.field}
-              <span className="chip-sig">{fieldSummary(f)}</span>
-              {f.transform === "relative_to_own" && <span className="rel-badge" title="intruder value − ownship value"> −own</span>}
-              {f.transform === "stacked" && (
-                <span
-                  className="rel-badge"
-                  title={`frame stack: live + ${(Number(f.transform_kwargs?.depth) || 3) - 1} lagged copies`}
-                >
-                  {` ×${Number(f.transform_kwargs?.depth) || 3}`}
+              <span className="field-row-name">{custom ? `⚙ ${f.field.split(":").pop()}` : f.field}</span>
+              {f.transform === "relative_to_own" && (
+                <span className="geo-row-kind" title="intruder value − ownship value">
+                  − own
                 </span>
               )}
-              <button className="chip-cfg" title="configure" onClick={() => setEditing(i)}>
-                ⚙
-              </button>
-              <button className="chip-x" onClick={() => onRemove(i)}>
+              {f.transform === "stacked" && (
+                <span className="geo-row-kind" title={`the live value and ${depth - 1} lagged copies`}>
+                  lags {depth - 1}
+                </span>
+              )}
+              <span className="field-row-norm">
+                {norm && (
+                  <>
+                    <span className="mdp-dot" style={{ background: normalizerColor(normalizerOrder, norm) }} />
+                    {norm.replace(/Normalizer$/, "")}
+                  </>
+                )}
+              </span>
+              <button
+                className="field-row-x"
+                title="remove"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(i);
+                }}
+              >
                 ✕
               </button>
-            </span>
+              {params && (
+                <span className="field-row-params" title={params}>
+                  {params}
+                </span>
+              )}
+            </div>
           );
         })}
         {fields.length === 0 && <span className="muted">no {label} fields</span>}
@@ -180,11 +198,9 @@ export function FieldList({
   );
 }
 
-// A compact summary of a field's configured "signature" for its chip, e.g.
-// `(goal) · MinMax` or `(low=-1, high=1)`. Covers queryable selection,
-// constructor kwargs, and the normalizer (which lives in transform_kwargs for
-// intruder-relative fields).
-function fieldSummary(f: SpecDict): string {
+// A field's configured arguments in one line, e.g. `goal, low=-1, high=1`:
+// queryable selection and constructor kwargs; the normalizer is shown apart.
+function fieldParams(f: SpecDict): string {
   const kw: SpecDict = f.kwargs ?? {};
   const parts: string[] = [];
   if (kw.query_name) parts.push(String(kw.query_name));
@@ -193,10 +209,13 @@ function fieldSummary(f: SpecDict): string {
     if (k === "query_name" || k === "query_names" || k === "normalizer" || v == null) continue;
     parts.push(`${k}=${v}`);
   }
-  const inner = parts.length ? `(${parts.join(", ")})` : "";
-  const norm = f.transform_kwargs?.normalizer ?? kw.normalizer;
-  const normTag = norm?.name ? ` · ${String(norm.name).replace(/Normalizer$/, "")}` : "";
-  return `${inner}${normTag}`;
+  return parts.join(", ");
+}
+
+// The normalizer's name; an intruder-relative field keeps it in transform_kwargs.
+function fieldNormalizer(f: SpecDict): string | null {
+  const norm = f.transform_kwargs?.normalizer ?? f.kwargs?.normalizer;
+  return norm?.name ? String(norm.name) : null;
 }
 
 function fieldHasValidationProblem(fieldName: string, error?: string): boolean {

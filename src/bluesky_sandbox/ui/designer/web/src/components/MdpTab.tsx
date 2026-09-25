@@ -4,6 +4,7 @@
 // its normalizer's settings and mapping.
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api, type SpecDict } from "../api";
+import { normalizerColor } from "../normColors";
 import { useRefresh } from "../refresh";
 
 type Curve = { x: number[]; series: number[][]; x_label: string; y_label: string };
@@ -29,15 +30,7 @@ type Summary = {
 };
 type Role = "observation" | "action";
 
-// Categorical slots, in fixed order (validated on this surface). A normalizer
-// takes the slot of its place in the catalog, so it keeps its color whatever
-// the design uses; past the slots, it is "other".
-const SLOTS = 8;
-const colorOf = (normalizers: string[], name: string | null | undefined) => {
-  if (!name) return "var(--norm-raw)";
-  const slot = normalizers.indexOf(name);
-  return slot >= 0 && slot < SLOTS ? `var(--norm-${slot + 1})` : "var(--norm-other)";
-};
+const colorOf = normalizerColor;
 
 const shortName = (name: string) => name.replace(/Normalizer$/, "");
 const span = (f: Field) => f.columns[1] - f.columns[0];
