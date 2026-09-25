@@ -150,3 +150,17 @@ def test_turn_radius_at_the_bank_limit(env):
     expected = (250 * kts) ** 2 / (9.80665 * math.tan(math.radians(25.0))) / nm
     assert expected == pytest.approx(1.953, abs=1e-3)
     assert float(obs.TurnRadiusNm().get(idx)) == pytest.approx(expected, rel=1e-4)
+
+
+def test_a_reset_does_not_serve_the_last_episodes_geometry(env):
+    # Same callsigns at the same sim time (0, after each reset) - the one thing
+    # the geometry cache's key cannot tell apart - in different places.
+    field = obs.InConf(rpz_nm=5.0, vpz_ft=1000.0)
+    env.reset(seed=0)
+    own = _place("OWN", 0.0, 0.0, 90.0, 250.0)
+    other = _place("INTR", gs_kts=250.0, **_ENCOUNTERS["head-on"])
+    assert float(field.get_pairs(own, [other])[0]) == 1.0
+    env.reset(seed=0)
+    own = _place("OWN", 0.0, 0.0, 90.0, 250.0)
+    other = _place("INTR", gs_kts=250.0, **_ENCOUNTERS["abeam"])
+    assert float(field.get_pairs(own, [other])[0]) == 0.0

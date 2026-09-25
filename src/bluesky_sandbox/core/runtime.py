@@ -12,7 +12,10 @@ from wurlitzer import pipes
 
 from bluesky_sandbox.config import validate_asas_dt
 from bluesky_sandbox.sim.aircraft_uids import AircraftUids
-from bluesky_sandbox.sim.geometry.conflict import bluesky_asas_dt_s
+from bluesky_sandbox.sim.geometry.conflict import (
+    bluesky_asas_dt_s,
+    invalidate_conflict_geometry,
+)
 from bluesky_sandbox.sim.queryables import WaypointTarget
 from bluesky_sandbox.sim.weather import WindField
 
@@ -135,6 +138,8 @@ class BlueSkyRuntime:
     def reset(self, *, seed: int | None) -> None:
         with pipes():
             bs.sim.reset()
+        # Its cache key (sim time, callsigns) repeats across seeded episodes.
+        invalidate_conflict_geometry()
         self.configure_timestep()
         if seed is not None:
             bs.sim.setseed(seed)

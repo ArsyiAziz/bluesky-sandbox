@@ -227,16 +227,25 @@ def _compute() -> ConflictGeometry:
 def conflict_geometry() -> ConflictGeometry:
     """Return the per-step conflict geometry, computing once and caching.
 
-    Self-invalidating: keyed on ``(sim time, live-id tuple)``, so it recomputes
-    exactly when the sim advances or the traffic set changes - no env hook or
-    manual invalidation needed. Safe to call from cost functions, the keep mask,
-    and hooks; the O(N^2) geometry runs at most once per step.
+    Keyed on ``(sim time, live-id tuple)``, so it recomputes when the sim
+    advances or the traffic set changes. The one thing that key cannot see is a
+    sim reset: the clock returns to 0 and a seeded episode brings back the same
+    callsigns, in possibly different places - so the runtime calls
+    :func:`invalidate_conflict_geometry` on every reset. Safe to call from cost
+    functions, the keep mask, and hooks; the O(N^2) geometry runs at most once
+    per step.
     """
     key = (getattr(getattr(bs, "sim", None), "simt", None), tuple(bs.traf.id))
     if _CACHE["geom"] is None or _CACHE["key"] != key:
         _CACHE["geom"] = _compute()
         _CACHE["key"] = key
     return _CACHE["geom"]
+
+
+def invalidate_conflict_geometry() -> None:
+    """Drop the cached geometry; the next :func:`conflict_geometry` recomputes."""
+    _CACHE["geom"] = None
+    _CACHE["key"] = None
 
 
 class ConflictView:
