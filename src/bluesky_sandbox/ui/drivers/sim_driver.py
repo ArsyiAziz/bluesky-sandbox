@@ -47,7 +47,7 @@ class SimDriver:
         self._env = env
 
     def start(self) -> None:
-        """Initialise any resources needed by this driver."""
+        """Initialize any resources needed by this driver."""
         self._started = True
 
     def wait_until_ready(self, timeout: float = 30.0) -> None:

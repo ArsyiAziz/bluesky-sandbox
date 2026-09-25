@@ -10,7 +10,7 @@ obs, so we pad ``"intruders"`` out to ``max_intruders x (n_features + 1)``
 - the trailing ``+ 1`` is a validity flag (1 for real, 0 for padding)
 that downstream consumers can use as an attention mask.
 
-This wrapper does **only** the padding step. Feature normalisation /
+This wrapper does **only** the padding step. Feature normalization /
 deltaisation is handled by the configured observation fields; the values
 landing here are already in whatever range those field normalizers produce.
 
@@ -63,7 +63,7 @@ class IntruderPaddingWrapper(BaseParallelWrapper):
             self._obs_space = inner
             return
 
-        # Read the upstream's per-intruder Box (after any field normalisation) and
+        # Read the upstream's per-intruder Box (after any field normalization) and
         # build a padded Box of shape (max_intruders, n_features + 1) where
         # the trailing column is the validity flag.
         feature_box = inner["intruders"].feature_space

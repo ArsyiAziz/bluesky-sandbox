@@ -439,8 +439,8 @@ export default function MapTab({
     lockedRef.current = lockedElements;
   }, [lockedElements]);
 
-  // Load the colour palette (same list the picker shows + the drivers render) so
-  // named colours like black / gray / purple resolve in the map preview.
+  // Load the color palette (same list the picker shows + the drivers render) so
+  // named colors like black / gray / purple resolve in the map preview.
   useEffect(() => {
     api
       .catalogOnce()
@@ -546,13 +546,13 @@ export default function MapTab({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || !spec) return;
-    let cancelled = false;
+    let canceled = false;
     setLoading(true);
 
     api
       .preview(spec, seed)
       .then((preview: PreviewResult) => {
-        if (cancelled) return;
+        if (canceled) return;
         setError(null);
         previewRef.current = preview;
         refreshDeck();
@@ -560,11 +560,11 @@ export default function MapTab({
         setInfo(`${preview.sampled_aircraft.length} aircraft · max ${preview.max_aircraft} · ${preview.queryables.length} queryables`);
         setWarnings(preview.airspace_warnings ?? []);
       })
-      .catch((e) => !cancelled && setError(String(e)))
-      .finally(() => !cancelled && setLoading(false));
+      .catch((e) => !canceled && setError(String(e)))
+      .finally(() => !canceled && setLoading(false));
 
     return () => {
-      cancelled = true;
+      canceled = true;
     };
   }, [spec, ready, seed]);
 
@@ -631,7 +631,7 @@ export default function MapTab({
                   left: x,
                   top: y,
                   borderColor: color,
-                  // Move = a solid filled circle in the element colour (distinct
+                  // Move = a solid filled circle in the element color (distinct
                   // from the white-filled corner handles); rotate = masked icon.
                   backgroundColor: mask ? color : isMove ? color : "rgba(255,255,255,0.94)",
                   WebkitMaskImage: mask ? `url("${mask}")` : undefined,

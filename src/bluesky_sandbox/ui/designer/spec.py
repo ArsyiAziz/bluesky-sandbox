@@ -1,6 +1,6 @@
-"""Serialisation layer: simulation primitives <-> JSON-able spec dicts.
+"""Serialization layer: simulation primitives <-> JSON-able spec dicts.
 
-Every serialised primitive is a dict tagged with a ``"type"`` field. The two
+Every serialized primitive is a dict tagged with a ``"type"`` field. The two
 public entry points are :func:`dump` (object -> dict) and :func:`load`
 (dict -> object); :func:`dumps` / :func:`loads` add the JSON hop.
 
@@ -15,7 +15,7 @@ Coverage matches the structured-data primitives:
   frozen ``scipy.stats`` distributions, and :class:`Categorical`,
 * spawn - ``SpawnRegion`` / ``SpawnConfig``.
 
-Logic (reward/termination/field classes) is *not* serialised here; the
+Logic (reward/termination/field classes) is *not* serialized here; the
 top-level :class:`DesignSpec` references it by ``"module:attr"`` import
 string. See :mod:`bluesky_sandbox.ui.designer.builder`.
 
@@ -25,7 +25,7 @@ Two deliberate fidelity choices:
   waypoint dumps its ``waypoint`` name (not the resolved lat/lon) so it
   re-resolves against the live navdb on load. Ad-hoc lat/lon waypoints dump
   their coordinates. This is the "reference by identifier, resolve at build"
-  principle applied to serialisation.
+  principle applied to serialization.
 * Infinities (open altitude bands default to ``+/-inf``) are encoded as the
   JSON-safe strings ``"inf"`` / ``"-inf"`` so the document parses in a
   browser's ``JSON.parse`` without ``Infinity`` tokens.
@@ -216,7 +216,7 @@ def dump_value(v: Any) -> Any:
         return {"route": v["route"]}  # subroute reference step
     if isinstance(v, list):
         return [dump_value(x) for x in v]
-    raise SpecError(f"cannot serialise value {v!r} of type {type(v).__name__}")
+    raise SpecError(f"cannot serialize value {v!r} of type {type(v).__name__}")
 
 
 def load_value(d: Any) -> Any:
@@ -429,7 +429,7 @@ def _footprint_dump(fp: Footprint) -> dict[str, Any]:
     if isinstance(fp, ShapelyFootprint):
         # No parametric handles survive a shapely result; degrade to polygon.
         return {"type": "polygon", "coords": [[a, b] for a, b in fp.vertices]}
-    raise SpecError(f"cannot serialise footprint of type {type(fp).__name__}")
+    raise SpecError(f"cannot serialize footprint of type {type(fp).__name__}")
 
 
 def _footprint_load(d: dict[str, Any]) -> Footprint:
@@ -503,7 +503,7 @@ def _altitude_dump(band: AltitudeBand) -> dict[str, Any]:
             "min_values_ft": _vertex_values_dump(band.min_values_ft),
             "max_values_ft": _vertex_values_dump(band.max_values_ft),
         }
-    raise SpecError(f"cannot serialise altitude band of type {type(band).__name__}")
+    raise SpecError(f"cannot serialize altitude band of type {type(band).__name__}")
 
 
 def _vertex_values_dump(v: Any) -> Any:
@@ -557,7 +557,7 @@ def _bounds_dump(b: Bounds) -> dict[str, Any]:
             "footprint": _footprint_dump(b.footprint),
             "altitude": _altitude_dump(b.altitude) if b.altitude is not None else None,
         }
-    raise SpecError(f"cannot serialise bounds of type {type(b).__name__}")
+    raise SpecError(f"cannot serialize bounds of type {type(b).__name__}")
 
 
 def _bounds_load(d: dict[str, Any]) -> Bounds:
@@ -566,7 +566,7 @@ def _bounds_load(d: dict[str, Any]) -> Bounds:
         bounds = RegionBounds(
             _footprint_load(d["footprint"]), _altitude_load(d.get("altitude"))
         )
-        # Optional static rotation of this bounds about its own centre (degrees,
+        # Optional static rotation of this bounds about its own center (degrees,
         # CCW). Baked into the geometry here; the editor keeps the original
         # footprint + `rotation_deg` so the shape stays parametric to edit.
         rotation = d.get("rotation_deg")
@@ -619,7 +619,7 @@ def _queryable_dump(q: Queryable) -> dict[str, Any]:
         out["track_temporal_state"] = q.track_temporal_state
         return out
     raise SpecError(
-        f"cannot serialise queryable of type {type(q).__name__}; custom "
+        f"cannot serialize queryable of type {type(q).__name__}; custom "
         "queryables must be referenced by code import string, not dumped."
     )
 
@@ -639,7 +639,7 @@ def _queryable_load(d: dict[str, Any]) -> Queryable:
         lon = d.get("lon")
         # A sampled waypoint draws its position from a region per episode (in
         # DesignScenario.sample). The static/support position is the region
-        # centre; the web keeps lat/lon in sync, but derive it if absent. The
+        # center; the web keeps lat/lon in sync, but derive it if absent. The
         # sample may be a footprint or a full bounds (region refs are inlined by
         # the builder before load).
         sample = d.get("sample")
@@ -781,7 +781,7 @@ _LOADERS = {
 
 
 def dump(obj: Any) -> dict[str, Any]:
-    """Serialise a supported primitive to a tagged spec dict.
+    """Serialize a supported primitive to a tagged spec dict.
 
     Accepts footprints, altitude bands, ``Bounds``, queryables, ``SpawnRegion``,
     and ``SpawnConfig``. For scalar-or-distribution union values use
@@ -813,7 +813,7 @@ def load(d: dict[str, Any]) -> Any:
 
 
 def dumps(obj: Any, **json_kwargs: Any) -> str:
-    """Serialise a primitive straight to a JSON string."""
+    """Serialize a primitive straight to a JSON string."""
     return json.dumps(dump(obj), **json_kwargs)
 
 
@@ -1026,7 +1026,7 @@ _SPEC_VERSION = 1
 class DesignSpec:
     """Top-level design document - the single source of truth for an environment.
 
-    Geometry/spawn/queryables are held as already-dumped spec dicts (materialise
+    Geometry/spawn/queryables are held as already-dumped spec dicts (materialize
     them with :func:`load`); ``env`` carries field refs and code import strings.
     The airspace is a singleton ``Bounds`` reused by query/spawn regions, exactly
     as the runtime scenarios do.
@@ -1059,7 +1059,7 @@ class DesignSpec:
     # Module-level Python prepended to the generated ``scenario.py``, the
     # scenario-side twin of ``env.hook_setup``. Helpers defined here are in
     # scope for ``scenario_hooks`` below, so a design can carry a sampler the
-    # structured spec cannot express (a randomised merge topology, a spawn
+    # structured spec cannot express (a randomized merge topology, a spawn
     # config built per episode) without dropping out of the designer.
     scenario_setup: str = ""
     # name -> body, for the scenario hooks in :data:`SCENARIO_HOOKS`. Emitted as

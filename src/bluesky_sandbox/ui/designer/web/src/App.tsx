@@ -41,7 +41,7 @@ export default function App() {
   }, [specText]);
 
   // The spec object is the source of truth; structured edits (the properties
-  // panel) re-serialise it back into the editor text so both views stay in sync.
+  // panel) re-serialize it back into the editor text so both views stay in sync.
   const updateSpec = useCallback((next: SpecDict) => {
     setSpecText(JSON.stringify(next, null, 2));
   }, []);

@@ -1,5 +1,5 @@
 // Drag-edit handles: derive the draggable control points for the selected
-// element (box corners, polygon vertices, centre, move, rotate) and apply a
+// element (box corners, polygon vertices, center, move, rotate) and apply a
 // handle drag back onto the spec. Pure functions over the spec + geometry.
 import type { PreviewResult, SpecDict } from "../api";
 import { isSampledValue } from "../specHelpers";
@@ -59,7 +59,7 @@ function groupMemberPoints(spec: SpecDict | null, id: string): [number, number][
   return pts;
 }
 
-// Lat/lon bounding box of a group's member geometry, and its centre.
+// Lat/lon bounding box of a group's member geometry, and its center.
 export function groupBbox(spec: SpecDict | null, id: string): { center: [number, number]; latSpan: number; lonSpan: number } | null {
   const pts = groupMemberPoints(spec, id);
   if (!pts.length) return null;
@@ -130,7 +130,7 @@ export function buildEditHandles(spec: SpecDict | null, preview?: PreviewResult 
     const bounds = spec.regions?.[selected.name];
     if (bounds) handles.push(...boundsEditHandles(bounds, selected, selected.name, NAMED.slate));
   }
-  // A transform group: a single move handle at the members' centre + a rotate
+  // A transform group: a single move handle at the members' center + a rotate
   // handle, which translate / spin every member bounds together (static edit).
   if (selected.scope === "group") {
     const box = groupBbox(spec, selected.id);
@@ -187,7 +187,7 @@ export function boundsEditHandles(bounds: SpecDict, target: EditTarget, name: st
       ));
       break;
     // disk / sector / annular_sector translate via the single move-shape handle
-    // below (a dedicated centre handle would just duplicate it).
+    // below (a dedicated center handle would just duplicate it).
     default:
       break;
   }
@@ -232,7 +232,7 @@ export function dragStateForHandle(handle: EditHandle, spec: SpecDict, startY: n
 
 // Translate / rotate every member bounds of a group together, from the drag's
 // start snapshot, so the operation is absolute (no per-frame drift). Footprints
-// stay parametric: a rotate moves each member's centre about the group centre
+// stay parametric: a rotate moves each member's center about the group center
 // and adds to its own ``rotation_deg``.
 function updateGroupFromHandle(next: SpecDict, handle: EditHandle, lon: number, lat: number, drag?: DragState): SpecDict {
   if (handle.target.scope !== "group") return next;
@@ -284,7 +284,7 @@ function updateGroupFromHandle(next: SpecDict, handle: EditHandle, lon: number, 
       const b = next.regions?.[m];
       if (!startB || !b) continue;
       b.footprint = structuredClone(startB.footprint);
-      const mc = boundsCenter(b); // member centre, from the start snapshot
+      const mc = boundsCenter(b); // member center, from the start snapshot
       if (mc) {
         const [nlat, nlon] = rotateLatLon(mc[0], mc[1], box.center, delta);
         moveFootprint(b.footprint, nlat - mc[0], nlon - mc[1]);

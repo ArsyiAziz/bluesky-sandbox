@@ -4,7 +4,7 @@ Every spawn-clear check uses the same separation - the region's ``spawn_sep_nm``
 / ``spawn_sep_ft``, absolute values that each default to CD's own zone when left
 unset - and the two paths differ only in when they look.  ``conflict_free`` looks ahead to the predicted closest approach;
 everything else (notably a steady-state ``maintain`` top-up) looks at the
-present position, because materialising on top of live traffic is an instant
+present position, because materializing on top of live traffic is an instant
 loss of separation the policy had no chance to avoid, while a conflict that
 *develops* later is the task.
 

@@ -10,7 +10,7 @@ export type EditTarget =
   | { scope: "spawn"; index: number }
   | { scope: "region"; name: string }
   // A transform group: a named set of bounds moved/rotated together (and
-  // randomised per episode). Selected from the panel, dragged on the map.
+  // randomized per episode). Selected from the panel, dragged on the map.
   | { scope: "group"; id: string };
 
 export type Selectable = { target?: EditTarget; name?: string };
@@ -50,7 +50,7 @@ export type DragState = {
   rotationDeg?: number;
 };
 
-// A resolved route ready to draw: ordered waypoint positions + identity/colour.
+// A resolved route ready to draw: ordered waypoint positions + identity/color.
 export type RoutePath = {
   key: string;
   name: string;

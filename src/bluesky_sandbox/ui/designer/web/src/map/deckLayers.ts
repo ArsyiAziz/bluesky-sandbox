@@ -39,7 +39,7 @@ export const ROTATION_HANDLE_ICON =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path d="M24.7 7.3A12 12 0 1 0 27.5 20h-5.2a7.4 7.4 0 1 1-1.2-9.2L17 15h12V3z"/></svg>',
   );
 
-// A 4-way move glyph for the centre "drag the whole shape" handle, so it reads
+// A 4-way move glyph for the center "drag the whole shape" handle, so it reads
 // differently from the corner/vertex resize handles and the rotate handle.
 export const MOVE_HANDLE_ICON =
   "data:image/svg+xml;charset=utf-8," +
@@ -254,7 +254,7 @@ export function deckLayers(
   }
 
   // Spawn directions: when a spawn region is selected, draw a "pie" wedge out of
-  // its centre spanning the heading range (a full disk when unconstrained), plus
+  // its center spanning the heading range (a full disk when unconstrained), plus
   // a mean-direction arrow.
   const spawnSector: { polygon: number[][]; color: RGBA }[] = [];
   const spawnSectorEdges: Edge[] = [];
@@ -266,7 +266,7 @@ export function deckLayers(
       const cLat = (bb.lat_min + bb.lat_max) / 2;
       const cLon = (bb.lon_min + bb.lon_max) / 2;
       const cosLat = Math.max(0.01, Math.cos((cLat * Math.PI) / 180));
-      // A small pie around the centre drag handle (not a region-sized wedge).
+      // A small pie around the center drag handle (not a region-sized wedge).
       const reach = (Math.max(bb.lat_max - bb.lat_min, (bb.lon_max - bb.lon_min) * cosLat) || 0.1) * 0.22;
       const z = zMeters(r.alt_min_ft ?? 0);
       const fill: RGBA = [120, 235, 150, 70];
@@ -497,7 +497,7 @@ export function deckLayers(
   // to goal. Skipped for hidden spawn regions.
   if (spec && visibility.routes && visibility.spawnRegions) {
     const links = spawnRouteLinks(spec, preview).filter((l) => shown(`spawn:${l.spawnIndex}`));
-    // Colour each connector to match its route's polyline.
+    // Color each connector to match its route's polyline.
     const colorByKey = new Map(routes.map((r) => [r.key, r.color]));
     const linkColor = (l: any): RGBA => {
       const c = colorByKey.get(l.routeKey) ?? NAMED.green;
@@ -582,7 +582,7 @@ export function deckLayers(
     // threading each aircraft's goal line through its intermediate fixes.
     const wpPositions = waypointPositions(spec, preview);
     // Each sampled target drawn as a *waypoint*: a reach-radius tolerance disc
-    // in world units and the waypoint's colour. The pixel-space ring below
+    // in world units and the waypoint's color. The pixel-space ring below
     // stays as the zoomed-out affordance, but at working zoom the disc is what
     // makes the per-aircraft sampled waypoints actually visible.
     const targetShapes = { edges: [] as WaypointEdge[], faces: [] as WaypointFace[] };

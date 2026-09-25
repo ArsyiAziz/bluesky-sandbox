@@ -270,7 +270,7 @@ def test_requested_performance_model_survives_bs_init():
     ``bs.settings.performance_model``.
 
     A design selecting BADA therefore reverted to whatever the user's config
-    file pinned (commonly ``openap``) the instant the runtime initialised - and
+    file pinned (commonly ``openap``) the instant the runtime initialized - and
     every later envelope lookup failed on types OpenAP does not carry, while
     reporting the model as ``openap`` and looking like the design had been
     ignored.

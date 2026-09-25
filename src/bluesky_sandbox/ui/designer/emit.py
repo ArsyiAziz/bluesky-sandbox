@@ -246,7 +246,7 @@ class _Emitter:
             args.append(f"waypoint={d['waypoint']!r}")
         else:
             lat, lon = d.get("lat"), d.get("lon")
-            # A sampled waypoint's static/support position is its region centre;
+            # A sampled waypoint's static/support position is its region center;
             # derive it when the dict didn't carry an explicit lat/lon. The
             # sample may be a footprint, a bounds, or a {"ref": name}.
             sample = d.get("sample")

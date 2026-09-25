@@ -48,7 +48,7 @@ from bluesky.tools.aero import nm as _NM
 _M_TO_FT = 1.0 / _FT
 _MS_TO_KTS = 1.0 / _KTS
 _MS_TO_FTMIN = _M_TO_FT * 60.0
-_RE = 6371000.0  # earth radius, metres (matches BlueSky ``kwikqdrdist``)
+_RE = 6371000.0  # earth radius, meters (matches BlueSky ``kwikqdrdist``)
 
 _CACHE: dict = {"geom": None, "key": None}
 
@@ -79,9 +79,9 @@ def cd_lookahead_s() -> float:
 
 
 def cd_rpz_m() -> float:
-    """Horizontal protected-zone radius, in metres (BlueSky CD ``rpz``).
+    """Horizontal protected-zone radius, in meters (BlueSky CD ``rpz``).
 
-    Prefers the CD's applied default ``bs.traf.cd.rpz_def`` (metres) - set from
+    Prefers the CD's applied default ``bs.traf.cd.rpz_def`` (meters) - set from
     ``asas_pzr`` and updated by ``ZONER`` (how the sandbox applies
     ``config.pz_radius_nm``) - falling back to ``bs.settings.asas_pzr`` before CD
     exists. A detected conflict has ``dcpa < rpz``, so this is the natural cap on
@@ -96,9 +96,9 @@ def cd_rpz_m() -> float:
 
 
 def cd_hpz_m() -> float:
-    """Vertical protected-zone height, in metres (BlueSky CD ``hpz``).
+    """Vertical protected-zone height, in meters (BlueSky CD ``hpz``).
 
-    Prefers the CD's applied default ``bs.traf.cd.hpz_def`` (metres) - set from
+    Prefers the CD's applied default ``bs.traf.cd.hpz_def`` (meters) - set from
     ``asas_pzh`` and updated by ``ZONEDH`` (how the sandbox applies
     ``config.pz_height_ft``) - falling back to ``bs.settings.asas_pzh`` before CD
     exists. It is the minimum vertical separation (a vertical loss of separation
@@ -175,9 +175,9 @@ def _compute() -> ConflictGeometry:
     dlat = np.radians(lat[None, :] - lat[:, None])  # [i, j]
     dlon = np.radians(lon[None, :] - lon[:, None])
     cavelat = np.cos(np.radians(lat[:, None] + lat[None, :]) * 0.5)
-    dx = _RE * dlon * cavelat  # position of j relative to i (east), metres
-    dy = _RE * dlat  # (north), metres
-    dist = np.sqrt(dx * dx + dy * dy)  # metres, [i, j]
+    dx = _RE * dlon * cavelat  # position of j relative to i (east), meters
+    dy = _RE * dlat  # (north), meters
+    dist = np.sqrt(dx * dx + dy * dy)  # meters, [i, j]
     horiz_dist_now_nm = dist / _NM
 
     trkrad = np.radians(np.asarray(bs.traf.trk, dtype=np.float64))
@@ -192,7 +192,7 @@ def _compute() -> ConflictGeometry:
     tcpa_pos = np.maximum(tcpa, 0.0)
     dcpa_nm = np.sqrt(np.abs(dist * dist - tcpa * tcpa * dv2)) / _NM
     rel_hspd_kts = np.sqrt(dv2) * _MS_TO_KTS  # horizontal relative speed (matches BlueSky vrel)
-    rel_alt_now = alt[None, :] - alt[:, None]  # signed (j - i), metres
+    rel_alt_now = alt[None, :] - alt[:, None]  # signed (j - i), meters
     rel_vs = vs[None, :] - vs[:, None]  # signed (j - i), m/s
     vsep_at_cpa_ft = np.abs(rel_alt_now + rel_vs * tcpa_pos) * _M_TO_FT
     dalt_now_ft = np.abs(rel_alt_now) * _M_TO_FT

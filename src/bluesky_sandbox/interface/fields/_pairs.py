@@ -196,7 +196,7 @@ def _track_frame(own_idx: Any, other_indices: Any):
 
 def _track_frame_at_cpa(own_idx: Any, other_indices: Any):
     """Track-frame relative position AT the predicted (constant-velocity) CPA:
-    (along, cross) in metres = now-position + relative-velocity * tcpa, with tcpa
+    (along, cross) in meters = now-position + relative-velocity * tcpa, with tcpa
     clamped to >=0 (already-passed encounters read at 'now'). Its magnitude equals
     the horizontal miss dcpa; its cross-sign says which side the intruder passes."""
     along, cross, v_along, v_cross = _track_frame(own_idx, other_indices)

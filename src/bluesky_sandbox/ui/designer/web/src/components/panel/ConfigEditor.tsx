@@ -167,7 +167,7 @@ export function RotationEditor({
       <button onClick={addGroup}>+ rotation group</button>
       {groups.length > 0 && (
         <div className="muted small">
-          Each group rotates its members by an angle sampled per episode about their centre. Put a
+          Each group rotates its members by an angle sampled per episode about their center. Put a
           group <em>inside</em> another to compose rotations (local spin, then carried). Reseed on the
           map to preview.
         </div>

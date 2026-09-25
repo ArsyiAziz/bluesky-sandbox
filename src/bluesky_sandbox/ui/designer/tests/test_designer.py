@@ -349,7 +349,7 @@ def test_rotation_transform():
 
 
 def test_group_transform():
-    # A rotation group generalised to translation + scale: members are bounds
+    # A rotation group generalized to translation + scale: members are bounds
     # (named regions); the airspace references one, so the group transforms it.
     spec = _example_design_spec()
     spec.regions = {
@@ -396,14 +396,14 @@ def test_group_transform():
 
 def test_sampled_waypoint():
     # A waypoint with a `sample` footprint redraws its position each episode,
-    # while support() stays at the region centre (stable schema).
+    # while support() stays at the region center (stable schema).
     spec = _example_design_spec()
     box = {"type": "box", "lat_min_deg": 51.8, "lat_max_deg": 52.2,
            "lon_min_deg": 4.4, "lon_max_deg": 5.0}
     spec.queryables["wp"] = {"type": "waypoint", "sample": box, "alt_ft": 3000}
     scenario = build_scenario(spec)
     assert list(scenario.sampled_waypoints) == ["wp"]
-    # support = region centre
+    # support = region center
     sup = scenario.support().queryables["wp"]
     assert math.isclose(sup.lat, 52.0, abs_tol=1e-6) and math.isclose(sup.lon, 4.7, abs_tol=1e-6)
     # sampled positions stay inside the footprint and vary across seeds
@@ -724,7 +724,7 @@ def test_envelope_value_waypoint():
     print("  envelope-value waypoint: route metadata + codegen OK")
 
 
-def test_active_route_waypoint_fields_catalogued():
+def test_active_route_waypoint_fields_cataloged():
     # The name-free active-route obs fields are offered with no queryable_spec.
     fields = {f["name"]: f for f in catalog.obs_fields()}
     for name in ("ActiveRouteWaypointDistanceNm", "ActiveRouteWaypointBearingDeg",
@@ -732,7 +732,7 @@ def test_active_route_waypoint_fields_catalogued():
                  "ActiveRouteWaypointSpdDiffKts"):
         assert name in fields, name
         assert fields[name].get("queryable_spec") is None
-    print("  active-route waypoint fields: catalogued, name-free OK")
+    print("  active-route waypoint fields: cataloged, name-free OK")
 
 
 def test_route_composition_subroutes():
@@ -878,7 +878,7 @@ def test_route_speed_requires_resolved_altitude():
 
 def test_env_hooks_catalog_and_codegen():
     # Hooks are discovered by introspection (no hard-coded list) and only the
-    # customised ones are emitted - no super() boilerplate for the rest.
+    # customized ones are emitted - no super() boilerplate for the rest.
     hook_names = {h["name"] for h in catalog.hooks()}
     assert {"on_aircraft_spawned", "define_agent_context", "on_episode_reset"} <= hook_names
     # clean (annotation-free, underscore-stripped) signatures for codegen
@@ -892,9 +892,9 @@ def test_env_hooks_catalog_and_codegen():
     env_py = files[f"{next(iter(files)).split('/', 1)[0]}/env.py"]
     assert "def on_aircraft_spawned(self, callsign, route):" in env_py
     assert "{callsign}" in env_py  # body uses the natural param name
-    # uncustomised hooks are NOT emitted (inherited; no super() stub)
+    # uncustomized hooks are NOT emitted (inherited; no super() stub)
     assert "def on_sim_step" not in env_py
-    print("  env hooks: introspected catalog + customised-only codegen OK")
+    print("  env hooks: introspected catalog + customized-only codegen OK")
 
 
 def test_completion_context_uses_built_config_and_hook_protocols():
@@ -992,7 +992,7 @@ def test_codegen_task_info_provider_object_scaffold():
 
 
 def test_bounds_rotation_deg():
-    # A non-square box rotated 90deg about its centre changes its lon/lat extent.
+    # A non-square box rotated 90deg about its center changes its lon/lat extent.
     base = {"type": "region",
             "footprint": {"type": "box", "lat_min_deg": 51.8, "lat_max_deg": 52.2,
                           "lon_min_deg": 4.0, "lon_max_deg": 5.0},
@@ -1006,7 +1006,7 @@ def test_bounds_rotation_deg():
     assert (rlon1 - rlon0) < (plon1 - plon0)
     # rotation_deg = 0 / absent is identity
     assert S.load({**base, "rotation_deg": 0}).bounding_box == plain.bounding_box
-    print("  bounds rotation_deg: rotates footprint about centre OK")
+    print("  bounds rotation_deg: rotates footprint about center OK")
 
 
 def test_build_scenario_and_env_config():

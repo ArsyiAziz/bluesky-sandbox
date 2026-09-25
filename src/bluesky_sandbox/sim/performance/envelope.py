@@ -40,7 +40,7 @@ def active_performance_model() -> str:
 
     Not ``bs.settings.performance_model`` directly: ``bs.init()`` re-reads
     ``settings.cfg`` and overwrites it, so a BADA design reverts to whatever
-    that file says as soon as the runtime initialises.
+    that file says as soon as the runtime initializes.
     """
     # cycle: config -> fields.observations -> envelope
     from bluesky_sandbox.config import requested_performance_model  # noqa: PLC0415
@@ -52,7 +52,7 @@ def _warn_type_data_mismatch(kind: str) -> None:
     """Say once that type data came from OpenAP while the sim flies something else.
 
     OpenAP is the only per-TYPE database this package can read without a BADA
-    licence, so envelope limits and MTOW fall back to it. Under BADA that means
+    license, so envelope limits and MTOW fall back to it. Under BADA that means
     the numbers used to sample targets are not the numbers the simulator flies
     with - survivable, but it must not be silent, or an envelope that quietly
     disagrees with the aircraft looks like a policy problem.
@@ -64,7 +64,7 @@ def _warn_type_data_mismatch(kind: str) -> None:
     warnings.warn(
         f"performance_model={active_performance_model()!r} but {kind} is read "
         f"from OpenAP's type database (the only one readable without a BADA "
-        f"licence). Sampled envelopes may differ from what the simulator flies.",
+        f"license). Sampled envelopes may differ from what the simulator flies.",
         RuntimeWarning,
         stacklevel=3,
     )
@@ -84,11 +84,11 @@ def _aircraft_limits(actype: str) -> dict | None:
 
 @cache
 def _aircraft_limits_cached(model: str, actype: str) -> dict | None:
-    """Normalised type limits, from whichever provider ``model`` names.
+    """Normalized type limits, from whichever provider ``model`` names.
 
     Falls back to OpenAP (with a one-time warning) when the configured model
     has no record of the type: OpenAP is the only per-type database readable
-    without a licence, so it is better than nothing - but it must be said, or a
+    without a license, so it is better than nothing - but it must be said, or a
     sampled envelope silently disagrees with what the simulator flies.
     """
     limits = type_limits(actype, model)
@@ -113,7 +113,7 @@ def _ceiling_ft_cached(model: str, actype: str) -> float | None:
     limits = _aircraft_limits_cached(model, actype)
     if not limits:
         return None
-    # Every provider normalises to feet on the way out, so there is nothing to
+    # Every provider normalizes to feet on the way out, so there is nothing to
     # infer here.
     ceiling_ft = limits.get("ceiling_ft")
     return None if ceiling_ft is None else float(ceiling_ft)

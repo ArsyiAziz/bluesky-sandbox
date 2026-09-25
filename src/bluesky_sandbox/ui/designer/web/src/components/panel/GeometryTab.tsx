@@ -3,7 +3,7 @@
 //     and add/visibility, kept in sync with the map selection; and
 //   - an INSPECTOR that edits only the currently-selected element.
 // The spec object is the source of truth; every edit yields a new spec via
-// onChange (which App also re-serialises into the code editor).
+// onChange (which App also re-serializes into the code editor).
 import { Hint } from "./Hint";
 import { useEffect, useState } from "react";
 import { api, type SpecDict } from "../../api";
@@ -186,7 +186,7 @@ export default function GeometryTab({
   const routeNames = Object.keys(spec.spawn?.routes ?? {});
 
   // ---- transform groups ---------------------------------------------------
-  // A group is a named set of bounds moved/rotated together (and randomised per
+  // A group is a named set of bounds moved/rotated together (and randomized per
   // episode). Members are bounds names; a bounds belongs to at most one group.
   const groups: SpecDict[] = spec.transform?.groups ?? [];
   const boundsList = designBounds(spec);
@@ -567,7 +567,7 @@ export default function GeometryTab({
           {spawnRegions.length === 0 && <div className="muted small">no spawn regions</div>}
         </GeoGroup>
 
-        <GeoGroup title="Groups" hint="Per-episode randomisation. Add the bounds a group covers, then set how far it may rotate, shift or scale each episode - the whole group moves together, preserving the geometry between its members." onAdd={addGroup} addLabel="group">
+        <GeoGroup title="Groups" hint="Per-episode randomization. Add the bounds a group covers, then set how far it may rotate, shift or scale each episode - the whole group moves together, preserving the geometry between its members." onAdd={addGroup} addLabel="group">
           {groups.filter((g) => has(g.name || g.id)).map((g) => (
             <Row
               key={g.id}
@@ -904,7 +904,7 @@ function GroupInspector({
         </label>
         {hasRandomization ? (
           <>
-            <div className="muted small">Sampled each episode about the group centre. Reseed on the map to preview.</div>
+            <div className="muted small">Sampled each episode about the group center. Reseed on the map to preview.</div>
             <ValueField label="rotate °" step={5} value={group.angle_deg ?? 0} onChange={(v) => onUpdate({ angle_deg: v })} />
             <ValueField label="east nm" step={1} value={trans.east_nm ?? 0} onChange={(v) => setTranslation({ east_nm: v })} />
             <ValueField label="north nm" step={1} value={trans.north_nm ?? 0} onChange={(v) => setTranslation({ north_nm: v })} />

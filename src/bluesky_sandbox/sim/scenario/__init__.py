@@ -1,4 +1,4 @@
-"""Scenario sampling: the episode contract and the randomised sampler.
+"""Scenario sampling: the episode contract and the randomized sampler.
 
 Split into :mod:`.base` (``EpisodeSpec`` and the ``Scenario`` protocol - what
 used to be ``bluesky_sandbox.sim.sampling``) and :mod:`.randomized` (the concrete

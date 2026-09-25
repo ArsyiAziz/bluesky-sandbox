@@ -29,14 +29,14 @@ Coordinates
 -----------
 Aircraft state lives in geodetic ``(lat, lon, alt)``.  The driver's
 projection (in :class:`WorldView`) flattens to a local east-north-up
-(ENU) tangent plane centred on the airspace using the small-region
+(ENU) tangent plane centered on the airspace using the small-region
 approximation::
 
     east_m  = (lon - lon0) * cos(lat0_rad) * 111_320
     north_m = (lat  - lat0)               * 111_320
     up_m    = alt_ft * 0.3048
 
-Distances are real metres in all three axes.
+Distances are real meters in all three axes.
 
 Camera & interaction
 --------------------
@@ -152,7 +152,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         self._info_text = None
         self._ui_font = None
 
-        # Orbit camera state - focal point in ENU metres.
+        # Orbit camera state - focal point in ENU meters.
         self._focal = [0.0, 0.0, 0.0]
         self._azimuth = 45.0
         self._elevation = 30.0
@@ -197,12 +197,12 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         self._show.disableMouse()
 
         # Panda3D's default lens has near=1, far=1000.  Our world is in
-        # metres at airspace scale (~100s of km) so the default would
+        # meters at airspace scale (~100s of km) so the default would
         # clip everything beyond 1 km - i.e. the whole scene.
         self._show.camLens.setNearFar(10.0, 10_000_000.0)
         self._show.camLens.setFov(50.0)
 
-        # Background colour set the moment the window opens so the
+        # Background color set the moment the window opens so the
         # first frame doesn't flash Panda's default grey.
         self._show.setBackgroundColor(0.07, 0.10, 0.14, 1.0)
 
@@ -222,7 +222,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         self._update_camera()
 
     def on_reset(self, env=None) -> None:
-        """Cache env, recentre camera on the airspace, dispatch to views."""
+        """Cache env, recenter camera on the airspace, dispatch to views."""
         if env is not None:
             self.bind_env(env)
         if self._env is None:

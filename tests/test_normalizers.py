@@ -5,7 +5,7 @@ every concrete class in :mod:`~.fields.observations` and
 :mod:`~.fields.actions`, discovered by reflection rather than listed here, so a
 field added tomorrow is covered the day it lands. **Normalizers** are sampled:
 one configuration per concrete strategy, because that hierarchy is small,
-stable, and its behaviour does not vary with the field beyond the bounds it
+stable, and its behavior does not vary with the field beyond the bounds it
 reads.
 
 Every field is given explicit ``low``/``high``. That is what makes the sweep
@@ -198,7 +198,7 @@ def _sweep_field(cls: type, sample: Sample):
     )
     # CircularNormalizer refuses anything that is not an angle in degrees, so
     # the sweep cannot pair it with a speed or a distance. That refusal is
-    # behaviour under test in its own right - see
+    # behavior under test in its own right - see
     # ``test_circular_refuses_a_field_that_does_not_wrap``.
     if isinstance(sample.normalizer, nz.CircularNormalizer):
         unit = getattr(field.meta, "unit", None)
@@ -374,7 +374,7 @@ def test_symmetric_maps_bounds_to_minus_one_to_one(value, expected):
     # cube-root curve: a quantity 1/8 of the way out reads as 1/2 the action.
     [(-10.0, -1.0), (-1.25, -0.5), (0.0, 0.0), (1.25, 0.5), (10.0, 1.0)],
 )
-def test_signed_power_resolves_finely_near_the_centre(value, expected):
+def test_signed_power_resolves_finely_near_the_center(value, expected):
     field = observations.LatDeg(low=-10.0, high=10.0)
     got = nz.SignedPowerNormalizer(power=3.0).normalize(field, value, 0)
     assert got == pytest.approx([expected])
@@ -536,7 +536,7 @@ def test_a_degenerate_span_is_rejected_rather_than_dividing_by_zero(sample):
         ),
         pytest.param(
             lambda: observations.HdgDeg(low=-math.pi, high=math.pi), "one full turn",
-            id="radians mislabelled as degrees",
+            id="radians mislabeled as degrees",
         ),
     ],
 )
@@ -572,7 +572,7 @@ def test_circular_accepts_a_genuine_full_turn(field_factory):
 
 def test_circular_takes_no_normalized_range():
     """``atan2`` recovers the angle from the pair's direction, which survives a
-    positive scaling but not a translation - so an interval off-centre from
+    positive scaling but not a translation - so an interval off-center from
     zero would decode to the wrong angle. The unit circle is the only sensible
     choice, so there is nothing to configure."""
     with pytest.raises(TypeError):

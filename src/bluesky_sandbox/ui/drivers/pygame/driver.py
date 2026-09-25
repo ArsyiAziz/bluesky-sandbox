@@ -11,7 +11,7 @@ The driver owns:
   :func:`HSplit` / :func:`VSplit` tags;
 * runtime layout edits - drag splitter dividers to resize panels, or
   click-and-hold a panel's header bar and drop on another panel's edge
-  to rearrange the layout.  Drop on the centre to swap two views;
+  to rearrange the layout.  Drop on the center to swap two views;
 * common utilities (text rendering, info tooltip, status badge);
 * cross-view orchestration: collecting hover hits from each view,
   picking a winner, asking every view to highlight the same aircraft,
@@ -34,7 +34,7 @@ Mouse:
 * Drag a splitter divider - resize.
 * Drag a panel header - rearrange.  While dragging, the cursor shows a
   drop indicator on the targeted panel; release on top/bottom/left/
-  right to split the target, on centre to swap.
+  right to split the target, on center to swap.
 * Mouse wheel - zoom the plan/profile under the cursor.
 * Drag a plan/profile - pan that view.
 * Right-drag or middle-drag also pans without click-select.
@@ -86,9 +86,9 @@ class _CachedFont:
     """A ``pygame.font.Font`` wrapper that memoizes ``render``.
 
     Glyph rasterization is the dominant per-frame cost in the software
-    renderer, and the same strings/colours recur every frame (callsigns,
+    renderer, and the same strings/colors recur every frame (callsigns,
     headers, HUD, region labels). Caching the rendered ``Surface`` keyed by
-    ``(text, antialias, colour, background)`` turns a re-raster into a dict
+    ``(text, antialias, color, background)`` turns a re-raster into a dict
     lookup. Every other attribute (``size``, ``set_bold``, ``get_height`` ...)
     proxies straight through to the wrapped font.
 

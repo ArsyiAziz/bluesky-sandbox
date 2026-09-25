@@ -1,9 +1,9 @@
 // Editor for a "sampled value" — anything the API accepts where a scenario can
-// randomise a scalar: a fixed number, a uniform (low, high) range, or **any
+// randomize a scalar: a fixed number, a uniform (low, high) range, or **any
 // scipy.stats distribution**. The distribution's name is picked from the catalog
 // (searchable, with its signature as a hint) and its parameters are shown as
 // named fields (introspected from scipy), so kwargs can't be mistyped. Emits the
-// same tagged encoding the spec (de)serialiser uses:
+// same tagged encoding the spec (de)serializer uses:
 //   number | {type:"range",low,high} | {type:"scipy",name,args,kwds}
 import { Hint } from "./Hint";
 import { useEffect, useState } from "react";
@@ -214,7 +214,7 @@ export function ValueField({
 
   // Optional Bounded(...) wrapper: restrict an (often unbounded) distribution to
   // a finite [lo, hi] so it can size an observation space. Emits `bounds`/`mode`
-  // on the scipy value, which the spec (de)serialiser + codegen understand.
+  // on the scipy value, which the spec (de)serializer + codegen understand.
   const bounded = Array.isArray(dist?.bounds);
   const bnd = bounded ? dist.bounds : int ? [1, 100] : [0, 1];
   const bmode: string = dist?.mode === "clip" ? "clip" : "truncate";
@@ -391,7 +391,7 @@ export function ValueField({
                     placeholder="mode"
                     onChange={setBMode}
                     options={[
-                      { value: "truncate", label: "truncate", description: "renormalise onto [lo, hi]" },
+                      { value: "truncate", label: "truncate", description: "renormalize onto [lo, hi]" },
                       { value: "clip", label: "clip", description: "clamp samples into [lo, hi]" },
                     ]}
                   />

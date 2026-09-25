@@ -44,7 +44,7 @@ class PygameView(ABC):
     Attributes
     ----------
     default_height_fraction:
-        Default share of the window's height when the driver normalises
+        Default share of the window's height when the driver normalizes
         view heights for layout.  Override on the class.
     rect:
         The pygame rect the driver assigns each frame (can change on
@@ -129,7 +129,7 @@ class PygameView(ABC):
         lon_deg: float,
         alt_ft: float,
     ) -> tuple[int, int, int] | None:
-        """Return the colour of the first :class:`QueryRegion` containing
+        """Return the color of the first :class:`QueryRegion` containing
         the aircraft, or ``None`` if it lies outside every region."""
         env = getattr(driver, "_env", None)
         if env is None:

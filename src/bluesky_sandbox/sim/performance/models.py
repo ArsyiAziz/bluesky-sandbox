@@ -9,7 +9,7 @@ Only *finding* the data differs enough to live elsewhere: OpenAP installs with
 pip, BADA is licensed and has to be located on disk. That is what
 :mod:`.bada` is for - it is not this module's BADA half.
 
-Limits are normalised on the way out, so callers never unit-guess:
+Limits are normalized on the way out, so callers never unit-guess:
 
     ceiling_ft   feet          certified ceiling
     VMO          knots CAS     max operating speed
@@ -43,7 +43,7 @@ def _openap_limits(actype: str) -> dict | None:
         return None
     ceiling_m = raw.get("ceiling")
     return {
-        # OpenAP reports ceiling in metres for every type it carries (checked
+        # OpenAP reports ceiling in meters for every type it carries (checked
         # across all 37: 11 300-16 000). Converted here so no caller has to
         # infer the unit from magnitude, which is what this used to do.
         "ceiling_ft": None if ceiling_m is None else float(ceiling_m) / ft,
@@ -121,7 +121,7 @@ def spawnable_types(model: str) -> frozenset[str]:
 
 
 def type_limits(actype: str, model: str) -> dict | None:
-    """Normalised limits for ``actype`` under ``model``, or ``None`` if unknown."""
+    """Normalized limits for ``actype`` under ``model``, or ``None`` if unknown."""
     model = model.lower()
     if model not in _PROVIDERS:
         return None

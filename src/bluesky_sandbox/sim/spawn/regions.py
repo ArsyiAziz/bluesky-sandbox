@@ -138,7 +138,7 @@ class SpawnRegion:
         * ``list[str]`` - sample uniformly from the list each spawn.
         * :class:`TypeDistribution` (e.g. :class:`Categorical`) - weighted
           sampling via ``dist.rvs(random_state=rng)``.
-        * ``None`` - three random uppercase letters are used (default behaviour).
+        * ``None`` - three random uppercase letters are used (default behavior).
     spawn_time:
         Per-aircraft scheduled spawn time in seconds since episode reset
         (must be >= 0). The aircraft becomes part of ``bs_traf`` on the first
@@ -149,8 +149,8 @@ class SpawnRegion:
         * frozen ``scipy.stats`` continuous distribution - calls
           ``dist.rvs(random_state=rng)`` each spawn.
 
-        Defaults to ``0.0`` (all aircraft materialise at episode start, the
-        previous behaviour).
+        Defaults to ``0.0`` (all aircraft materialize at episode start, the
+        previous behavior).
     route:
         Per-region route override. Use a fixed list of waypoint queryable names,
         a named route key from :class:`SpawnConfig.routes`, or a distribution that
@@ -350,7 +350,7 @@ class SpawnRegion:
         """Sample one aircraft's scheduled spawn time (seconds since reset).
 
         Negative samples (possible with unbounded distributions) are clamped
-        to ``0.0`` so the aircraft simply materialises at episode start.
+        to ``0.0`` so the aircraft simply materializes at episode start.
         """
         if isinstance(self.spawn_time, (int, float)):
             t = float(self.spawn_time)
@@ -438,7 +438,7 @@ class SpawnRegion:
 class SpawnConfig:
     """Defines how aircraft are spawned at each ``reset()``.
 
-    All spawn behaviour is driven by :class:`SpawnRegion` objects.  Each
+    All spawn behavior is driven by :class:`SpawnRegion` objects.  Each
     region spawns independently with its own aircraft count, spatial bounds,
     scalar parameter distributions, and optionally its own aircraft type.
 
@@ -709,7 +709,7 @@ class SpawnConfig:
     ) -> Iterator[tuple[int, float, str, dict[str, float], str | None, list[RouteStep] | None]]:
         """Yield ``(spawn_time, actype, pos, callsign_prefix, route)`` per aircraft.
 
-        ``spawn_time`` is seconds since episode reset; the base env materialises
+        ``spawn_time`` is seconds since episode reset; the base env materializes
         each aircraft on the first ``step()`` whose ``bs.sim.simt`` has reached
         this value. Defaults to ``0.0`` per region (immediate spawn).
 

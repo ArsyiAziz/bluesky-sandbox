@@ -1,4 +1,4 @@
-// Pure geometry helpers shared by the map: colour parsing, 3D region/waypoint
+// Pure geometry helpers shared by the map: color parsing, 3D region/waypoint
 // wireframe construction, footprint math, and route resolution. No React, no
 // deck.gl - just data in, data out, so the same primitives drive rendering and
 // the drag-edit handles.
@@ -29,14 +29,14 @@ export const NAMED: Record<string, RGBA> = {
   slate: [148, 163, 184, 255], violet: [167, 139, 250, 255],
 };
 
-// A stable palette to colour anonymous/named routes by index.
+// A stable palette to color anonymous/named routes by index.
 const ROUTE_PALETTE: RGBA[] = [
   NAMED.cyan, NAMED.orange, NAMED.lime, NAMED.magenta,
   NAMED.yellow, NAMED.green, NAMED.blue, NAMED.red,
 ];
 
-// The authoritative name→colour palette, populated from the catalog (the same
-// list the colour picker shows and the drivers render), so every named colour —
+// The authoritative name→color palette, populated from the catalog (the same
+// list the color picker shows and the drivers render), so every named color —
 // black, gray, purple, … — resolves here rather than only the small built-in set.
 let CATALOG_PALETTE: Record<string, RGBA> = {};
 
@@ -62,7 +62,7 @@ export function cssToRgb(name?: string): RGBA {
   const hex = parseHex(n);
   if (hex) return hex;
   // Prefer the catalog palette (matches the drivers); fall back to the built-in
-  // names for internal colours and the moment before the catalog has loaded.
+  // names for internal colors and the moment before the catalog has loaded.
   if (CATALOG_PALETTE[n]) return CATALOG_PALETTE[n];
   if (NAMED[n]) return NAMED[n];
   return NAMED.orange;
@@ -92,7 +92,7 @@ export function regionGeometry(
   const verts = g.vertices;
   const n = verts.length;
   if (n < 2) return;
-  // Real-world vertical scale (no exaggeration): altitude in true metres, so
+  // Real-world vertical scale (no exaggeration): altitude in true meters, so
   // 0 ft sits exactly on the map plane.
   const k = FT_TO_M;
   const pv = g.per_vertex_alt_ft && g.per_vertex_alt_ft.length === n ? g.per_vertex_alt_ft : null;
@@ -499,7 +499,7 @@ export function waypointPositions(spec: SpecDict | null, preview: PreviewResult 
   // is the meaningless template, so skip them here (region-centroid anchored
   // below). Per-episode sampled waypoints DO have their episode position -
   // that must win over any centroid fallback, or every fix collapses onto its
-  // sample region's centre and route polylines bend through the wrong place.
+  // sample region's center and route polylines bend through the wrong place.
   for (const q of preview.queryables) {
     if (
       q.kind === "waypoint" &&
@@ -564,7 +564,7 @@ export function routeEntryWaypoints(
 }
 
 // The RoutePath key(s) a spawn region flies, paired with that route's entry
-// waypoints — so a connector can be coloured to match the route polyline. Keys
+// waypoints — so a connector can be colored to match the route polyline. Keys
 // mirror those `routePaths` assigns: named → ``route:<name>``, a region's fixed
 // list → ``route:__region_<i>__``, the global fixed list → ``route:__global__``.
 function spawnRouteKeys(region: any, index: number, spec: SpecDict): { key: string; entries: string[] }[] {
@@ -584,7 +584,7 @@ function spawnRouteKeys(region: any, index: number, spec: SpecDict): { key: stri
 
 // One connector per spawn region → the entry waypoint(s) of the route it flies
 // (its own route override, else the global route), tagged with the route key so
-// it can be drawn in the route's colour, so a route reads as a full path from
+// it can be drawn in the route's color, so a route reads as a full path from
 // spawn to goal on the map.
 export function spawnRouteLinks(
   spec: SpecDict | null,
@@ -650,7 +650,7 @@ export function routePaths(spec: SpecDict | null, preview: PreviewResult | null)
     if (!Array.isArray(steps) || seen.has(key)) return;
     seen.add(key);
     // All limbs of one route share the key (so the eye toggle hides them
-    // together) and colour, but are separate polylines.
+    // together) and color, but are separate polylines.
     const color = ROUTE_PALETTE[colorIndex++ % ROUTE_PALETTE.length];
     const drawn = new Set<string>();
     for (const path of enumerate(steps)) {

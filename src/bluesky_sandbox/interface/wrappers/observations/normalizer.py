@@ -127,7 +127,7 @@ class Normalizer(ABC):
         return float(self._clip(float(value)))
 
     def _span(self, field: FieldLike, idx: int) -> float:
-        """Resolve a strictly positive normalisation span for ``field``."""
+        """Resolve a strictly positive normalization span for ``field``."""
         lo, hi = self._bounds(field, idx)
         span = hi - lo
         if span <= 0.0:
@@ -303,17 +303,17 @@ class SymmetricNormalizer(_ScaledNormalizer):
 
 class SignedPowerNormalizer(_ScaledNormalizer):
     """Expo-style nonlinear scaling, to ``[-1, 1]`` by default: fine near the
-    centre, full authority at the extremes.
+    center, full authority at the extremes.
 
     Maps the field's bounds to the output interval like
     :class:`SymmetricNormalizer`, but passes the value through a signed power
-    curve so most of the range near the centre resolves to *small* physical
+    curve so most of the range near the center resolves to *small* physical
     values while the interval's ends still reach the full bound. With symmetric
-    delta bounds ``[-b, b]`` the centre is the goal-seeking ``0`` action and
+    delta bounds ``[-b, b]`` the center is the goal-seeking ``0`` action and
     ``denormalize(a) = sign(a) * |a|**power * b`` - the policy gets fine control
     near ``0`` without capping the maximum maneuver.
 
-    ``power > 1`` sharpens the curve (finer near the centre); ``power == 1``
+    ``power > 1`` sharpens the curve (finer near the center); ``power == 1``
     recovers the linear :class:`SymmetricNormalizer`.
     """
 
@@ -417,7 +417,7 @@ class CircularNormalizer(Normalizer):
     is_circular = True
     # Not configurable, unlike the scaled strategies. ``atan2`` recovers the
     # angle from the pair's DIRECTION, which survives a positive scaling but
-    # not a translation - so any interval not centred on zero would decode to
+    # not a translation - so any interval not centered on zero would decode to
     # the wrong angle. ``(-1, 1)`` is the unit circle and the only sensible
     # choice, which is why there is no ``normalized_low``/``normalized_high``
     # here.

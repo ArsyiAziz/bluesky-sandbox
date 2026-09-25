@@ -268,7 +268,7 @@ class TSASView(TsasDataMixin, PygameView):
         text: str,
         color: tuple[int, int, int],
     ) -> None:
-        """Centre a single line of text inside the panel - used for empty states."""
+        """Center a single line of text inside the panel - used for empty states."""
         surf = driver.font.render(text, True, color)
         canvas.blit(surf, (
             self.rect.left + (self.rect.width  - surf.get_width())  // 2,

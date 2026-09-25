@@ -190,7 +190,7 @@ def _scenario_setup_block(scenario_setup: str, existing_imports: str) -> str:
 def _emit_scenario_hooks(scenario_hooks: dict[str, str]) -> str:
     """Emit the design's scenario hooks as ``@staticmethod`` blocks.
 
-    Only hooks the design actually customised are emitted - an absent hook is
+    Only hooks the design actually customized are emitted - an absent hook is
     the identity, and emitting a pass-through would just be boilerplate that
     obscures which hooks a design really uses.
     """
@@ -497,8 +497,8 @@ def _emit_hooks(hooks: dict[str, str]) -> str:
     """Emit env hook overrides.
 
     reward/terminated/truncated are always emitted (body from ``hooks`` or their
-    default); other hooks are emitted only when the user customised them -
-    uncustomised ones inherit the base behaviour (no ``super()`` boilerplate).
+    default); other hooks are emitted only when the user customized them -
+    uncustomized ones inherit the base behavior (no ``super()`` boilerplate).
     """
     sigs = {h["name"]: h["def_signature"] for h in _hook_catalog()}
     names = list(_DEFAULT_HOOK_BODIES) + [n for n in sorted(hooks) if n not in _DEFAULT_HOOK_BODIES]
@@ -674,7 +674,7 @@ def _setup_py(task_info_setup: str, inline_blocks: str, hook_setup: str) -> str:
     ``env.py`` is where someone goes to read what the task *does* - the reward,
     the termination rule, the hooks. Before this split those thirty lines sat
     under three hundred lines of geometry helpers and cost machinery. Same
-    code, same import-time behaviour; only the file boundary moved.
+    code, same import-time behavior; only the file boundary moved.
     """
     body = "\n".join(
         part for part in (task_info_setup.rstrip(), inline_blocks, hook_setup.rstrip()) if part.strip()
@@ -682,7 +682,7 @@ def _setup_py(task_info_setup: str, inline_blocks: str, hook_setup: str) -> str:
     return f'''"""Module-level setup for this generated task.
 
 Helpers, constants and task-info providers used by the hooks in ``env.py``.
-Split out so ``env.py`` stays readable as the task's behaviour; edit either
+Split out so ``env.py`` stays readable as the task's behavior; edit either
 file, or regenerate both from ``design.json``.
 
 One consequence of the split: ``env.py`` imports these names, so it holds
@@ -712,7 +712,7 @@ def _env_py(
     task_info_refs: list[str],
     privileged: bool = False,
 ) -> tuple[str, str]:
-    """Return ``(env_source, setup_source)`` - the task's behaviour, and the
+    """Return ``(env_source, setup_source)`` - the task's behavior, and the
     module-level helpers it leans on, as two files."""
     hook_overrides = _emit_hooks(hooks)
     training_loop = _emit_training_loop(class_stem) if privileged else ""
@@ -770,7 +770,7 @@ class {class_stem}Env(BlueskyEnv):
         return {providers}
 
     # Env hooks. reward / terminated / truncated are always present; other
-    # @overridable hooks appear only when customised (else inherit the base).
+    # @overridable hooks appear only when customized (else inherit the base).
 {hook_overrides}
 {training_loop}
 def main() -> None:

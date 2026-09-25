@@ -92,7 +92,7 @@ class StableIDsParallelWrapper(ParallelEnv):
         self._obs_space = env.observation_space(None)
         # Pre-build a per-agent zero "obs" used to pad dead/unspawned slots.
         self._zero_obs = self._make_zero_obs(self._obs_space)
-        # Probe the wrapped action space directly so mixed raw/normalised
+        # Probe the wrapped action space directly so mixed raw/normalized
         # fields keep their declared bounds, e.g. [-1, 1] deltas plus [0, 1]
         # switches.
         self._act_space: Box = env.action_space(None)
@@ -202,7 +202,7 @@ class StableIDsParallelWrapper(ParallelEnv):
         # Step the inner env when there's something to do: live aircraft to
         # control OR queued spawns waiting to be drained. The latter is
         # essential for deferred-spawn configs where the t=0 cohort can die
-        # before any later-scheduled aircraft materialise - without it the
+        # before any later-scheduled aircraft materialize - without it the
         # queue would never drain and SuperSuit would auto-reset. Visual eval
         # can also continue stepping after per-agent termination so background
         # aircraft finish landing before env-wide reset.
@@ -213,7 +213,7 @@ class StableIDsParallelWrapper(ParallelEnv):
         )
         if real_actions or has_pending_spawns or needs_sim_step:
             next_obs, rewards, terms, truncs, infos = self.env.step(real_actions)
-            # Bind any newly-materialised real callsigns (queue drain) to
+            # Bind any newly-materialized real callsigns (queue drain) to
             # fresh stable slots before composing the SB3 view.
             for real in next_obs:
                 if real not in self._real_to_stable:
@@ -248,7 +248,7 @@ class StableIDsParallelWrapper(ParallelEnv):
                 #     completion.
                 #   * never-used (not in _used_slots): the slot is waiting
                 #     for a deferred spawn. Keep it padded while the
-                #     simulator can still materialise aircraft.
+                #     simulator can still materialize aircraft.
                 # ``_padded`` keeps custom monitors from logging these as
                 # synthetic 1-step episodes either way.
                 s_obs[stable] = self._copy_obs(self._zero_obs)

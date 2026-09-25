@@ -1,6 +1,6 @@
-// Colour selector for design elements (queryables, …). The renderers accept a
+// Color selector for design elements (queryables, …). The renderers accept a
 // palette name ("red") or a "#rrggbb" literal, so this offers named swatches
-// plus a native custom-colour input. The palette comes from the catalog.
+// plus a native custom-color input. The palette comes from the catalog.
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 
@@ -40,7 +40,7 @@ export function ColorPicker({
           onClick={() => onChange(name)}
         />
       ))}
-      <label className="swatch custom" title="custom colour">
+      <label className="swatch custom" title="custom color">
         <input
           type="color"
           value={toHex(value, palette)}

@@ -21,7 +21,7 @@ const FIELD_LISTS = [
 // Structured editor for the whole design: geometry + role assignments, fields,
 // full env configuration, and a live sampling readout. The spec object is the
 // source of truth; every edit yields a new spec via onChange, which App also
-// re-serialises into the code editor.
+// re-serializes into the code editor.
 export default function DesignPanel({
   spec,
   onChange,
@@ -276,7 +276,7 @@ export default function DesignPanel({
       </Section>
 
       {/* ----------------------------------------------------------- actions */}
-      <Section title="Actions" subtitle="agent control axes" hint="What the policy can command each step. Each field is one continuous axis, normalised to [-1, 1]; the field decides what that maps to (a heading delta, an altitude delta, a speed target).">
+      <Section title="Actions" subtitle="agent control axes" hint="What the policy can command each step. Each field is one continuous axis, normalized to [-1, 1]; the field decides what that maps to (a heading delta, an altitude delta, a speed target).">
         <FieldList
           label="action"
           fields={env.action_fields ?? []}
@@ -314,7 +314,7 @@ export default function DesignPanel({
           <Section title="Sampling" subtitle="a drawn episode" hint="One episode drawn with the seed below - the concrete geometry, spawns and routes the design produces. Change the seed to see how much the design varies.">
             <SamplingReadout spec={spec} seed={seed} onSeedChange={onSeedChange} />
           </Section>
-          <Section title="Observations" subtitle="what the policy sees" hint="The observation vector for a sampled agent, field by field, with the values it would actually receive. Use it to check normalisation and ordering.">
+          <Section title="Observations" subtitle="what the policy sees" hint="The observation vector for a sampled agent, field by field, with the values it would actually receive. Use it to check normalization and ordering.">
             <ObsSample spec={spec} seed={seed} />
           </Section>
         </>

@@ -94,15 +94,15 @@ export default function RunModal({ spec, onClose }: { spec: SpecDict; onClose: (
   // Resume tracking if a run is already active (e.g. the modal was reopened),
   // and always stop the timer when the modal unmounts.
   useEffect(() => {
-    let cancelled = false;
+    let canceled = false;
     api
       .runStatus()
       .then((s) => {
-        if (!cancelled && s.active) poll();
+        if (!canceled && s.active) poll();
       })
       .catch(() => {});
     return () => {
-      cancelled = true;
+      canceled = true;
       clearPoll();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

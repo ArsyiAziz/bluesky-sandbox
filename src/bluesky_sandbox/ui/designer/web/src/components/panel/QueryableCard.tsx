@@ -201,7 +201,7 @@ function WaypointPosition({
 }) {
   const named = q.waypoint != null;
   const sampled = q.sample != null;
-  // Sampled waypoint specs keep lat/lon in sync with the sample region centre
+  // Sampled waypoint specs keep lat/lon in sync with the sample region center
   // so the static query target stays schema-stable. Per-aircraft samples are
   // compiled onto route steps when this waypoint is used in a spawn route.
   const setSampleRegion = (bounds: SpecDict) => {

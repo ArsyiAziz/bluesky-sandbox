@@ -728,7 +728,7 @@ def spawn_defaults() -> dict[str, int]:
 
 
 def colors() -> dict[str, str]:
-    """Named display colors → hex, for the GUI colour picker.
+    """Named display colors → hex, for the GUI color picker.
 
     The renderers accept either a palette name or a ``#rrggbb`` literal, so the
     picker offers the named swatches plus a custom hex. Sourced from the driver
@@ -749,7 +749,7 @@ def colors() -> dict[str, str]:
     return {
         name: "#%02x%02x%02x" % tuple(rgb)
         for name, rgb in _named.items()
-        if name != "violation"  # internal status colour, not a design choice
+        if name != "violation"  # internal status color, not a design choice
     }
 
 

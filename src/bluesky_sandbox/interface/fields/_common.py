@@ -14,7 +14,7 @@ _MS_TO_KTS = 1.0 / kts
 _MS_TO_FTMIN = 60.0 / ft
 _MIN_DYNAMIC_SPAN = 1e-6
 # Groundspeed floor for an ETE denominator: airborne traffic never reaches it,
-# it only keeps a division finite for a stopped/uninitialised aircraft.
+# it only keeps a division finite for a stopped/uninitialized aircraft.
 _MIN_GS_MS = 1e-3
 
 

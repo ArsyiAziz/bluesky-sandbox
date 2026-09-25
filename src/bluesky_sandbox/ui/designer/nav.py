@@ -343,7 +343,7 @@ def features_in_bounds(
     """One-shot map payload: waypoints + airports + airways within the window.
 
     Returns ``{"window": [...], "waypoints": [...], "airports": [...],
-    "airways": [...]}`` ready to serialise for the map tab.
+    "airways": [...]}`` ready to serialize for the map tab.
     """
     window = window_from_bounds(bounds, margin_frac=margin_frac)
     return {

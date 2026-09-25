@@ -75,7 +75,7 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
         # selected aircraft's route is shown.
         self.show_all_routes = False
         # When True, overlay velocity-obstacle cones for the tracked aircraft
-        # against its neighbours (conflict-geometry visualization).
+        # against its neighbors (conflict-geometry visualization).
         self.show_velocity_obstacles = False
         # VO lookahead as a fraction (0, 1] of the CD detection horizon
         # (``bs.traf.cd.dtlookahead``). 1.0 = the full detector horizon, where the

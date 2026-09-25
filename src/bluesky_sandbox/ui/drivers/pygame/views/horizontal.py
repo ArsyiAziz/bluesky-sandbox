@@ -40,7 +40,7 @@ class HorizontalView(PygameView):
     _AC_LENGTH_PX = 14  # tip-to-tail length of the chevron marker
     _AC_WING_FRAC = 0.8  # tail half-width as a fraction of half-length
     _AC_NOTCH_FRAC = 0.45  # rear-notch depth as a fraction of half-length
-    # (1.0 = flat back, 0 = notch reaches the centre)
+    # (1.0 = flat back, 0 = notch reaches the center)
     _VECTOR_WIDTH = 2
     _POLY_WIDTH = 3
     _POINT_RADIUS_PX = 6  # half-diagonal of the diamond marker
@@ -57,13 +57,13 @@ class HorizontalView(PygameView):
     _M_PER_DEG_LAT = 111_000.0
     _M_PER_NM = 1852.0
 
-    # Slice indicator (line + arrow + centre dot) drawn by _draw_axis_indicator.
+    # Slice indicator (line + arrow + center dot) drawn by _draw_axis_indicator.
     _SLICE_LINE_WIDTH = 2
     _SLICE_TICK_HALF = 6  # tick length on either side of each end
-    _SLICE_ARROW_LEN = 26  # shaft length from centre to tip
+    _SLICE_ARROW_LEN = 26  # shaft length from center to tip
     _SLICE_ARROW_HEAD = 9  # arrow head length (tip back along shaft)
     _SLICE_ARROW_WING = 5  # arrow head half-width (perpendicular to shaft)
-    _SLICE_CENTRE_DOT_PX = 6
+    _SLICE_CENTER_DOT_PX = 6
     _SLICE_IDLE_ALPHA = 90  # 255 while dragging, this when idle
 
     def __init__(self, margin: float = 1.1) -> None:
@@ -89,7 +89,7 @@ class HorizontalView(PygameView):
         self._label_hits: list[tuple[pygame.Rect, dict]] = []
 
         # Where the slice indicator is anchored on the plan (None ->
-        # airspace bbox center).  User can drag the centre dot to
+        # airspace bbox center).  User can drag the center dot to
         # override; cleared each on_reset.
         self._slice_center_override: tuple[float, float] | None = None
 
@@ -521,11 +521,11 @@ class HorizontalView(PygameView):
         canvas: pygame.Surface,
         driver: PygameSimDriver,
     ) -> None:
-        """Multi-colour polylines of past positions per aircraft.
+        """Multi-color polylines of past positions per aircraft.
 
-        Each trail point carries a colour key baked at append time on
+        Each trail point carries a color key baked at append time on
         the driver, so a normal -> conflict -> normal sequence renders
-        as three coloured runs.  Adjacent segments with the same key
+        as three colored runs.  Adjacent segments with the same key
         share a single ``pygame.draw.lines`` call.
 
         Incremental on BOTH axes that used to make this grow with
@@ -538,11 +538,11 @@ class HorizontalView(PygameView):
         * the transformed result is itself cached against the camera,
           so a frame that neither steps nor moves the camera does no
           per-point work at all;
-        * the colour-run segmentation is cached alongside, so the run
+        * the color-run segmentation is cached alongside, so the run
           boundaries are never re-derived by walking the points.
 
         A frame therefore costs O(new points) when the sim stepped, one
-        numpy pass when the camera moved, and one drawcall per colour
+        numpy pass when the camera moved, and one drawcall per color
         run either way - never O(all points) in Python.
         """
         # Signature of the FIT projection only - pan/zoom is deliberately
@@ -620,13 +620,13 @@ class HorizontalView(PygameView):
 
     @staticmethod
     def _trail_color(key: str) -> tuple[int, int, int]:
-        """Resolve a trail-point colour key into a pygame RGB tuple.
+        """Resolve a trail-point color key into a pygame RGB tuple.
 
-        Mirrors the chevron's body-colour priority: ``"los"``,
+        Mirrors the chevron's body-color priority: ``"los"``,
         ``"conflict"``, and ``"violation"`` map to the state palette,
         ``"normal"`` falls through to :attr:`C.BLACK` (the chevron's
         default), anything else is treated as a :class:`QueryRegion`
-        colour name and looked up in the shared named palette so the
+        color name and looked up in the shared named palette so the
         trail matches the region overlay.
         """
         if key == "los":
@@ -673,7 +673,7 @@ class HorizontalView(PygameView):
         if spd < 0.5:
             return
         dir_from = float(np.degrees(np.arctan2(-ve, -vn)) % 360.0)
-        # Screen direction of "blows to": project the centre and a small offset
+        # Screen direction of "blows to": project the center and a small offset
         # along (vn, ve), so map rotation is respected.
         off_lat = clat + 0.01 * vn
         off_lon = clon + 0.01 * ve / max(math.cos(math.radians(clat)), 1e-6)
@@ -730,7 +730,7 @@ class HorizontalView(PygameView):
         far_lat, far_lon = v.v_to_latlon(v._axis_max)
         near_xy = self.project(near_lat, near_lon)
         far_xy = self.project(far_lat, far_lon)
-        # Centre dot at the live projection origin (where v = 0); this
+        # Center dot at the live projection origin (where v = 0); this
         # is where the user grabs to translate the slice.
         ctr_lat, ctr_lon = v._axis_origin
         ctr_xy = self.project(ctr_lat, ctr_lon)
@@ -758,7 +758,7 @@ class HorizontalView(PygameView):
         # Main slice line - *this is the slice plane* on the plan view.
         pygame.draw.line(layer, line_color, L(near_xy), L(far_xy), width=line_w)
 
-        # Unit vector along the slice line (from centre toward axis_max).
+        # Unit vector along the slice line (from center toward axis_max).
         dir_x = far_xy[0] - ctr_xy[0]
         dir_y = far_xy[1] - ctr_xy[1]
         mag = math.hypot(dir_x, dir_y) or 1.0
@@ -777,7 +777,7 @@ class HorizontalView(PygameView):
             b = (end[0] - px * tick, end[1] - py * tick)
             pygame.draw.line(layer, line_color, L(a), L(b), width=line_w)
 
-        # Perpendicular viewing-direction arrow at the centre - shows
+        # Perpendicular viewing-direction arrow at the center - shows
         # which side of the slice plane the profile is "viewed from".
         arrow_len = self._SLICE_ARROW_LEN
         head_back = arrow_len - self._SLICE_ARROW_HEAD
@@ -786,7 +786,7 @@ class HorizontalView(PygameView):
         arrow_back = (ctr_xy[0] + px * head_back, ctr_xy[1] + py * head_back)
         arrow_wing1 = (arrow_back[0] + ux * wing, arrow_back[1] + uy * wing)
         arrow_wing2 = (arrow_back[0] - ux * wing, arrow_back[1] - uy * wing)
-        # Shaft from centre outward.
+        # Shaft from center outward.
         pygame.draw.line(layer, line_color, L(ctr_xy), L(arrow_tip), width=line_w)
         # Filled head.
         pygame.draw.polygon(
@@ -795,10 +795,10 @@ class HorizontalView(PygameView):
             [L(arrow_tip), L(arrow_wing1), L(arrow_wing2)],
         )
 
-        # Centre dot (translate handle).  Drawn last so it sits on top
+        # Center dot (translate handle).  Drawn last so it sits on top
         # of the shaft.  Black ring for contrast.
         ring_color = (*C.BLACK, alpha)
-        dot_r = self._SLICE_CENTRE_DOT_PX
+        dot_r = self._SLICE_CENTER_DOT_PX
         pygame.draw.circle(layer, line_color, L(ctr_xy), dot_r)
         pygame.draw.circle(layer, ring_color, L(ctr_xy), dot_r, width=1)
 
@@ -1163,7 +1163,7 @@ class HorizontalView(PygameView):
     # ------------------------------------------------------------------
 
     _SLICE_HIT_PX = 8  # proximity-to-line threshold for rotate-drag
-    _SLICE_DOT_PX = 9  # centre-dot click radius for translate-drag
+    _SLICE_DOT_PX = 9  # center-dot click radius for translate-drag
 
     def _vertical_view(self, driver: PygameSimDriver):
         """Find a sibling view exposing ``_axis_spec`` / ``_bbox_cache``."""
@@ -1250,7 +1250,7 @@ class HorizontalView(PygameView):
             x0, x1, _ = self._vo_slider_track()
             driver.set_vo_horizon_frac(self._vo_x_to_frac(pos[0], x0, x1, driver))
             return "vo_horizon"
-        # Centre dot has priority over the line - they overlap.
+        # Center dot has priority over the line - they overlap.
         if self._on_slice_dot(pos, driver):
             return "slice_translate"
         if self._on_slice_line(pos, driver):
@@ -1274,7 +1274,7 @@ class HorizontalView(PygameView):
             # band slides on the panel - that's what makes translation
             # actually pan instead of being a no-op).
             lat, lon = self._unproject(pos[0], pos[1])
-            # Clamp to the airspace bbox so the centre dot can never be
+            # Clamp to the airspace bbox so the center dot can never be
             # dragged off the panel; resize behaves the same way since
             # the airspace projection always fits inside the panel.
             lat, lon = self._clamp_to_airspace(driver, lat, lon)
@@ -1291,7 +1291,7 @@ class HorizontalView(PygameView):
             bearing_deg = math.degrees(bearing_rad) % 360.0
             # ``update_bearing`` preserves the user's translation; a
             # plain ``_resolve_axis`` would reset the origin to the
-            # airspace centre, undoing the prior translate.
+            # airspace center, undoing the prior translate.
             v.update_bearing(bearing_deg)
 
     def cursor_hint(self, pos, driver: PygameSimDriver) -> CursorHintName | None:
@@ -1345,7 +1345,7 @@ class _TrailPixelCache:
     * row ``committed`` holds the PROVISIONAL last point, reprojected on
       every sync because decimation may have moved it.
 
-    ``runs`` records where each colour run begins, as an offset into
+    ``runs`` records where each color run begins, as an offset into
     ``base``, so the renderer never re-walks the point list to find the
     run boundaries.
     """
@@ -1469,7 +1469,7 @@ class _TrailPixelCache:
         # The provisional point occupies one row past the committed prefix and
         # is REWRITTEN, not appended - decimation moves it in place.  When it
         # is eventually committed it keeps this same row and key (decimation
-        # only ever replaces a point with one carrying the same colour key),
+        # only ever replaces a point with one carrying the same color key),
         # so the run marker written here stays correct across that promotion.
         end = trail.end
         if end > self.start + self.committed:

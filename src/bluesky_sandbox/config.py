@@ -69,7 +69,7 @@ def _bind_env_obs_fields(
 #: The model this process asked for. ``bs.settings.performance_model`` is not a
 #: reliable record of it: ``bs.init()`` re-reads ``settings.cfg`` and overwrites
 #: the value, so a design that selects BADA silently reverts to whatever the
-#: user's config file says the moment the runtime initialises. Type-level
+#: user's config file says the moment the runtime initializes. Type-level
 #: lookups read this instead.
 _REQUESTED_MODEL: str | None = None
 
@@ -126,7 +126,7 @@ def apply_performance_model(model: str | None) -> str:
     that samples geometry must call this first, or a BADA design silently
     samples its envelopes from OpenAP and fails on the types OpenAP lacks.
 
-    Setting the value does not initialise BlueSky; ``runtime.configure`` still
+    Setting the value does not initialize BlueSky; ``runtime.configure`` still
     owns bs.init and still refuses to switch models after it.
     """
     global _REQUESTED_MODEL

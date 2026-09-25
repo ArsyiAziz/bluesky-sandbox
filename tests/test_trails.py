@@ -1,4 +1,4 @@
-"""Trail-store and renderer-cache behaviour.
+"""Trail-store and renderer-cache behavior.
 
 
 """
@@ -73,7 +73,7 @@ def _cache_drawcalls(cache, trail):
 
 
 def _leg(step, phase):
-    """Straight legs, a turning climb, and colour changes at the seams."""
+    """Straight legs, a turning climb, and color changes at the seams."""
     if phase == 0:
         return (56.0, 2.0 + step * 0.004, 20000.0, "normal")
     if phase == 1:
@@ -161,7 +161,7 @@ def test_decimation_collapses_a_straight_leg_to_its_endpoints():
     assert trail.points[-1][1] == pytest.approx(2.0 + 19 * 0.01)
 
 
-def test_decimation_never_crosses_a_colour_key_change():
+def test_decimation_never_crosses_a_color_key_change():
     trail = _trail()()
     for step in range(6):
         trail.append((56.0 + step * 0.01, 2.0, 20000.0, "normal"))

@@ -1,6 +1,6 @@
 """Render-preview extraction: a spec -> JSON-able geometry for the map tab.
 
-Turns the materialised resources of a :class:`DesignSpec` into plain polygons,
+Turns the materialized resources of a :class:`DesignSpec` into plain polygons,
 points, and sampled aircraft so the map can draw an environment without running
 the simulator. Reuses the primitives' own ``vertices`` / ``bounding_box`` /
 ``sample_point`` accessors, so what the map shows is exactly what the env builds.
@@ -141,7 +141,7 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
     """
     scenario = build_scenario(spec)
     rng = np.random.default_rng(seed)
-    # Sample (not support) so per-episode randomisation - rotation and, below,
+    # Sample (not support) so per-episode randomization - rotation and, below,
     # spawn locations - is what the map shows; reseeding varies it.
     episode = scenario.sample(rng)
     _resolve_spawn_types(episode.spawn, spec.env.allowed_aircraft)
@@ -224,7 +224,7 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
             return None
         # Presentation fields from the waypoint template so the map can draw
         # the per-aircraft target as a real waypoint (reach-radius tolerance
-        # disc in its colour), not just a screen-space dot.
+        # disc in its color), not just a screen-space dot.
         return {
             "lat": float(lat),
             "lon": float(lon),
@@ -293,7 +293,7 @@ def airspace_warnings(episode) -> list[str]:
     """Flag query/spawn regions or waypoints not subsumed by the airspace.
 
     The airspace is meant to enclose the whole design (it is the operational
-    boundary and the observation-normalisation range). Any content whose
+    boundary and the observation-normalization range). Any content whose
     footprint or finite altitude extent falls outside the airspace is reported
     by name so the user can enlarge the airspace or move the content in.
     """
@@ -304,7 +304,7 @@ def airspace_warnings(episode) -> list[str]:
 
     # Content that reuses the airspace bounds sits exactly on its edge, where
     # contains() is strict (boundary excluded). Nudge each tested point a hair
-    # toward the airspace centre so coincident/shared geometry counts as
+    # toward the airspace center so coincident/shared geometry counts as
     # subsumed, while genuinely-outside points stay flagged.
     (a_lat_min, a_lat_max), (a_lon_min, a_lon_max) = asp.bounding_box
     _cen_lat = (a_lat_min + a_lat_max) / 2.0

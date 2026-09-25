@@ -3,7 +3,7 @@
 Lives in its own module so :class:`Panda3DSimDriver` and the
 :mod:`views` subpackage can both import it without a circular
 dependency.  Mirrors :mod:`bluesky_sandbox.ui.drivers.pygame.colors` -
-the named-colour table is intentionally aligned so the same ``COLOR``
+the named-color table is intentionally aligned so the same ``COLOR``
 string on a render primitive paints the same hue in either driver.
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 M_PER_DEG = 111_320.0
 
 
-# Named colours mirror the pygame palette so the same COLOR strings on
+# Named colors mirror the pygame palette so the same COLOR strings on
 # render primitives produce visually-matching output across drivers.
 # Panda3D wants RGBA floats in [0, 1].
 NAMED_COLORS: dict[str, tuple[float, float, float]] = {
@@ -53,7 +53,7 @@ CHEVRON_NOTCH_FRAC = 0.45    # rear-notch depth / half-length
 
 
 def color(name: str, alpha: float = 1.0) -> tuple[float, float, float, float]:
-    """Look up an RGBA tuple for a render-primitive colour name.
+    """Look up an RGBA tuple for a render-primitive color name.
 
     Unknown names fall back to ``gray`` so a typo in a config string
     surfaces visually rather than crashing the renderer.

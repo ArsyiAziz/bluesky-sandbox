@@ -219,7 +219,7 @@ class _AltitudeAction(ActionField):
         )
 
     def altitude_floor_m(self) -> float:
-        """Lowest commandable altitude, in metres.
+        """Lowest commandable altitude, in meters.
 
         MUST match whatever floor the task enforces on ``bs.traf.selalt`` (tasks
         typically clamp a minimum-safe-altitude in ``on_sim_step``). If this is
@@ -289,7 +289,7 @@ class AltFt(_AltitudeAction):
 
 @dataclass(frozen=True)
 class AltM(_AltitudeAction):
-    """Set target altitude in metres.
+    """Set target altitude in meters.
 
     Metadata:
         name: alt_m
@@ -311,11 +311,11 @@ class AltM(_AltitudeAction):
     )
     low: Annotated[
         float | None,
-        "target altitude metres lower bound; None = 0 m at runtime",
+        "target altitude meters lower bound; None = 0 m at runtime",
     ] = None
     high: Annotated[
         float | None,
-        "target altitude metres upper bound; None = BlueSky perf ceiling at runtime",
+        "target altitude meters upper bound; None = BlueSky perf ceiling at runtime",
     ] = None
 
     def set(self, idx: int, value: float) -> None:
@@ -481,7 +481,7 @@ class ApAltDeltaFt(_AltitudeAction):
 
 @dataclass(frozen=True)
 class AltDeltaM(_AltitudeAction):
-    """Adjust target altitude by a delta in metres.
+    """Adjust target altitude by a delta in meters.
 
     Metadata:
         name: alt_delta_m
@@ -496,8 +496,8 @@ class AltDeltaM(_AltitudeAction):
         control_axis=ControlAxis.ALTITUDE,
         mode=ActionMode.DELTA,
     )
-    low: Annotated[float, "altitude delta metres"] = -152.4
-    high: Annotated[float, "altitude delta metres"] = 152.4
+    low: Annotated[float, "altitude delta meters"] = -152.4
+    high: Annotated[float, "altitude delta meters"] = 152.4
 
     def set(self, idx: int, value: float) -> None:
         self.command_altitude_ft(idx, max(0.0, bs.traf.alt[idx] + value) * _M_TO_FT)
@@ -519,11 +519,11 @@ class ApAltDeltaM(_AltitudeAction):
     )
     low: Annotated[
         float | None,
-        "autopilot altitude offset metres; None = runtime altitude envelope",
+        "autopilot altitude offset meters; None = runtime altitude envelope",
     ] = None
     high: Annotated[
         float | None,
-        "autopilot altitude offset metres; None = runtime altitude envelope",
+        "autopilot altitude offset meters; None = runtime altitude envelope",
     ] = None
 
     def set(self, idx: int, value: float) -> None:
@@ -846,7 +846,7 @@ def _issue_crossover_speed(idx: int, target_cas_kts: float) -> None:
 class ActiveRouteWaypointSpdDeltaCrossover(ActionField):
     """Regime-aware speed command relative to the waypoint's speed constraint.
 
-    Like :class:`ActiveRouteWaypointSpdDeltaKts`, but honours the CAS/Mach
+    Like :class:`ActiveRouteWaypointSpdDeltaKts`, but honors the CAS/Mach
     crossover so the command is always *feasible* and holds the right quantity
     per regime. The CAS target is capped at the Mach limit (Mmo) expressed as CAS
     for the current altitude, and the command is issued as **Mach** above the

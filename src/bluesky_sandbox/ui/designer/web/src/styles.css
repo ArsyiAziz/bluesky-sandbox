@@ -47,7 +47,7 @@ body {
   min-width: 0;
   /* Scroll rather than clip. `overflow: hidden` here hides the fact that a
      child has been squeezed past its content, which paints text over its
-     neighbours instead of admitting it does not fit. */
+     neighbors instead of admitting it does not fit. */
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
@@ -139,7 +139,7 @@ button:disabled {
   width: 120px;
 }
 
-/* Shrink behaviour belongs to the toolbar only: `.name-input` is shared with
+/* Shrink behavior belongs to the toolbar only: `.name-input` is shared with
    the Metadata tab, whose `.metadata-field` is a column flex container - there
    a `flex` basis would size the box vertically and render it as a square. */
 .toolbar .name-input {
@@ -2500,7 +2500,7 @@ button:disabled {
 }
 
 /* Picker option badge: a short qualifier (version, state) beside the label.
-   Coloured and tracked apart from the name so a design and its version read as
+   Colored and tracked apart from the name so a design and its version read as
    two facts, not one long string. */
 .picker-opt-badge {
   margin-left: 6px;

@@ -5,13 +5,13 @@ the env consumes:
 
 * :func:`build_scenario` - a :class:`~bluesky_sandbox.sim.sampling.Scenario` over the
   airspace / spawn / queryables. Because the spawn config carries its own
-  distributions (counts, params), per-episode randomisation happens inside
+  distributions (counts, params), per-episode randomization happens inside
   ``SpawnConfig.iter_spawns`` at reset time, so ``sample()`` and ``support()``
   return the same schema-stable :class:`EpisodeSpec`.
 * :func:`build_design_config` - a static :class:`~bluesky_sandbox.config.EnvConfig`,
   resolving field references against the field modules.
 
-The split mirrors the design seam: structured data is materialised via
+The split mirrors the design seam: structured data is materialized via
 :func:`~bluesky_sandbox.ui.designer.spec.load`; logic is resolved by import.
 """
 
@@ -103,7 +103,7 @@ def resolve_callable(ref: str) -> Callable[..., Any]:
     """Import a ``"package.module:attr"`` reference and return the attribute.
 
     This is how the spec points at code-tab logic (reward / termination /
-    truncation functions and task-info providers) without serialising it.
+    truncation functions and task-info providers) without serializing it.
     """
     if not isinstance(ref, str) or ":" not in ref:
         raise BuildError(
@@ -465,7 +465,7 @@ def _move_waypoint_sampling_to_routes(
     return out
 
 
-def _materialise(
+def _materialize(
     spec: DesignSpec,
 ) -> tuple[Bounds | None, dict[str, Queryable], SpawnConfig]:
     airspace_d, queryables_d, spawn_d = _resolved_geometry(spec)
@@ -630,7 +630,7 @@ def _make_episode_geometry_fn(
     """Per-episode geometry rebuild for sampled region params.
 
     Draws every sampled param, substitutes the values into a copy of the spec,
-    and re-materialises the resolved geometry - so every element referencing a
+    and re-materializes the resolved geometry - so every element referencing a
     sampled region (spawn bounds, route sample steps, sampled waypoints, the
     airspace) picks up the episode's shape through the normal ref resolution.
     ``region_sink`` is refreshed with the drawn named-region bounds each
@@ -643,7 +643,7 @@ def _make_episode_geometry_fn(
             fp = sub.regions[region]["footprint"]
             for path, value in params.items():
                 _spec.set_footprint_param(fp, path, _t.sample_scalar(value, rng))
-        airspace, queryables, spawn = _materialise(sub)
+        airspace, queryables, spawn = _materialize(sub)
         region_sink.clear()
         region_sink.update(_load_named_regions(sub))
         return {
@@ -823,13 +823,13 @@ def build_scenario(spec: DesignSpec) -> DesignScenario:
         support_spec = (
             _support_substituted_spec(spec, region_dists) if region_dists else spec
         )
-        airspace, queryables, spawn = _materialise(support_spec)
+        airspace, queryables, spawn = _materialize(support_spec)
         sampled_waypoints = _sampled_waypoint_regions(support_spec)
         episode_geometry_fn = _make_episode_geometry_fn(
             spec, region_dists, region_sink
         )
     else:
-        airspace, queryables, spawn = _materialise(spec)
+        airspace, queryables, spawn = _materialize(spec)
         sampled_waypoints = _sampled_waypoint_regions(spec)
         episode_geometry_fn = None
     # Chain the design's own hook after the structured rebuild, exactly as

@@ -36,7 +36,7 @@ function connectorLayers(
       let firsts = rps.map((rp) => rp.points[0]);
       // Fallback for a single-waypoint route (no polyline): use its one waypoint.
       if (!firsts.length && routeWaypoints[0] && wpPos.has(routeWaypoints[0])) firsts = [wpPos.get(routeWaypoints[0])!];
-      // Match the route's polyline colour.
+      // Match the route's polyline color.
       const c = rps[0]?.color ?? [120, 235, 150, 255];
       if (firsts.length) {
         layers.push(
@@ -167,17 +167,17 @@ export default function RouteMap({
   // Re-fetch the preview when the spec changes; redraw when ready/highlight change.
   useEffect(() => {
     if (!ready || !spec) return;
-    let cancelled = false;
+    let canceled = false;
     api
       .preview(spec, 0)
       .then((preview: PreviewResult) => {
-        if (cancelled) return;
+        if (canceled) return;
         previewRef.current = preview;
         refresh();
       })
       .catch(() => {});
     return () => {
-      cancelled = true;
+      canceled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec, ready]);

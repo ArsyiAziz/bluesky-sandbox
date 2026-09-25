@@ -2,7 +2,7 @@
 
 BADA (EUROCONTROL's Base of Aircraft Data) is licensed and cannot be
 redistributed, so it ships with neither this package nor BlueSky - BlueSky
-carries only an empty folder and a README. A user with a licence installs their
+carries only an empty folder and a README. A user with a license installs their
 own copy.
 
 Where it goes matters once this is a pip-installed package. BlueSky searches
@@ -159,7 +159,7 @@ def bada_aircraft_types() -> frozenset[str]:
 def bada_coefficients(actype: str):
     """BADA's ``ACData`` for ``actype``, or ``None`` if the tables lack it.
 
-    The raw record; :mod:`.models` turns it into normalised limits.
+    The raw record; :mod:`.models` turns it into normalized limits.
     """
     try:
         load_perf_bada()  # registers the user resource root

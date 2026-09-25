@@ -250,7 +250,7 @@ class WorldView(Panda3DView):
                 label.hide()
 
     def draw_polyline(self, driver: Panda3DSimDriver, polyline: Polyline) -> None:
-        """Open chain at ground level in the polyline's colour."""
+        """Open chain at ground level in the polyline's color."""
         if self._static is None:
             return
         if len(polyline.points) < 2:
@@ -314,7 +314,7 @@ class WorldView(Panda3DView):
     def _project(
         self, lat_deg: float, lon_deg: float, alt_m: float
     ) -> tuple[float, float, float]:
-        """Project geodetic ``(lat, lon, alt_m)`` into local-ENU metres."""
+        """Project geodetic ``(lat, lon, alt_m)`` into local-ENU meters."""
         east_m = (lon_deg - self._lon0) * self._cos_lat0 * M_PER_DEG
         north_m = (lat_deg - self._lat0) * M_PER_DEG
         return east_m, north_m, alt_m
@@ -670,8 +670,8 @@ class WorldView(Panda3DView):
         self._draw_selected_route(driver)
 
         # Sync the cached trail NodePaths exactly once per frame.
-        # Cache key is just length - each point's colour is baked at
-        # append time on the driver, so old segments never re-colour
+        # Cache key is just length - each point's color is baked at
+        # append time on the driver, so old segments never re-color
         # and we only rebuild when new points arrive.
         self._sync_trails(driver)
 
@@ -692,7 +692,7 @@ class WorldView(Panda3DView):
         re-walked every vertex through Python ``_project`` / ``LineSegs``
         calls plus a fresh GPU upload.  Summed over an episode that is
         O(T^2) per aircraft, and the work was pure waste - ``_project``
-        yields camera-independent local-ENU metres, so a vertex's position
+        yields camera-independent local-ENU meters, so a vertex's position
         never changes once appended.
 
         Now each aircraft's trail is chunked (:class:`_TrailGeometry`):
@@ -726,14 +726,14 @@ class WorldView(Panda3DView):
         self,
         points: list[tuple[float, float, float, str]],
     ) -> NodePath:
-        """Build a trail's multi-colour polyline NodePath.
+        """Build a trail's multi-color polyline NodePath.
 
         Each ``(lat, lon, alt_ft, color_key)`` carries the state the
         aircraft was *in* when it flew that segment, so the trail
         renders normal/conflict/LoS regions in their respective
-        palette colours.  Adjacent vertices with different keys share
+        palette colors.  Adjacent vertices with different keys share
         a single LineSegs primitive - Panda3D interpolates the
-        per-vertex colour along the segment, giving a soft transition
+        per-vertex color along the segment, giving a soft transition
         across exactly the one segment that spans the state change.
         """
         from panda3d.core import LineSegs, TransparencyAttrib, Vec4
@@ -756,12 +756,12 @@ class WorldView(Panda3DView):
 
     @staticmethod
     def _trail_palette(key: str) -> tuple[float, float, float]:
-        """Resolve a trail point's colour key against the world palette.
+        """Resolve a trail point's color key against the world palette.
 
         Same vocabulary as :meth:`HumanSimDriver._resolve_trail_color`:
         ``"los"``, ``"conflict"``, ``"violation"``, and ``"normal"``
         map to the state palette. Anything else is treated as a named
-        QueryRegion colour and looked up in :data:`NAMED_COLORS` (with
+        QueryRegion color and looked up in :data:`NAMED_COLORS` (with
         a grey fallback for unknown names so a typo is visible rather
         than crashing the renderer).
         """
@@ -776,7 +776,7 @@ class WorldView(Panda3DView):
         y: float,
         z: float,
     ) -> float:
-        """Half-length of the chevron in metres, scaled to camera distance.
+        """Half-length of the chevron in meters, scaled to camera distance.
 
         Sized to match :attr:`HorizontalView._AC_LENGTH_PX` (14 px
         tip-to-tail) so the panda3d chevron reads at the same on-screen
@@ -813,7 +813,7 @@ class WorldView(Panda3DView):
         lon_deg: float,
         alt_ft: float,
     ) -> tuple[float, float, float] | None:
-        """Colour of the first :class:`QueryRegion` containing the
+        """Color of the first :class:`QueryRegion` containing the
         aircraft, or ``None`` if it lies outside every region."""
         if driver._env is None:
             return None
@@ -836,7 +836,7 @@ class WorldView(Panda3DView):
         rgba: tuple[float, float, float, float],
         acid: str,
     ) -> None:
-        """3D chevron prism centred on the aircraft's altitude.
+        """3D chevron prism centered on the aircraft's altitude.
 
         Eight vertices form a thin extrusion of pygame's 4-point
         chevron silhouette.  A bright wireframe traces every edge of
@@ -945,22 +945,22 @@ class WorldView(Panda3DView):
         """Volumetric cylinder marking the RPZ x HPZ envelope.
 
         Top + bottom rings at ``z +/- hpz`` plus 8 vertical struts so the
-        cylinder reads as a volume.  Colour & weight escalate with
+        cylinder reads as a volume.  Color & weight escalate with
         separation state - a LoS cylinder is unmistakable.
         """
         from panda3d.core import LineSegs, Vec4
 
         if state == "los":
-            colour = (1.00, 0.20, 0.30, 0.95)
+            color = (1.00, 0.20, 0.30, 0.95)
             thickness = 2.5
         elif state == "conflict":
-            colour = (1.00, 0.60, 0.10, 0.85)
+            color = (1.00, 0.60, 0.10, 0.85)
             thickness = 2.0
         elif state == "violation":
-            colour = (*STATE_COLORS["violation"], 0.85)
+            color = (*STATE_COLORS["violation"], 0.85)
             thickness = 2.0
         else:
-            colour = (*base_rgb, 0.45)
+            color = (*base_rgb, 0.45)
             thickness = 1.0
 
         z_lo = z - hpz_m
@@ -975,7 +975,7 @@ class WorldView(Panda3DView):
         ]
 
         ls = LineSegs()
-        ls.setColor(Vec4(*colour))
+        ls.setColor(Vec4(*color))
         ls.setThickness(thickness)
         for ring_z in (z_lo, z_hi):
             for i, (px, py) in enumerate(ring_pts):

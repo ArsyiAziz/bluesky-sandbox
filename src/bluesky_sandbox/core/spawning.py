@@ -1,4 +1,4 @@
-"""Spawning: sampling, clearing and materialising an episode's aircraft.
+"""Spawning: sampling, clearing and materializing an episode's aircraft.
 
 The environment owns the episode; this owns *how aircraft enter it*. Four
 lifecycle calls, all driven from ``reset``/``step``:
@@ -7,7 +7,7 @@ lifecycle calls, all driven from ``reset``/``step``:
   target live count for the episode.
 * :meth:`schedule_episode` - sample the one-shot spawn queue, sorted by
   ``spawn_time``, and snapshot its size for the progress denominator.
-* :meth:`drain` - materialise every queued aircraft whose time has arrived.
+* :meth:`drain` - materialize every queued aircraft whose time has arrived.
 * :meth:`maintain` - top steady-state regions back up to their target.
 
 State split. This class owns the queue, the per-region failure counts and the
@@ -57,7 +57,7 @@ from .state import (
 
 
 class SpawnGenerator:
-    """Sample, clear and materialise the aircraft that enter an episode."""
+    """Sample, clear and materialize the aircraft that enter an episode."""
 
     def __init__(self, env=None) -> None:
         self.env = env
@@ -98,7 +98,7 @@ class SpawnGenerator:
         self._scheduled_count = len(self._queue)
 
     def drain(self, rng: np.random.Generator) -> None:
-        """Materialise every queued aircraft whose ``spawn_time`` has arrived."""
+        """Materialize every queued aircraft whose ``spawn_time`` has arrived."""
         self._drain_spawn_queue(rng)
 
     def maintain(self, rng: np.random.Generator) -> None:
@@ -171,7 +171,7 @@ class SpawnGenerator:
         * ``conflict_free``: the predicted closest approach over
           ``lookahead_s``, so the aircraft is not on course to conflict either.
         * otherwise: the spawn's present position only, which is what a
-          steady-state ``maintain`` top-up needs - materialising on top of live
+          steady-state ``maintain`` top-up needs - materializing on top of live
           traffic is an instant loss of separation the policy could not avoid,
           while a conflict that *develops* later is the task.
 
@@ -215,7 +215,7 @@ class SpawnGenerator:
         known post-creation), so create a short-lived probe aircraft, draw the
         CAS at the spawn altitude, and delete the probe. The returned position
         carries the final speed (``spd_from_envelope`` cleared), so the
-        conflict-free check and the materialised aircraft use the *same* speed -
+        conflict-free check and the materialized aircraft use the *same* speed -
         redrawing it after the check would silently invalidate the clearance.
         """
         if not pos.spd_from_envelope:
@@ -245,7 +245,7 @@ class SpawnGenerator:
         """Resample a queued spawn until its state is clear.
 
         Resolves and pins the spawn speed (envelope draw) and heading before
-        each check, so the materialised aircraft flies exactly the state that
+        each check, so the materialized aircraft flies exactly the state that
         was cleared. Returns ``None`` when no clear candidate is found within
         ``SpawnConfig.spawn_max_tries`` - the caller defers the spawn instead of
         creating an aircraft in (predicted) conflict.
@@ -509,7 +509,7 @@ class SpawnGenerator:
             item.position.spd_kts,
         )
         if item.position.spd_from_envelope:
-            # The provisional create initialised the performance model, so
+            # The provisional create initialized the performance model, so
             # vmin is now known; draw a feasible CAS at the spawn altitude
             # and recreate so the initial speed is set consistently by cre.
             acidx = self.env._runtime.index(callsign)
@@ -554,7 +554,7 @@ class SpawnGenerator:
         ):
             state = AircraftControlState.BACKGROUND
         self.env.set_aircraft_control_state(callsign, state)
-        # Use the actual materialisation time (``bs.sim.simt``) rather than the
+        # Use the actual materialization time (``bs.sim.simt``) rather than the
         # scheduled ``spawn_time`` so ``time_in_env`` measures real simulator
         # presence - not the gap between schedule and the draining step.
         self.env._aircraft_spawn_time[callsign] = self.env._runtime.sim_time
@@ -601,7 +601,7 @@ class SpawnGenerator:
         }
 
     def _drain_spawn_queue(self, rng: np.random.Generator) -> None:
-        """Materialise every queued aircraft whose ``spawn_time`` has arrived.
+        """Materialize every queued aircraft whose ``spawn_time`` has arrived.
 
         A conflict-free item with no clear candidate state is *deferred* (its
         ``spawn_time`` pushed one env step) rather than spawned in conflict -
@@ -647,7 +647,7 @@ class SpawnGenerator:
         """Top up each steady-state region to its target live count.
 
         Called after spawns/deletions each step (and at reset): counts live
-        aircraft per maintain region and materialises separation-guarded
+        aircraft per maintain region and materializes separation-guarded
         replacements until the target is met. A region that can't place a
         clear spawn this step simply retries next step.
         """

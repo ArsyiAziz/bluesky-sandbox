@@ -87,7 +87,7 @@ def test_every_creation_is_logged_until_bluesky_resets(env):
 
 
 def test_closing_an_env_detaches_its_tracker():
-    # Make sure BlueSky is initialised before taking stock of its children.
+    # Make sure BlueSky is initialized before taking stock of its children.
     BlueskyEnv(
         scenario=_Scenario(), config=EnvConfig(dt=12.0, obs_fields=[], action_fields=[])
     ).close()

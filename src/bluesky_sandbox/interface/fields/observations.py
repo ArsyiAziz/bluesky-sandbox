@@ -762,7 +762,7 @@ class _UnitField(_BroadcastObs, ObsField):
         return self._convert(self._si_expected(idx))
 
 
-class _InMetres:
+class _InMeters:
     _scale: ClassVar[float] = 1.0
 
 
@@ -770,7 +770,7 @@ class _InFeet:
     _scale: ClassVar[float] = _M_TO_FT
 
 
-class _InMetresPerSecond:
+class _InMetersPerSecond:
     _scale: ClassVar[float] = 1.0
 
 
@@ -983,8 +983,8 @@ class AltFt(_InFeet, _Altitude):
 
 
 @dataclass(frozen=True)
-class AltM(_InMetres, _Altitude):
-    """Aircraft altitude in metres.
+class AltM(_InMeters, _Altitude):
+    """Aircraft altitude in meters.
 
     Metadata:
         name: alt_m
@@ -1017,7 +1017,7 @@ class CasKts(_InKnots, _Cas):
 
 
 @dataclass(frozen=True)
-class CasMs(_InMetresPerSecond, _Cas):
+class CasMs(_InMetersPerSecond, _Cas):
     """Calibrated airspeed in m/s.
 
     Metadata:
@@ -1048,7 +1048,7 @@ class TasKts(_InKnots, _Tas):
 
 
 @dataclass(frozen=True)
-class TasMs(_InMetresPerSecond, _Tas):
+class TasMs(_InMetersPerSecond, _Tas):
     """True airspeed in m/s.
 
     Metadata:
@@ -1081,7 +1081,7 @@ class VsFtMin(_InFeetPerMinute, _VerticalSpeed):
 
 
 @dataclass(frozen=True)
-class VsMs(_InMetresPerSecond, _VerticalSpeed):
+class VsMs(_InMetersPerSecond, _VerticalSpeed):
     """Vertical speed in m/s.
 
     Metadata:
@@ -1884,7 +1884,7 @@ class GsKts(_InKnots, _Gs):
 
 
 @dataclass(frozen=True)
-class GsMs(_InMetresPerSecond, _Gs):
+class GsMs(_InMetersPerSecond, _Gs):
     """Ground speed in m/s.
 
     Metadata:
@@ -1941,7 +1941,7 @@ class ApCasKts(_InKnots, _ApCas):
 
 
 @dataclass(frozen=True)
-class ApCasMs(_InMetresPerSecond, _ApCas):
+class ApCasMs(_InMetersPerSecond, _ApCas):
     """Autopilot selected calibrated airspeed in m/s.
 
     Metadata:
@@ -1969,8 +1969,8 @@ class ApAltFt(_InFeet, _ApAltitude):
 
 
 @dataclass(frozen=True)
-class ApAltM(_InMetres, _ApAltitude):
-    """Autopilot selected altitude in metres.
+class ApAltM(_InMeters, _ApAltitude):
+    """Autopilot selected altitude in meters.
 
     Metadata:
         name: ap_alt_m
@@ -2046,8 +2046,8 @@ class ApAltErrorFt(_InFeet, _ApAltitudeError):
 
 
 @dataclass(frozen=True)
-class ApAltErrorM(_InMetres, _ApAltitudeError):
-    """Autopilot selected altitude error relative to current altitude in metres."""
+class ApAltErrorM(_InMeters, _ApAltitudeError):
+    """Autopilot selected altitude error relative to current altitude in meters."""
 
     meta = ObsMeta(
         "ap_alt_error_m",
@@ -2591,7 +2591,7 @@ class RelVsFtMin(_BroadcastPairs, PairObsField):
 class HorizontalDistAtCpaNm(_BroadcastPairs, PairObsField):
     """BlueSky ASAS horizontal distance at closest point of approach, in NM.
 
-    Reads the conflict detector's cached ``dcpa`` (metres, one entry per
+    Reads the conflict detector's cached ``dcpa`` (meters, one entry per
     ``confpairs`` row) and converts to nautical miles. ASAS only stores this for
     detected conflict pairs - and a conflict has ``dcpa < rpz`` - so non-conflict
     intruder rows take the high bound (the PZ radius): the smallest miss distance
@@ -2626,7 +2626,7 @@ class HorizontalDistAtCpaNm(_BroadcastPairs, PairObsField):
     ] = None
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        # BlueSky ConflictDetection caches ``dcpa`` (metres, one entry per
+        # BlueSky ConflictDetection caches ``dcpa`` (meters, one entry per
         # ``confpairs`` row) each sim step - read it directly and convert to NM.
         # Non-conflict intruders take the high bound (the PZ radius).
         fill = _per_own(own, lambda o: self.bounds(o)[1])

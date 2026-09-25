@@ -23,16 +23,16 @@ export function ObsSample({ spec, seed }: { spec: SpecDict; seed: number }) {
 
   useEffect(() => {
     if (!armed) return;
-    let cancelled = false;
+    let canceled = false;
     setLoading(true);
     setError("");
     api
       .sample(specRef.current, seed, 3, 25)
-      .then((r) => !cancelled && setResult(r))
-      .catch((e) => !cancelled && setError(String(e?.message ?? e)))
-      .finally(() => !cancelled && setLoading(false));
+      .then((r) => !canceled && setResult(r))
+      .catch((e) => !canceled && setError(String(e?.message ?? e)))
+      .finally(() => !canceled && setLoading(false));
     return () => {
-      cancelled = true; // ignore a stale reseed's result
+      canceled = true; // ignore a stale reseed's result
     };
   }, [seed, armed, nonce]);
 

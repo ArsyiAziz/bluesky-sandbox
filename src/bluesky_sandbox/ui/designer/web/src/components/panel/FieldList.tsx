@@ -1,4 +1,4 @@
-// Observation/action field lists: add/remove/parametrise field refs, edit
+// Observation/action field lists: add/remove/parametrize field refs, edit
 // constructor kwargs + normalization in a modal, and scaffold/edit custom field
 // classes in custom_fields.py.
 import { Fragment, useState } from "react";
@@ -44,7 +44,7 @@ type QueryableFieldSpec = {
   allow_empty_selection?: boolean;
 };
 
-// Add/remove/parametrise field refs ({field, kwargs}). Built-ins come from the
+// Add/remove/parametrize field refs ({field, kwargs}). Built-ins come from the
 // catalog (with docstrings on hover and editable constructor params); custom
 // fields are referenced by import path or scaffolded into custom_fields.py.
 export function FieldList({

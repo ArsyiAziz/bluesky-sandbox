@@ -17,7 +17,7 @@ class TimeControlMixin:
         self._sim_wall_target: float = 0.0
 
     def toggle_pause(self) -> None:
-        """Flip the pause flag. Subclasses' ``step()`` loops honour it."""
+        """Flip the pause flag. Subclasses' ``step()`` loops honor it."""
         self._paused = not self._paused
 
     def toggle_realtime(self) -> None:

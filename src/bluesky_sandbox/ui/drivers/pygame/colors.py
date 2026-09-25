@@ -77,7 +77,7 @@ def dim(
     )
 
 
-# Color names recognised by render primitives -> RGB.  Mirrors the common
+# Color names recognized by render primitives -> RGB.  Mirrors the common
 # BlueSky COLOR command palette so the same color string works in either
 # driver (qtgl maps the name through bs.stack, pygame through this dict).
 NAMED_COLORS: dict[str, tuple[int, int, int]] = {

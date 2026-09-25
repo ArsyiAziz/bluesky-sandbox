@@ -1,20 +1,20 @@
-"""A configurable, randomised :class:`Scenario` over materialised resources.
+"""A configurable, randomized :class:`Scenario` over materialized resources.
 
 :class:`RandomizedScenario` turns a fixed set of runtime resources - an airspace
 :class:`~bluesky_sandbox.sim.bounds.Bounds`, a :class:`~bluesky_sandbox.sim.spawn.SpawnConfig`,
 and a mapping of named :class:`~bluesky_sandbox.sim.queryables.Queryable` - into a
-per-episode sampler with two forms of domain randomisation:
+per-episode sampler with two forms of domain randomization:
 
 * ``sampled_waypoints`` redraws a waypoint's position (lat/lon, and altitude
   from the region band) from a :class:`Bounds` each episode;
 * ``rotation`` rotates the *whole geometry as a group* (airspace + queryables +
   spawn) about a pivot by a sampled angle;
-* ``groups`` generalises ``rotation`` to **several** rotation groups that each
+* ``groups`` generalizes ``rotation`` to **several** rotation groups that each
   rotate a chosen subset of elements, and that **nest**: a group inside another
   is rotated locally first and then carried by its parent's rotation
   ("rotation in rotation"). ``rotation`` is the single-group special case.
 
-``support()`` stays in the canonical (unrotated, region-centre) frame so the
+``support()`` stays in the canonical (unrotated, region-center) frame so the
 observation/action schemas are stable. This lives in the core API (not the
 designer) so generated task packages depend only on the main library.
 """
@@ -67,7 +67,7 @@ def _default_pivot(scenario: RandomizedScenario) -> tuple[float, float]:
 
 @dataclass(frozen=True)
 class RandomizedScenario(Scenario):
-    """Scenario over materialised resources with optional per-episode randomisation."""
+    """Scenario over materialized resources with optional per-episode randomization."""
 
     airspace_bounds: Bounds | None
     spawn: SpawnConfig
@@ -85,7 +85,7 @@ class RandomizedScenario(Scenario):
     # Optional per-episode geometry hook, called with the episode rng at the top
     # of ``sample()``. Returns replacements for any of ``airspace_bounds`` /
     # ``spawn`` / ``queryables`` / ``sampled_waypoints`` (absent keys keep their
-    # static value). This is what makes region *shape* randomisation - sampled
+    # static value). This is what makes region *shape* randomization - sampled
     # footprint parameters - expressible: the hook rebuilds the affected bounds
     # and everything referencing them each episode. The static fields must be
     # constructed to *cover* everything the hook can return (their union
@@ -122,7 +122,7 @@ class RandomizedScenario(Scenario):
             object.__setattr__(self, name, value)
 
     def _sample_queryables(self, rng: np.random.Generator) -> dict[str, Queryable]:
-        """Return queryables with per-episode waypoint randomisation applied."""
+        """Return queryables with per-episode waypoint randomization applied."""
         if not self.sampled_waypoints and not self.waypoint_fields:
             return self.queryables
         out: dict[str, Queryable] = {}

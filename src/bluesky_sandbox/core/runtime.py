@@ -25,7 +25,7 @@ from bluesky_sandbox.sim.weather import WindField
 # reimplement <CMD>" line per command (~60 lines) and keeps the original
 # callback. Constructing a second env in one process is routine (eval alongside
 # train, a measurement script, the designer preview), so remember whether init
-# has run and skip it. Stores the performance model it initialised with, because
+# has run and skip it. Stores the performance model it initialized with, because
 # ``bs.settings.performance_model`` is only read *during* init - a later env
 # asking for a different one would be silently ignored.
 _BLUESKY_PERFORMANCE_MODEL: str | None = None
@@ -90,7 +90,7 @@ class BlueSkyRuntime:
             _BLUESKY_PERFORMANCE_MODEL = requested
         elif requested != _BLUESKY_PERFORMANCE_MODEL:
             raise RuntimeError(
-                f"BlueSky is already initialised with performance model "
+                f"BlueSky is already initialized with performance model "
                 f"{_BLUESKY_PERFORMANCE_MODEL!r}; this env asks for {requested!r}. "
                 "The model is fixed at bs.init and cannot be switched in-process - "
                 "run the two envs in separate processes."
@@ -123,7 +123,7 @@ class BlueSkyRuntime:
             if asas_dt is None:
                 raise RuntimeError(
                     "bs.settings.asas_dt is not registered; BlueSky has not been "
-                    "initialised."
+                    "initialized."
                 )
             validate_asas_dt(
                 asas_dt,
@@ -210,7 +210,7 @@ class BlueSkyRuntime:
         spd_kts: float,
     ) -> None:
         # Public sandbox inputs use aviation units; BlueSky's Traffic API
-        # expects altitude in metres and CAS in metres/second.
+        # expects altitude in meters and CAS in meters/second.
         created = bs.traf.cre(
             callsign,
             actype,

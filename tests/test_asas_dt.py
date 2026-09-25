@@ -57,7 +57,7 @@ def _asas_timer_dt() -> float:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _bluesky_initialised():
+def _bluesky_initialized():
     # The first env in a process runs ``bs.init``, which re-reads settings.cfg
     # over anything a test patched into ``bs.settings``. Get that done first.
     BlueskyEnv(scenario=_Scenario(), config=_config(dt=1.0)).close()

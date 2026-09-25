@@ -1,6 +1,6 @@
-"""Geometric transforms for airspace-configuration randomisation.
+"""Geometric transforms for airspace-configuration randomization.
 
-The designer can randomise the *whole design as a group* per episode - e.g.
+The designer can randomize the *whole design as a group* per episode - e.g.
 rotate the airspace, its queryable regions/waypoints, and its spawn regions
 together about a pivot by an angle drawn from a distribution. This is applied at
 ``Scenario.sample`` time, so each episode sees a transformed copy while the

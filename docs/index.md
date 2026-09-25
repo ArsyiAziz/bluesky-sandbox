@@ -23,7 +23,7 @@ distance-to-merge tracked per callsign.
 
 ## What makes it different
 
-Rather than picking from a fixed catalogue of prebuilt environments, you *design* the task:
+Rather than picking from a fixed catalog of prebuilt environments, you *design* the task:
 the airspace, the spawn regions, the routes, and the observation and action fields your
 agents see. The [Environment Designer](designer.md) allows you to arange these components in your browser and our system will generate a clean Python package for you to use.
 

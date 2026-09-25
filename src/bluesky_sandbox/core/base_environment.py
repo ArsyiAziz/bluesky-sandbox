@@ -158,7 +158,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         * ``"pygame"`` - open a lightweight pygame top-down view in the
           bluesky-gym style.
         * ``"panda3d"`` - open an interactive Panda3D viewer in true-scale
-          metres (orbit camera, click-to-select aircraft).
+          meters (orbit camera, click-to-select aircraft).
         * ``None`` - no rendering (default).
     """
 

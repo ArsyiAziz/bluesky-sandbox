@@ -91,7 +91,7 @@ class VerticalView(PygameView):
             * ``"lon"`` / ``"lat"`` - force a cardinal axis.
             * ``float`` - bearing in degrees (0 = N, CW positive); the
               profile shows altitude vs distance along that bearing
-              through the airspace centre.  E.g. ``axis=240`` aligns the
+              through the airspace center.  E.g. ``axis=240`` aligns the
               profile with EHAM RWY 06's approach axis so a sloped
               corridor reads as a clean tilted band.
             * ``((lat0, lon0), (lat1, lon1))`` - explicit two-point line.
@@ -105,7 +105,7 @@ class VerticalView(PygameView):
         self._axis_min: float = 0.0
         self._axis_max: float = 1.0
         self._axis_origin: tuple[float, float] = (0.0, 0.0)
-        # Anchor for axis-range computation - fixed at airspace centre
+        # Anchor for axis-range computation - fixed at airspace center
         # by `on_reset`, never moved by translate-drag.  Origin can drift
         # away from anchor as the user drags.
         self._axis_anchor: tuple[float, float] = (0.0, 0.0)
@@ -143,7 +143,7 @@ class VerticalView(PygameView):
 
         # User's last translated origin, persisted across resets so a
         # drag-translate "sticks" through env.reset().  ``None`` means
-        # "follow the airspace centre".
+        # "follow the airspace center".
         self._user_origin: tuple[float, float] | None = None
 
         # Drag-rotate state (set by ``hit_test_drag``).
@@ -227,7 +227,7 @@ class VerticalView(PygameView):
         Establishes the *anchor* at ``(center_lat, center_lon)``.  Anchor
         is the reference origin used to compute ``axis_min`` /
         ``axis_max`` from the bbox corners - *never* updated by live
-        translation.  The live :attr:`_axis_origin` is initialised to
+        translation.  The live :attr:`_axis_origin` is initialized to
         the same point; subsequent ``update_origin`` / ``update_bearing``
         calls keep the anchor fixed so a translate genuinely pans the
         profile (and a rotate doesn't reset the user's translation).
@@ -263,7 +263,7 @@ class VerticalView(PygameView):
         else:
             raise ValueError(f"Unsupported axis spec: {spec!r}")
 
-        # Anchor at the airspace centre.  Live origin restores the
+        # Anchor at the airspace center.  Live origin restores the
         # user's last drag-translated value if any, else snaps to anchor.
         # Clamp the persisted user origin to the (possibly different)
         # airspace bbox so it doesn't fall off-panel.
@@ -858,7 +858,7 @@ class VerticalView(PygameView):
             state = driver._aircraft_state(acid)
             # Query-region tint mirrors the plan view - an aircraft
             # actually inside a configured :class:`QueryRegion` (e.g.
-            # the merge cone) picks up that region's colour here, so
+            # the merge cone) picks up that region's color here, so
             # the side view reflects real containment rather than just
             # the axis projection (which can put a plane in a band's
             # x-range without it being inside the polygon laterally).
@@ -890,7 +890,7 @@ class VerticalView(PygameView):
             # Protection zone cross-section: BlueSky's PZ is a vertical
             # cylinder of horizontal radius rpz[i] and vertical half-height
             # hpz[i] (both in m).  Side-view projection is a rectangle
-            # centred on the aircraft - drawn as if the aircraft sits on
+            # centered on the aircraft - drawn as if the aircraft sits on
             # the slice plane (off-axis chord shrinkage is ignored, same
             # simplification the plan view doesn't have to make).
             rpz_m = float(bs.traf.cd.rpz[i])
@@ -952,14 +952,14 @@ class VerticalView(PygameView):
         if driver.font is None:
             return
         l, _, r, b = self._inner_rect()
-        # Tick marks at left / centre / right of the rotate strip, no
-        # numeric labels - the compass on the plan view + the centre
+        # Tick marks at left / center / right of the rotate strip, no
+        # numeric labels - the compass on the plan view + the center
         # hint below already convey orientation; per-tick lat/lon
         # numbers were just visual noise.
         for f in (0.0, 0.5, 1.0):
             x = l + f * max(r - l, 1)
             pygame.draw.line(canvas, C.GRAY, (x, b), (x, b + 3), width=1)
-        # Live bearing readout + drag affordance, centred in the strip.
+        # Live bearing readout + drag affordance, centered in the strip.
         # Plain ASCII so the monospace font always has the glyphs.
         center_x = (l + r) // 2
         hint = f"{int(round(self._axis_bearing_deg)) % 360:03d} DEG"
@@ -1058,7 +1058,7 @@ class VerticalView(PygameView):
         # A full panel-width sweep = 360 deg rotation.  Sign chosen so
         # dragging the bottom of the panel rightward spins the axis CCW
         # (compass arrow on the plan view turns the same way the cursor
-        # moves around the disk centre).
+        # moves around the disk center).
         delta_bearing = -(dx / max(zone.width, 1)) * 360.0
         new_bearing = (self._drag_start_bearing + delta_bearing) % 360.0
         # ``update_bearing`` preserves any translated origin from a

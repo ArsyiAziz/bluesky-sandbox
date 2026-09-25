@@ -2,7 +2,7 @@
 
 ``TrafficMonitor`` rebuilds conflict/LoS partners only when BlueSky's detector
 has run (every ``asas_dt``), and ``QueryStateMonitor`` walks aircraft routes
-only on a substep where some waypoint was reached. Both are optimisations that
+only on a substep where some waypoint was reached. Both are optimizations that
 must not change a single reported value, so each is checked against a reference
 that does the work unconditionally, every substep - the algorithm as it was.
 """

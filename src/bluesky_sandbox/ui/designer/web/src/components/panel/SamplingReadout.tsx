@@ -17,15 +17,15 @@ export function SamplingReadout({
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
+    let canceled = false;
     setLoading(true);
     api
       .preview(spec, seed)
-      .then((p) => !cancelled && (setPreview(p), setError(null)))
-      .catch((e) => !cancelled && setError(String(e)))
-      .finally(() => !cancelled && setLoading(false));
+      .then((p) => !canceled && (setPreview(p), setError(null)))
+      .catch((e) => !canceled && setError(String(e)))
+      .finally(() => !canceled && setLoading(false));
     return () => {
-      cancelled = true;
+      canceled = true;
     };
   }, [spec, seed]);
 

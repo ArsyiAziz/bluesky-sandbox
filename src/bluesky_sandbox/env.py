@@ -32,7 +32,7 @@ from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
 # The runtime's public API, inherited from ``BlueskyBaseEnvironment``. These are
 # not task hooks: the environment calls them on itself, and because the two
 # classes share one MRO a subclass that defines one silently replaces machinery
-# rather than customising behaviour. Derived rather than hard-coded so it cannot
+# rather than customizing behavior. Derived rather than hard-coded so it cannot
 # drift. ``metadata`` is excluded - PettingZoo subclasses are expected to set it.
 _RUNTIME_API: frozenset[str] = frozenset(
     name for name in vars(BlueskyBaseEnvironment) if not name.startswith("_")

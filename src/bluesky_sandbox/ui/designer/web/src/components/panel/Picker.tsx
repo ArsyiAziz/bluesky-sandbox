@@ -12,7 +12,7 @@ import { createPortal } from "react-dom";
 export interface PickerOption {
   value: string;
   label?: string;
-  /** Short qualifier shown beside the label in its own colour - a
+  /** Short qualifier shown beside the label in its own color - a
    *  version, a state, a count. Kept generic: every option list here
    *  uses one Picker, so this is a Picker affordance, not a
    *  version-specific one. */

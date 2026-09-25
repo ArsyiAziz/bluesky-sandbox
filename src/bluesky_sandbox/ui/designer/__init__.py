@@ -2,12 +2,12 @@
 
 A declarative-spec layer over the simulation primitives (``bounds``,
 ``queryables``, ``spawn``, ``distributions``, ``scenarios``) that makes
-environments serialisable, GUI-editable, and round-trippable.
+environments serializable, GUI-editable, and round-trippable.
 
 The design seam follows the primitives themselves:
 
 * **Structured data** - bounds/footprints, queryables, spawn regions, and
-  distributions are plain dataclasses, so they serialise to a ``DesignSpec``
+  distributions are plain dataclasses, so they serialize to a ``DesignSpec``
   (JSON-able dict) and reconstruct exactly. These are edited in the map tab.
 * **Logic** - reward / termination / truncation functions and custom field
   or queryable classes are arbitrary callables. They cannot be values, so the

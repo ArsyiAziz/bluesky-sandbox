@@ -150,7 +150,7 @@ def _make_split(orientation: Orientation, children: list[Node]) -> Node:
         raise ValueError("Empty split.")
     if len(children) == 1:
         return children[0]
-    # Equal initial fractions, normalised by view defaults if all are leaves.
+    # Equal initial fractions, normalized by view defaults if all are leaves.
     fracs = []
     for c in children:
         if isinstance(c, Leaf):
@@ -257,7 +257,7 @@ def remove_leaf(root: Node, leaf: Leaf) -> Node:
         raise ValueError(f"{leaf} not in tree.")
     parent.children.pop(idx)
     parent.fractions.pop(idx)
-    _renormalise(parent)
+    _renormalize(parent)
     return _unwrap(root)
 
 
@@ -296,7 +296,7 @@ def insert_leaf(
             half = share / 2
             parent.fractions[idx] = half
             parent.fractions.insert(idx + 1, half)
-        _renormalise(parent)
+        _renormalize(parent)
         return root
 
     # Wrap target in a new split.  Two children: target_leaf and new_leaf
@@ -314,7 +314,7 @@ def insert_leaf(
     return root
 
 
-def _renormalise(split: Split) -> None:
+def _renormalize(split: Split) -> None:
     """Re-scale a split's fractions to sum to 1 (after a child was added/removed)."""
     s = sum(split.fractions)
     if s <= 0:
@@ -345,7 +345,7 @@ def _unwrap(node: Node) -> Node:
         return new_children[0]
     node.children = new_children
     node.fractions = new_fractions
-    _renormalise(node)
+    _renormalize(node)
     return node
 
 

@@ -77,7 +77,7 @@ class Bounded:
     lo, hi:
         Inclusive finite bounds on the sampled value.
     mode:
-        ``"truncate"`` (default) draws from the distribution *renormalised* onto
+        ``"truncate"`` (default) draws from the distribution *renormalized* onto
         ``[lo, hi]`` via inverse-CDF, so no probability mass piles at the edges.
         ``"clip"`` draws from the base distribution and clamps into range
         (simpler; mass accumulates at the bounds - fine when the cap sits in the

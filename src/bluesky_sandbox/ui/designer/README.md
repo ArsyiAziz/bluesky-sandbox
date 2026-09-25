@@ -23,7 +23,7 @@ DesignSpec (JSON)  ── the single source of truth
 ```
 
 The seam follows the primitives: structured geometry/spawn/queryables/dists are
-serialised and GUI-editable; reward/termination/field logic is referenced by
+serialized and GUI-editable; reward/termination/field logic is referenced by
 import string and edited as code.
 
 ### Backend modules
@@ -68,7 +68,7 @@ validate and preview against the backend live.
     radial / vertex), assignable as the airspace singleton, queryable
     regions/waypoints, or spawn regions. A waypoint can instead **sample its
     position** from a region each episode (toggle "sample position within a
-    region"); its static schema-support position is the region centre, and
+    region"); its static schema-support position is the region center, and
     reseeding the map previews the draws.
   - **Named bounds are the single source of geometry.** Every shape —
     airspace, query-regions, spawn-regions, and waypoint sample areas — is
@@ -121,7 +121,7 @@ validate and preview against the backend live.
     `hdg_deg` value (fixed / range / scipy), defaulting to the full `0-360` range
     (i.e. uniform, as before). Ranges **wrap through north** (e.g. `350-10` is a
     20° arc). **Selecting a spawn region on the map** draws a green **pie wedge**
-    out of its centre spanning that heading range (a full disk when `0-360`),
+    out of its center spanning that heading range (a full disk when `0-360`),
     with a mean-direction arrow, so you can see which way aircraft launch.
   - **Sampled values (any distribution)** — every sampled scalar (spawn count /
     speed / `spawn_time`, each rotation-group angle, and each **waypoint
@@ -141,7 +141,7 @@ validate and preview against the backend live.
     hard-coded list); override any by editing just the method body. **reward /
     terminated / truncated are uniform hooks** too — always present (default
     `0.0` / never done), edited in the same panel; there is no separate `task.py`
-    or config reward function. Only customised hooks are emitted in the generated
+    or config reward function. Only customized hooks are emitted in the generated
     `env.py` — the rest inherit the base, so there's no `super()` boilerplate.
     Old designs (reward in `task.py`) migrate into hooks automatically on load.
     The override picker is **grouped by category** (task outcome / definitions /
@@ -170,12 +170,12 @@ validate and preview against the backend live.
     static marker** (it would be misleading) — only its sample region and the
     per-aircraft rings. Discrete "random one of N" assignment is just
     per-aircraft route sampling (a categorical over single-waypoint routes).
-  - **Field parametrisation** — edit any built-in field's constructor kwargs
+  - **Field parametrization** — edit any built-in field's constructor kwargs
     (e.g. `low`/`high`) inline; hover a field for its docstring.
   - **Randomization** — per-episode **rotation groups**. A group's members are
     **bounds** (named regions): rotating a bounds rotates every element (airspace
     / queryable / spawn region) that references it, by an angle sampled from a
-    range about the members' centre. Groups **nest**: put one group *inside*
+    range about the members' center. Groups **nest**: put one group *inside*
     another and its bounds are spun locally first, then carried by the parent's
     rotation ("rotation in rotation", cycle-guarded). The legacy whole-airspace
     rotation migrates into a single all-bounds group on load. Reseed on the map

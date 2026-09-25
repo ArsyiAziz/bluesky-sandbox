@@ -771,25 +771,25 @@ export default function CodeTab({
       latestCompletionContext = null;
       return;
     }
-    let cancelled = false;
+    let canceled = false;
     const handle = setTimeout(() => {
       api
         .completions(spec)
         .then((ctx) => {
-          if (!cancelled) {
+          if (!canceled) {
             latestCompletionContext = ctx;
             semanticTokensDidChange?.fire?.();
           }
         })
         .catch((error) => {
-          if (!cancelled) {
+          if (!canceled) {
             latestCompletionContext = { ok: false, error: String(error) };
             semanticTokensDidChange?.fire?.();
           }
         });
     }, 250);
     return () => {
-      cancelled = true;
+      canceled = true;
       clearTimeout(handle);
     };
   }, [spec]);
@@ -801,7 +801,7 @@ export default function CodeTab({
   const taskInfo: TaskInfoEntry[] = spec?.env?.task_info ?? [];
   const externalTaskInfoProviders: string[] = spec?.env?.task_info_providers ?? [];
   // reward/terminated/truncated always exist (default hooks); shown first and
-  // not deletable. Other customised hooks follow and can be removed.
+  // not deletable. Other customized hooks follow and can be removed.
   const DEFAULT_HOOKS = ["reward", "terminated", "truncated"];
   const DEFAULT_BODIES: Record<string, string> = {
     reward: "return 0.0",

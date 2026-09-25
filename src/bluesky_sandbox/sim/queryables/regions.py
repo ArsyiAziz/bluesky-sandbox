@@ -103,7 +103,7 @@ class QueryRegion:
     bounds:
         The spatial (and optional altitude) region to test.
     color:
-        Display color name recognised by drivers (e.g. ``"orange"``,
+        Display color name recognized by drivers (e.g. ``"orange"``,
         ``"cyan"``, ``"#FF8800"``).  Defaults to ``"orange"``.
     render_shape:
         Whether the region polygon is drawn on the map.  ``True`` by

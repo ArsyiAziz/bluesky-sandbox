@@ -107,7 +107,7 @@ def _run_decimatable(
     deviation sits in the middle of a run, while the most recent point is by
     construction adjacent to ``new`` and so always hugs the chord's end.
 
-    Never across a colour-key change: that boundary is the state transition
+    Never across a color-key change: that boundary is the state transition
     the trail exists to show, so its vertex survives even a perfectly straight
     run.  ``dropped`` is uniform in key by induction - a point only ever
     entered it through this test.
@@ -252,7 +252,7 @@ class TrailMixin:
         lon_deg: float,
         alt_ft: float,
     ) -> str:
-        """Return a colour key describing this trail point's state."""
+        """Return a color key describing this trail point's state."""
         state = self._aircraft_state(acid)
         if state in ("los", "conflict", "violation"):
             return state

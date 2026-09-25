@@ -1,5 +1,5 @@
 """Sampling primitives: the distribution protocols and scalar draws that
-domain randomisation is built from.
+domain randomization is built from.
 
 Layer-0 by design - spawn regions, scenarios and the designer all draw from
 here, so nothing in this package may import them back.

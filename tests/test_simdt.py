@@ -37,7 +37,7 @@ def _config(**kwargs) -> EnvConfig:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _bluesky_initialised():
+def _bluesky_initialized():
     # ``bs.init`` re-reads settings.cfg over anything a test patched into
     # ``bs.settings``, so have it run before any test patches.
     BlueskyEnv(scenario=_EmptyScenario(), config=_config(dt=1.0)).close()
@@ -79,7 +79,7 @@ def test_running_an_env_leaves_blueskys_setting_alone():
     assert _config(dt=1.0).simdt == float(before)
 
 
-def test_settings_cfg_is_never_reread_after_bluesky_is_initialised(monkeypatch):
+def test_settings_cfg_is_never_reread_after_bluesky_is_initialized(monkeypatch):
     # Re-reading the file after bs.init would put its values back over settings
     # changed at runtime. Force the "not yet read" state to reach the guard.
     monkeypatch.setattr(config_module, "_SETTINGS_CFG_READ", False)

@@ -31,7 +31,7 @@ import numpy as np
 # Resolution comes in two flavours: :func:`sample_route_path` picks one concrete
 # path (sampling each choice), preserving per-step constraints for the aircraft's
 # ADDWPT commands, and :func:`expand_route_paths` enumerates every distinct path
-# as plain waypoint names for validation and network visualisation.
+# as plain waypoint names for validation and network visualization.
 RouteStep = str | dict
 RouteSpec = list[RouteStep] | tuple[RouteStep, ...]
 _WAYPOINT_STEP_KEYS = (
@@ -288,7 +288,7 @@ def expand_route_paths(
     """Enumerate every distinct concrete path through a (possibly branching) route.
 
     Used for validation (every branch's waypoints must exist) and network
-    visualisation (draw all of a procedure's transitions). Duplicate paths and
+    visualization (draw all of a procedure's transitions). Duplicate paths and
     junction duplicates are collapsed.
     """
     seen: set[tuple[str, ...]] = set()
