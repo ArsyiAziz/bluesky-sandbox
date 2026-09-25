@@ -185,6 +185,14 @@ def _defining_class(cls: type, name: str) -> tuple[type, Any] | None:
     return None
 
 
+def _unit_mixin(cls: type) -> type | None:
+    """The mixin that sets a unit field's SI-to-unit ``_scale``, if any."""
+    for klass in cls.__mro__:
+        if "_scale" in vars(klass) and klass not in _PLUMBING_CLASSES:
+            return klass
+    return None
+
+
 def call_trail(cls: type) -> list[dict[str, Any]]:
     """The functions ``cls``'s value is computed with - see :func:`_call_trail`."""
     return [dict(entry) for entry in _call_trail(cls)]
@@ -273,6 +281,13 @@ def _call_trail(cls: type) -> tuple[dict[str, Any], ...]:
                 owner = method.__qualname__.split(".")[0]
                 add(method, f"{owner}.{method.__name__}", depth)
                 visit(method, QueryBatch, depth + 1)
+
+    # A unit variant reports its SI quantity scaled by its unit mixin - the
+    # mixin is read (``self._scale``), never called, so name it explicitly.
+    unit = _unit_mixin(cls)
+    if unit is not None:
+        seen.add(id(unit))
+        add(unit, unit.__name__, 0)
 
     for name in _ENTRY:
         found = _defining_class(cls, name)

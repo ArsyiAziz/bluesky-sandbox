@@ -99,3 +99,21 @@ def test_the_catalog_ships_the_trail():
     trail = fields["DistToOwnNm"]["profile"]["trail"]
     assert trail[0]["name"] == "_pairs._pair_qdr_dist"
     assert "def _pair_qdr_dist" in trail[0]["source"]
+
+
+@pytest.mark.parametrize(
+    ("cls", "unit"),
+    [
+        (observations.AltFt, "_InFeet"),
+        (observations.AltM, "_InMeters"),
+        (observations.CasKts, "_InKnots"),
+        (observations.VsFtMin, "_InFeetPerMinute"),
+    ],
+    ids=lambda v: v.__name__ if isinstance(v, type) else v,
+)
+def test_a_unit_field_shows_its_conversion_first(cls, unit):
+    # The factor is read, never called: without an explicit entry the trail
+    # would show the SI quantity and hide what unit it is reported in.
+    trail = call_trail(cls)
+    assert trail[0]["name"] == unit
+    assert "_scale" in trail[0]["source"]
