@@ -2557,9 +2557,125 @@ button:disabled {
 }
 
 /* Observation/action sample (Sampling tab) */
-.obs-sample .sample-agent { margin-top: 8px; }
-.obs-sample-scroll { overflow-x: auto; max-width: 100%; }
-.obs-sample .num { text-align: right; font-variant-numeric: tabular-nums; }
+/* The episode's aircraft, in spawn order; the picked one is highlighted. */
+.sampling-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.sampling-seed {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sampling-list {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.sampling-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 64px 52px;
+  gap: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.sampling-row:hover {
+  background: #2a2d2e;
+}
+.sampling-row.on {
+  background: #1d3a5c;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.sampling-row-h {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: default;
+  border-bottom: 1px solid var(--border);
+}
+.sampling-row-h:hover {
+  background: var(--panel);
+}
+.sampling.loading,
+.obs-sample.loading {
+  opacity: 0.6;
+}
+
+/* What the picked aircraft observes. */
+.obs-sample-head {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.obs-sample-row-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.obs-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  column-gap: 12px;
+  row-gap: 2px;
+  font-size: 12px;
+  margin-top: 6px;
+}
+.obs-grid-h {
+  color: var(--muted);
+  font-size: 11px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.obs-grid-name.lag {
+  padding-left: 12px;
+  color: var(--muted);
+}
+.obs-grid-name {
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.obs-grid .num,
+.sampling-row .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A segmented choice: one of a few, side by side. */
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  width: fit-content;
+  max-width: 100%;
+}
+.seg > button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 3px 10px;
+}
+.seg > button + button {
+  border-left: 1px solid var(--border);
+}
+.seg > button.on {
+  background: var(--accent);
+  color: #fff;
+}
 
 .checkbox-row {
   display: flex;
@@ -3060,9 +3176,15 @@ button:disabled {
   cursor: crosshair;
 }
 
-.mdp-plot figcaption {
+.mdp-readout {
   min-height: 16px;
-  padding-left: 44px;
+  padding-left: 52px;
+}
+
+.mdp-plot figcaption {
+  max-width: 420px;
+  padding-left: 52px;
+  margin-top: 2px;
 }
 
 .mdp-axis {

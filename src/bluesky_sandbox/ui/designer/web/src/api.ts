@@ -99,18 +99,33 @@ export interface GenerateResult {
   files: Record<string, string>;
 }
 
+
+// A field in a sampled observation: its raw value (per intruder row in an
+// intruder part), the columns the policy sees, and its range for this aircraft.
+export interface SampleField {
+  name: string;
+  unit: string;
+  // Steps back, for a lag of the field before it.
+  lag: number | null;
+  raw: any;
+  obs: any;
+  low: number | null;
+  high: number | null;
+}
+
 export interface SampleAgent {
   acid: string;
-  ownship: { name: string; value: number }[];
-  intruder_fields: string[];
-  intruders: number[][];
-  n_intruders: number;
-  action: { name: string; value: number }[];
+  type: string;
+  parts: Record<string, { fields: SampleField[]; acids?: string[] }>;
+  action: { name: string; value: number[] }[];
 }
 
 export interface SampleResult {
   seed: number;
+  sim_time_s: number;
   agents: SampleAgent[];
+  // Every aircraft up at that time: [acid, type, low, high] by part and field.
+  ranges: Record<string, Record<string, [string, string, number | null, number | null][]>>;
 }
 
 export interface RunResult {
@@ -221,11 +236,11 @@ export const api = {
       }),
     }).then((r) => jsonOrThrow<RunResult>(r)),
 
-  sample: (spec: SpecDict, seed = 0, maxAgents = 3, maxIntruders = 25) =>
+  sample: (spec: SpecDict, seed = 0, atS = 0, type: string | null = null, maxAgents = 3, maxIntruders = 25) =>
     fetch("/api/spec/sample", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spec, seed, max_agents: maxAgents, max_intruders: maxIntruders }),
+      body: JSON.stringify({ spec, seed, at_s: atS, type, max_agents: maxAgents, max_intruders: maxIntruders }),
     }).then((r) => jsonOrThrow<SampleResult>(r)),
 
   runStatus: () => fetch("/api/spec/run/status").then((r) => jsonOrThrow<RunStatus>(r)),

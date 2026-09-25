@@ -12,6 +12,7 @@ import { setColorPalette } from "../map/geometry";
 import { BASEMAPS, DEFAULT_BASEMAP, basemapById, type BasemapId } from "../map/basemaps";
 import { defaultWaypoint, gcOrphanBounds, placementAltitudeRange } from "../specHelpers";
 import { useRefresh } from "../refresh";
+import { useEpisode } from "../episode";
 
 type DragState = import("../map/types").DragState;
 
@@ -126,7 +127,7 @@ export default function MapTab({
   const selectedTargetRef = useRef<EditTarget | null>(null);
   const [handleTick, setHandleTick] = useState(0);
   const [ready, setReady] = useState(false);
-  const [seed, setSeed] = useState(0);
+  const { seed, setSeed } = useEpisode();
   const [viewCenter, setViewCenter] = useState<[number, number]>([52.0, 4.75]);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string>("");

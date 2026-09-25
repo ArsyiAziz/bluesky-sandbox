@@ -318,20 +318,24 @@ def create_app() -> FastAPI:
 
     @app.post("/api/spec/sample")
     def sample_obs(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        """Build the env, reset, and return labeled observations + a sampled
-        action for a few agents - so you can inspect the exact obs layout
-        (field order, normalization) the policy receives.
+        """What the newest aircraft observe at ``at_s`` into the seeded
+        episode, raw and normalized, with each field's range - see
+        :func:`runner.sample_design`.
         """
         spec = _parse_spec(body.get("spec", body))
         seed = int(body.get("seed", 0))
         max_agents = int(body.get("max_agents", 3))
         max_intruders = int(body.get("max_intruders", 25))
+        at_s = float(body.get("at_s", 0.0))
+        actype = body.get("type") or None
         try:
             return _runner.sample_design(
                 spec,
                 seed=seed,
                 max_agents=max_agents,
                 max_intruders=max_intruders,
+                at_s=at_s,
+                actype=actype,
             )
         except (BuildError, ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=str(e)) from e

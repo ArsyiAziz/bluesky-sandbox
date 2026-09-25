@@ -76,11 +76,11 @@ export default function DesignPanel({
 
       {tab === "sampling" && (
         <>
-          <Section title="Sampling" subtitle="a drawn episode" hint="One episode drawn with the seed below - the concrete geometry, spawns and routes the design produces. Change the seed to see how much the design varies.">
+          <Section title="Episode" subtitle="drawn with the map's seed" hint="One episode drawn with the seed - the aircraft the design spawns, in spawn order. Reseed to see how much the design varies; pick an aircraft to see what it observes.">
             <SamplingReadout spec={spec} seed={seed} onSeedChange={onSeedChange} />
           </Section>
-          <Section title="Observations" subtitle="what the policy sees" hint="The observation vector for a sampled agent, field by field, with the values it would actually receive. Use it to check normalization and ordering.">
-            <ObsSample spec={spec} seed={seed} />
+          <Section title="Observation" subtitle="the picked aircraft, as it spawns" hint="The environment is run to the picked aircraft's spawn: each field's raw value and what the policy sees. Hover a field for its range for this aircraft.">
+            <ObsSample spec={spec} />
           </Section>
         </>
       )}

@@ -262,65 +262,140 @@ _SAMPLE_TEMPLATE = '''\
 from __future__ import annotations
 
 import json
+import math
+
+import bluesky as bs
 import numpy as np
 
-from bluesky_sandbox import flatten_action, observation_layout
-from bluesky_sandbox.core.layout import slots
+from bluesky_sandbox import flatten_action, observation_layout, zero_action
+from bluesky_sandbox.core.layout import observation_parts, slots
+from bluesky_sandbox.interface.fields.observations import LaggedObs, LaggedPair
 from {pkg} import Env
 
 SEED = {seed!r}
 MAX_AGENTS = {max_agents!r}
 MAX_INTRUDERS = {max_intruders!r}
+AT_S = {at_s!r}
+TYPE = {actype!r}
 MARKER = {marker!r}
+#: Steps to wait for the first aircraft, for designs that spawn them over time.
+MAX_WAIT_STEPS = 2000
 
 
-def _labels(part) -> list[str]:
-    """One label per column: the field's name, indexed where it spans several."""
-    out: list[str] = []
-    for slot in part:
-        if slot.width == 1:
-            out.append(slot.name)
-        else:
-            out.extend(f"{{slot.name}}[{{i}}]" for i in range(slot.width))
-    return out
+def _plain(value):
+    """A JSON value: arrays as lists, and None for what is not a finite number."""
+    if isinstance(value, np.ndarray):
+        return [_plain(v) for v in value.tolist()]
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        value = float(value)
+        return value if math.isfinite(value) else None
+    return str(value)
+
+
+def _bounds(field, idx):
+    """The range ``field`` scales against for aircraft ``idx``."""
+    try:
+        low, high = field.bounds(idx)
+        return _plain(low), _plain(high)
+    except Exception:
+        return None, None
 
 
 def main() -> None:
     env = Env(render_mode=None)
     try:
         obs, _ = env.reset(seed=SEED)
-        cfg = env.unwrapped.config
-        layout = observation_layout(cfg)
-        own_labels = _labels(layout["ownship"])
-        intr_labels = _labels(layout.get("intruders", []))
-        # The sampled action is shown as one vector, its fields in config order.
-        act_labels = _labels(slots(cfg.action_fields))
-        agents = []
-        for acid in list(obs)[:MAX_AGENTS]:
-            o = obs[acid]
-            if isinstance(o, dict):
-                ownship = np.asarray(o["ownship"], dtype=float).reshape(-1).tolist()
-                intr = np.asarray(o.get("intruders", []), dtype=float)
-                intruders = intr.tolist()[:MAX_INTRUDERS] if intr.ndim == 2 else []
+        # Step to AT_S, holding every agent still, and on until an aircraft is
+        # up - traffic that spawns over time has none at reset. With TYPE, on
+        # until one of that type spawns there: a spawn can be deferred a while.
+        steps = 0
+        before = set()
+        focus = None
+        while steps < MAX_WAIT_STEPS:
+            if obs and bs.sim.simt >= AT_S:
+                if TYPE is None:
+                    break
+                new = [a for a in obs if a not in before and bs.traf.type[bs.traf.id2idx(a)] == TYPE]
+                if new:
+                    focus = new[-1]
+                    break
             else:
-                ownship = np.asarray(o, dtype=float).reshape(-1).tolist()
-                intruders = []
-            action = flatten_action(cfg, env.action_space(acid).sample()).tolist()
+                before = set(obs)
+            obs, *_ = env.step({{a: zero_action(env.action_space(a)) for a in env.agents}})
+            steps += 1
+        base = env.unwrapped
+        cfg = base.config
+        parts = observation_parts(cfg)
+        layout = observation_layout(cfg)
+        action_slots = slots(cfg.action_fields)
+        agents = []
+        ranges = {{part: {{}} for part in parts}}
+        ranges["action"] = {{}}
+        # The aircraft asked for first, then the newest.
+        order = list(reversed(list(obs)))
+        if focus in order:
+            order.remove(focus)
+            order.insert(0, focus)
+        for n, acid in enumerate(order):
+            idx = bs.traf.id2idx(acid)
+            actype = str(bs.traf.type[idx])
+            # Every agent's ranges: the spread a per-aircraft range takes.
+            for part, fields in parts.items():
+                for field, slot in zip(fields, layout[part]):
+                    low, high = _bounds(field, idx)
+                    ranges[part].setdefault(slot.name, []).append([acid, actype, low, high])
+            for field, slot in zip(cfg.action_fields, action_slots):
+                low, high = _bounds(field, idx)
+                ranges["action"].setdefault(slot.name, []).append([acid, actype, low, high])
+            if n >= MAX_AGENTS:
+                continue
+            o = obs[acid]
+            raw = base.raw_observation(acid)
+            agent_parts = {{}}
+            for part, fields in parts.items():
+                if not isinstance(o, dict) or part not in o:
+                    continue
+                values = np.asarray(o[part], dtype=float)
+                per_intruder = values.ndim == 2
+                if per_intruder:
+                    values = values[:MAX_INTRUDERS]
+                rows = []
+                for field, slot in zip(fields, layout[part]):
+                    cols = values[..., slot.columns]
+                    value = raw[part].get(slot.name)
+                    if per_intruder and value is not None:
+                        value = np.asarray(value)[:MAX_INTRUDERS]
+                    low, high = _bounds(field, idx)
+                    unit = str(getattr(field.meta, "unit", "") or "")
+                    rows.append({{
+                        "name": slot.name,
+                        "unit": "" if unit == "unitless" else unit,
+                        "lag": int(field.steps) if isinstance(field, (LaggedObs, LaggedPair)) else None,
+                        "raw": _plain(value),
+                        "obs": _plain(cols),
+                        "low": low,
+                        "high": high,
+                    }})
+                entry = {{"fields": rows}}
+                if per_intruder:
+                    entry["acids"] = _plain(np.asarray(raw[part].get("acid", []))[:MAX_INTRUDERS])
+                agent_parts[part] = entry
+            action = flatten_action(cfg, env.action_space(acid).sample())
             agents.append({{
                 "acid": acid,
-                "ownship": [
-                    {{"name": n, "value": v}}
-                    for n, v in zip(own_labels, ownship)
-                ],
-                "intruder_fields": intr_labels,
-                "intruders": intruders,
-                "n_intruders": len(intruders),
+                "type": actype,
+                "parts": agent_parts,
                 "action": [
-                    {{"name": n, "value": v}}
-                    for n, v in zip(act_labels, action)
+                    {{"name": slot.name, "value": _plain(action[slot.columns])}}
+                    for slot in action_slots
                 ],
             }})
-        print(MARKER + json.dumps({{"seed": SEED, "agents": agents}}))
+        out = {{"seed": SEED, "sim_time_s": float(bs.sim.simt), "agents": agents, "ranges": ranges}}
+        print(MARKER + json.dumps(out))
     finally:
         env.close()
 
@@ -336,11 +411,15 @@ def sample_design(
     seed: int = 0,
     max_agents: int = 3,
     max_intruders: int = 25,
-    timeout_s: float = 120.0,
+    at_s: float = 0.0,
+    actype: str | None = None,
+    timeout_s: float = 180.0,
 ) -> dict[str, Any]:
-    """Build the env in a subprocess, reset, and return labeled obs + a sampled
-    action for a few agents - so the designer can inspect the exact observation
-    layout/values (column order, normalization) the policy would receive.
+    """Build the env in a subprocess, reset, step to ``at_s`` (and on until an
+    aircraft is up - with ``actype``, until one of that type spawns), and
+    return what that aircraft and the newest others, ``max_agents`` in all,
+    observe - raw and normalized, with each field's range for that aircraft -
+    and a sampled action; plus every aircraft's ranges and type.
     """
     build_design_config(spec)  # surface a broken design before spawning anything
 
@@ -359,6 +438,8 @@ def sample_design(
                 seed=seed,
                 max_agents=max_agents,
                 max_intruders=max_intruders,
+                at_s=float(at_s),
+                actype=actype,
                 marker=_SAMPLE_MARKER,
             )
         )

@@ -10,6 +10,7 @@ import GenerateModal from "./components/GenerateModal";
 import ConfigTab from "./components/ConfigTab";
 import SpacesTab from "./components/SpacesTab";
 import { RefreshContext } from "./refresh";
+import { EpisodeContext, useEpisodeState } from "./episode";
 import MetadataTab from "./components/MetadataTab";
 import RunModal from "./components/RunModal";
 import { Picker } from "./components/panel/Picker";
@@ -44,6 +45,7 @@ export default function App() {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const episode = useEpisodeState();
   const [refreshing, setRefreshing] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -338,6 +340,7 @@ export default function App() {
 
   return (
     <RefreshContext.Provider value={refreshKey}>
+    <EpisodeContext.Provider value={episode}>
     <div className="app">
       <header className="toolbar">
         <strong className="brand">Environment Designer</strong>
@@ -471,6 +474,7 @@ export default function App() {
       )}
       {runOpen && spec && <RunModal spec={spec} onClose={() => setRunOpen(false)} />}
     </div>
+    </EpisodeContext.Provider>
     </RefreshContext.Provider>
   );
 }
