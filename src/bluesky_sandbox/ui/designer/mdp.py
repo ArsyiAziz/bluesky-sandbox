@@ -1,0 +1,248 @@
+"""A design's MDP at a glance: its spaces, field by field, and each normalizer.
+
+For every column of the observation and the action: the field it belongs to, its
+raw value (unit, range), the normalizer between that and what the policy sees,
+the range it lands in, and the mapping itself sampled as a curve - raw to
+normalized for an observation, the policy's value to the command for an action.
+
+Built from the config and the layouts, like the environment's own spaces.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import inspect
+import math
+from typing import Any
+
+import numpy as np
+
+from bluesky_sandbox.config import EnvConfig
+from bluesky_sandbox.core.layout import action_layout, observation_parts, slots
+from bluesky_sandbox.core.services import _action_parts, _field_normalizer
+from bluesky_sandbox.interface.fields.observations import LaggedObs, LaggedPair
+
+from .builder import build_design_config
+from .catalog import normalizers as normalizer_catalog
+from .spec import DesignSpec
+
+__all__ = ["mdp_summary"]
+
+#: Samples per curve, and how far past the range each end reaches - far enough
+#: to show a clip, near enough to keep the range itself the plot.
+_SAMPLES = 41
+_OVERSHOOT = 0.1
+
+
+def mdp_summary(spec: DesignSpec) -> dict[str, Any]:
+    """The design's MDP, for the designer's summary view."""
+    config = build_design_config(spec)
+    return {
+        "ok": True,
+        # The order normalizers are colored in: the catalog's, so a normalizer
+        # keeps its color whatever the design uses.
+        "normalizers": [n["name"] for n in normalizer_catalog()],
+        "observation": [
+            {
+                "part": part,
+                "rows": "per intruder" if part.endswith("intruders") else "per agent",
+                "width": sum(s.width for s in slots(fields)),
+                "fields": [
+                    _field(f, slot, "observation", fields, slots(fields))
+                    for f, slot in zip(fields, slots(fields))
+                ],
+            }
+            for part, fields in observation_parts(config).items()
+        ],
+        "action": _actions(config),
+    }
+
+
+def _actions(config: EnvConfig) -> dict[str, Any]:
+    parts = _action_parts(config.action_fields)
+    layout = action_layout(config)
+    return {
+        "space": "Box" if set(layout) <= {"continuous"} else "Dict",
+        "parts": [
+            {
+                "part": kind.value,
+                "width": sum(s.width for s in layout[kind.value]),
+                "fields": [
+                    _field(f, slot, "action")
+                    for f, slot in zip(parts[kind], layout[kind.value])
+                ],
+            }
+            for kind in parts
+        ],
+    }
+
+
+def _field(
+    field: Any,
+    slot: Any,
+    role: str,
+    part: list[Any] = (),
+    part_slots: list[Any] = (),
+) -> dict[str, Any]:
+    normalizer = _field_normalizer(field)
+    raw = _raw(field)
+    out = {
+        "name": slot.name,
+        "class": type(field).__name__,
+        "doc": (inspect.getdoc(type(field)) or "").split("\n\n", 1)[0],
+        "columns": [slot.columns.start, slot.columns.stop],
+        "lag": _lag(field, part, part_slots),
+        "raw": raw,
+        "normalizer": None,
+        "output": _output(field, normalizer, raw),
+        "curve": None,
+    }
+    if normalizer is not None:
+        out["normalizer"] = {
+            "name": type(normalizer).__name__,
+            "params": _params(normalizer),
+        }
+        try:
+            out["curve"] = _curve(field, normalizer, raw, role)
+        except Exception as error:  # a mapping it cannot sample is still listed
+            out["curve_note"] = str(error)
+    return out
+
+
+def _raw(field: Any) -> dict[str, Any]:
+    """The field's raw value: its width, unit, and range - or that its range
+    is each aircraft's own, resolved at runtime."""
+    width = field.output_size() if callable(getattr(field, "output_size", None)) else 1
+    unit = str(getattr(field.meta, "unit", "") or "")
+    # Decided from what the fields declare, not by asking for bounds: with
+    # traffic in this process, an aircraft's own range would pass for a fixed one.
+    low = high = None
+    if not _needs_aircraft(field):
+        try:
+            low, high = (_number(v) for v in field.bounds(0))
+        except Exception:
+            pass
+    per_aircraft = low is None or high is None
+    return {
+        "width": width,
+        "unit": "" if unit == "unitless" else unit,
+        "low": low,
+        "high": high,
+        "per_aircraft": per_aircraft,
+    }
+
+
+def _needs_aircraft(field: Any) -> bool:
+    """Whether the field's range is read from each aircraft: not when it fixes
+    both ends; for a field built on others (a lag, a difference), when any of
+    them does; otherwise when its meta says so."""
+    if (
+        getattr(field, "low", None) is not None
+        and getattr(field, "high", None) is not None
+    ):
+        return False
+    wrapped = _wrapped(field)
+    if wrapped:
+        return any(_needs_aircraft(f) for f in wrapped)
+    return bool(getattr(getattr(field, "meta", None), "dynamic_bounds", False))
+
+
+def _wrapped(field: Any) -> list[Any]:
+    """The fields ``field`` is built on."""
+    if not dataclasses.is_dataclass(field):
+        return []
+    values = (getattr(field, f.name, None) for f in dataclasses.fields(field))
+    return [v for v in values if hasattr(v, "bounds") and hasattr(v, "meta")]
+
+
+def _lag(field: Any, part: list[Any], part_slots: list[Any]) -> dict[str, Any] | None:
+    """For a lag: how many steps back, and the name of the field it lags when
+    that field is in the same part."""
+    if not isinstance(field, (LaggedObs, LaggedPair)):
+        return None
+    of = next((s.name for f, s in zip(part, part_slots) if f == field.inner), None)
+    return {"steps": int(field.steps), "of": of, "inner": field.inner.meta.name}
+
+
+def _output(field: Any, normalizer: Any, raw: dict[str, Any]) -> dict[str, Any]:
+    """The range each output column lands in."""
+    if normalizer is None:
+        width = raw["width"]
+        return {"low": [raw["low"]] * width, "high": [raw["high"]] * width}
+    low, high = normalizer.output_bounds(field)
+    return {"low": [_number(v) for v in low], "high": [_number(v) for v in high]}
+
+
+def _curve(
+    field: Any, normalizer: Any, raw: dict[str, Any], role: str
+) -> dict[str, Any]:
+    """The mapping sampled: raw -> normalized for an observation, the policy's
+    value -> the field's value for an action. A field whose range is each
+    aircraft's own is sampled over its position in that range."""
+    unit_axis = raw["per_aircraft"]
+    low, high = (0.0, 1.0) if unit_axis else (raw["low"], raw["high"])
+    field = _Ranged(field, low, high)
+    raw_label = "position in range (low → high)" if unit_axis else "raw"
+    if role == "observation" or normalizer.output_size(field) > 1:
+        # Raw -> what the policy sees. For an action that takes several values
+        # (an angle as sin, cos), this is what the policy gives for a command.
+        xs = _span(low, high)
+        ys = [normalizer.normalize(field, x, 0) for x in xs]
+        series = [list(column) for column in zip(*ys)]
+        x_label = (
+            raw_label
+            if role == "observation"
+            else ("command" if not unit_axis else raw_label)
+        )
+        y_label = "normalized" if role == "observation" else "policy's values"
+    else:
+        # The policy's value -> the command it gives.
+        out_low, out_high = normalizer.output_bounds(field)
+        xs = _span(float(out_low[0]), float(out_high[0]))
+        series = [[float(normalizer.denormalize(field, [x], 0)) for x in xs]]
+        x_label = "policy's value"
+        y_label = raw_label if unit_axis else "command"
+    return {
+        "x": [round(float(x), 6) for x in xs],
+        "series": [[round(float(y), 6) for y in column] for column in series],
+        "x_label": x_label,
+        "y_label": y_label,
+    }
+
+
+class _Ranged:
+    """``field`` with a given range: what a normalizer scales against, and
+    nothing else changed."""
+
+    def __init__(self, field: Any, low: float, high: float) -> None:
+        self._field = field
+        self._range = (low, high)
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return self._range
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._field, name)
+
+
+def _span(low: float, high: float) -> list[float]:
+    reach = (high - low) * _OVERSHOOT
+    return list(np.linspace(low - reach, high + reach, _SAMPLES))
+
+
+def _params(normalizer: Any) -> dict[str, Any]:
+    """The normalizer's constructor arguments, as it holds them."""
+    out = {}
+    for name in inspect.signature(type(normalizer)).parameters:
+        value = getattr(normalizer, name, None)
+        if isinstance(value, (int, float, str, bool)) or value is None:
+            out[name] = value
+        elif isinstance(value, tuple):
+            out[name] = list(value)
+    return out
+
+
+def _number(value: Any) -> float | None:
+    """A JSON number; None for an unbounded end."""
+    value = float(value)
+    return None if math.isinf(value) or math.isnan(value) else value

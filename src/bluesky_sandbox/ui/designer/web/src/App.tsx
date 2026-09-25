@@ -7,11 +7,12 @@ import MapTab from "./components/MapTab";
 import CodeTab from "./components/CodeTab";
 import RouteTab from "./route/RouteTab";
 import GenerateModal from "./components/GenerateModal";
+import MdpTab from "./components/MdpTab";
 import MetadataTab from "./components/MetadataTab";
 import RunModal from "./components/RunModal";
 import { Picker } from "./components/panel/Picker";
 
-type Tab = "map" | "route" | "code" | "metadata";
+type Tab = "map" | "route" | "code" | "metadata" | "mdp";
 
 const normalizeSpec = (spec: SpecDict): SpecDict =>
   migrateRotationGroups(migrateRewardHooks(normalizeToRegions(spec)));
@@ -299,6 +300,9 @@ export default function App() {
           <button className={tab === "metadata" ? "tab active" : "tab"} onClick={() => setTab("metadata")}>
             Metadata
           </button>
+          <button className={tab === "mdp" ? "tab active" : "tab"} onClick={() => setTab("mdp")}>
+            MDP
+          </button>
         </div>
         <div className="undo-redo">
           <button onClick={undo} disabled={!canUndo} title="Undo (⌘/Ctrl+Z)" aria-label="Undo">
@@ -377,6 +381,8 @@ export default function App() {
           <RouteTab spec={spec} onSpecChange={updateSpec} />
         ) : tab === "metadata" ? (
           <MetadataTab spec={spec} onChange={updateSpec} />
+        ) : tab === "mdp" ? (
+          <MdpTab spec={spec} />
         ) : (
           <CodeTab
             spec={spec}

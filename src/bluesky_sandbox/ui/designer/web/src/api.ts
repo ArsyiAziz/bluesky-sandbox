@@ -251,6 +251,13 @@ export const api = {
       jsonOrThrow<{ module: string; members: PythonMember[] }>(r),
     ),
 
+  // The design's MDP: its spaces field by field, and each normalizer's mapping.
+  mdp: (spec: SpecDict) =>
+    fetch("/api/spec/mdp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec }),
+    }).then((r) => jsonOrThrow<any>(r)),
   // Problems in the design's code, by block.
   diagnostics: (spec: SpecDict) =>
     fetch("/api/spec/diagnostics", {

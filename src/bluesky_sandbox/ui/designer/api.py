@@ -44,6 +44,7 @@ from . import spec as _spec
 from .builder import BuildError, build_design_config, build_scenario
 from .code_intel import code_intel
 from .diagnostics import diagnostics
+from .mdp import mdp_summary
 from .preview import airspace_warnings, scenario_preview
 from .spec import DesignSpec, SpecError
 from .store import SpecStore
@@ -237,6 +238,14 @@ def create_app() -> FastAPI:
     def spec_diagnostics(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         spec = _parse_spec(body.get("spec", body))
         return {"ok": True, "problems": diagnostics(spec)}
+
+    @app.post("/api/spec/mdp")
+    def spec_mdp(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        spec = _parse_spec(body.get("spec", body))
+        try:
+            return mdp_summary(spec)
+        except (BuildError, ValueError, TypeError) as e:
+            return {"ok": False, "error": str(e)}
 
     @app.post("/api/spec/preview")
     def preview_spec(body: dict[str, Any] = Body(...)) -> dict[str, Any]:

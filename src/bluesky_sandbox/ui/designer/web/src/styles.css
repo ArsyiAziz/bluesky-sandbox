@@ -5,6 +5,17 @@
   --text: #d4d4d4;
   --muted: #888;
   --accent: #3b82f6;
+  /* Normalizers in the MDP view, in catalog order (validated on --bg). */
+  --norm-1: #3987e5;
+  --norm-2: #d95926;
+  --norm-3: #199e70;
+  --norm-4: #c98500;
+  --norm-5: #d55181;
+  --norm-6: #008300;
+  --norm-7: #9085e9;
+  --norm-8: #e66767;
+  --norm-other: #6b6b6b;
+  --norm-raw: #9a9a9a;
 }
 
 * {
@@ -2655,4 +2666,210 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--muted);
+}
+
+/* MDP tab: each part's columns as a strip, then its fields as a table. */
+.mdp-tab {
+  height: 100%;
+  overflow: auto;
+  padding: 12px 16px 24px;
+  font-size: 12px;
+}
+
+.mdp-tab h3 {
+  margin: 14px 0 4px;
+  font-size: 11px;
+  font-weight: normal;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mdp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.mdp-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+
+.mdp-part {
+  padding: 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mdp-part-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.mdp-part-name {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+
+/* One cell per column; fields apart by a wider gap. */
+.mdp-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+
+.mdp-field {
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.mdp-field > span {
+  width: 11px;
+  height: 14px;
+  border-radius: 1px;
+}
+
+.mdp-field.lit {
+  border-color: var(--text);
+}
+
+.mdp-table {
+  border-collapse: collapse;
+}
+
+.mdp-table th {
+  text-align: left;
+  font-weight: normal;
+  color: var(--muted);
+  padding: 3px 8px;
+}
+
+.mdp-table td {
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+/* The same widths in every part, so the parts' columns line up. */
+.mdp-table th:nth-child(2) {
+  min-width: 420px;
+}
+
+.mdp-table th:nth-child(3) {
+  min-width: 150px;
+}
+
+.mdp-table th:nth-child(4),
+.mdp-table th:nth-child(5) {
+  min-width: 110px;
+}
+
+.mdp-table th + th,
+.mdp-table td + td {
+  padding-left: 20px;
+}
+
+.mdp-row {
+  cursor: pointer;
+}
+
+.mdp-row.lit td,
+.mdp-row.open td {
+  background: #2a2d2e;
+}
+
+.mdp-cols {
+  width: 44px;
+  color: var(--muted);
+  text-align: right;
+  font-family: ui-monospace, monospace;
+}
+
+.mdp-name {
+  font-family: ui-monospace, monospace;
+}
+
+.mdp-lag {
+  padding-left: 12px;
+  color: var(--muted);
+}
+
+.mdp-lag-tag {
+  margin-left: 6px;
+  font-family: inherit;
+}
+
+.mdp-row.lag td {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+.mdp-spark-cell {
+  width: 110px;
+  line-height: 0;
+}
+
+.mdp-open > td {
+  background: #1b1b1b;
+  padding: 10px 8px 12px;
+  white-space: normal;
+}
+
+.mdp-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 40px;
+}
+
+.mdp-detail .summary {
+  max-width: 460px;
+}
+
+.mdp-param {
+  padding-left: 10px;
+}
+
+.mdp-plot {
+  margin: 0;
+}
+
+.mdp-plot svg {
+  display: block;
+  cursor: crosshair;
+}
+
+.mdp-plot figcaption {
+  min-height: 16px;
+  padding-left: 44px;
+}
+
+.mdp-axis {
+  stroke: var(--border);
+}
+
+.mdp-grid {
+  stroke: #2c2c2c;
+}
+
+.mdp-end {
+  stroke: #555;
+  stroke-dasharray: 2 3;
+}
+
+.mdp-cross {
+  stroke: var(--muted);
+}
+
+.mdp-tick {
+  fill: var(--muted);
+  font-size: 10px;
 }
