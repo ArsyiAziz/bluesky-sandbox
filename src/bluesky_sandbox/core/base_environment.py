@@ -21,11 +21,11 @@ from bluesky_sandbox.config import (
     EnvConfig,
     resolve_spawn_aircraft_types,
 )
-from bluesky_sandbox.interface.fields.base import StepContext
-from bluesky_sandbox.interface.fields.observations import (
+from bluesky_sandbox.interface.fields._state import (
     reset_all_field_state,
     set_action_space_bounds,
 )
+from bluesky_sandbox.interface.fields.base import StepContext
 from bluesky_sandbox.interface.task import (
     AgentStepContext,
     BaseAgentInfo,

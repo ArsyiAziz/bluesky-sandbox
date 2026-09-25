@@ -6,16 +6,9 @@ from typing import Annotated, Any, ClassVar
 
 import bluesky as bs
 import numpy as np
-from bluesky.tools.aero import crossoveralt, ft, g0, kts, nm, vcas2tas
-from bluesky.tools.geo import kwikqdrdist, qdrdist
+from bluesky.tools.aero import crossoveralt, g0, nm, vcas2tas
+from bluesky.tools.geo import kwikqdrdist
 
-from bluesky_sandbox.sim.geometry.conflict import (
-    conflict_geometry,
-    predicted_tlos_s,
-    windowed_min_hsep_nm,
-    windowed_min_vsep_ft,
-    windowed_signed_vsep_at_entry_ft,
-)
 from bluesky_sandbox.sim.geometry.conflict import (
     cd_hpz_m as _cd_hpz_m,
 )
@@ -25,6 +18,12 @@ from bluesky_sandbox.sim.geometry.conflict import (
 from bluesky_sandbox.sim.geometry.conflict import (
     cd_rpz_m as _cd_rpz_m,
 )
+from bluesky_sandbox.sim.geometry.conflict import (
+    predicted_tlos_s,
+    windowed_min_hsep_nm,
+    windowed_min_vsep_ft,
+    windowed_signed_vsep_at_entry_ft,
+)
 from bluesky_sandbox.sim.performance.envelope import (
     _warn_type_data_mismatch,
     active_performance_model,
@@ -32,193 +31,47 @@ from bluesky_sandbox.sim.performance.envelope import (
 from bluesky_sandbox.sim.performance.models import type_limits
 from bluesky_sandbox.sim.performance.speeds import crossover_speed_state
 
-from bluesky_sandbox.sim.aircraft_uids import live_aircraft_uids
-
+from . import _state
+from ._common import (
+    _M_TO_FT,
+    _MIN_DYNAMIC_SPAN,
+    _MIN_GS_MS,
+    _MS_TO_FTMIN,
+    _MS_TO_KTS,
+    _indices_array,
+    _signed_angle_delta_deg,
+    _traf_array,
+)
+from ._lag import _lag_ring, _register_lag_depth
+from ._pairs import (
+    _BroadcastPairs,
+    _cd_pair_values,
+    _fix_projection,
+    _GeomPairs,
+    _pair_horizontal_tcpa_s,
+    _pair_qdr_dist,
+    _pair_relative_motion,
+    _per_aircraft,
+    _per_own,
+    _track_frame,
+    _track_frame_at_cpa,
+)
+from ._route import _active_route_waypoint, _route_along_distance_nm
+from ._state import (
+    _LAST_NORM_ACTION,
+    _CommBacked,
+    _LagHistoryBacked,
+    _LastActionBacked,
+    _TimeInEnvBacked,
+    get_comm_message,
+    get_time_in_env,
+)
 from .base import ObsField, ObsMeta, ObsQuantity, PairObsField, Unit
-
-_M_TO_FT = 1.0 / ft
-_MS_TO_KTS = 1.0 / kts
-_MS_TO_FTMIN = 60.0 / ft
-_MIN_DYNAMIC_SPAN = 1e-6
-# Groundspeed floor for an ETE denominator: airborne traffic never reaches it,
-# it only keeps a division finite for a stopped/uninitialised aircraft.
-_MIN_GS_MS = 1e-3
-
-
-def _signed_angle_delta_deg(left: float, right: float) -> float:
-    return (left - right + 540.0) % 360.0 - 180.0
-
-
-def _indices_array(indices: Any) -> np.ndarray:
-    return np.asarray(indices, dtype=np.intp)
-
 
 # Pair helpers take ``own`` and ``other`` INDEX ARRAYS that broadcast against
 # each other: a scalar ownship against a 1-D intruder list (``get_pairs``), or an
 # ``(k, 1)`` column of ownships against a ``(1, n)`` row of every aircraft
 # (``get_pair_matrix``). One computation serves both, so they cannot disagree.
-
-
-def _traf_array(name: str) -> np.ndarray:
-    return np.asarray(getattr(bs.traf, name), dtype=np.float64)
-
-
-def _pair_index_grid(own_indices: Any) -> tuple[np.ndarray, np.ndarray]:
-    """``(k, 1)`` ownships and a ``(1, n)`` row of every live aircraft."""
-    own = _indices_array(own_indices).reshape(-1, 1)
-    every = np.arange(int(bs.traf.ntraf), dtype=np.intp).reshape(1, -1)
-    return own, every
-
-
-def _per_own(own: np.ndarray, value) -> np.ndarray:
-    """``value(own_idx)`` for each ownship, shaped like ``own`` to broadcast."""
-    return np.array(
-        [float(value(int(o))) for o in own.ravel()], dtype=np.float64
-    ).reshape(own.shape)
-
-
-class _BroadcastPairs:
-    """A pair field defined by one broadcasting function, :meth:`_pairs`.
-
-    ``get_pair``, ``get_pairs`` and ``get_pair_matrix`` are all that function
-    evaluated on different index shapes, so they agree by construction.
-    """
-
-    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        raise NotImplementedError
-
-    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return float(self.get_pairs(own_idx, [other_idx])[0])
-
-    def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        return self._pairs(_indices_array(own_idx), _indices_array(other_indices))
-
-    def get_pair_matrix(self, own_indices: Any) -> np.ndarray:
-        own, every = _pair_index_grid(own_indices)
-        return self._pairs(own, every)
-
-
-def _per_aircraft(field: ObsField, idx: np.ndarray) -> np.ndarray:
-    """An ownship field's value at each index of ``idx``, shaped like it."""
-    flat = np.asarray(field.get_many(idx.ravel()), dtype=np.float64)
-    return flat.reshape(idx.shape + flat.shape[1:])
-
-
-# BlueSky's detector keeps one entry per conflict pair (``confpairs``) in each
-# of its arrays. Laid out as an ``n x n`` matrix once per sim time, so every
-# ownship reads its row instead of rescanning the pair list.
-_CD_PAIR_CACHE: dict[str, tuple[tuple, tuple[np.ndarray, np.ndarray]]] = {}
-
-
-def _cd_pair_matrix(attr: str) -> tuple[np.ndarray, np.ndarray] | None:
-    """``(values, present)`` of CD array ``attr`` by ``[own, other]`` index."""
-    cd = getattr(bs.traf, "cd", None)
-    if cd is None or len(cd.confpairs) == 0:
-        return None
-    ids = bs.traf.id
-    key = (float(bs.sim.simt), tuple(ids), id(cd.confpairs), len(cd.confpairs))
-    cached = _CD_PAIR_CACHE.get(attr)
-    if cached is not None and cached[0] == key:
-        return cached[1]
-    n = len(ids)
-    values = np.zeros((n, n), dtype=np.float64)
-    present = np.zeros((n, n), dtype=bool)
-    row = {acid: i for i, acid in enumerate(ids)}
-    source = np.asarray(getattr(cd, attr), dtype=np.float64)
-    for k, (left, right) in enumerate(cd.confpairs):
-        i, j = row.get(left), row.get(right)
-        if i is not None and j is not None and k < source.size:
-            values[i, j] = source[k]
-            present[i, j] = True
-    _CD_PAIR_CACHE[attr] = (key, (values, present))
-    return values, present
-
-
-def _cd_pair_values(
-    attr: str, own: np.ndarray, other: np.ndarray, fill, divisor: float = 1.0
-) -> np.ndarray:
-    """CD array ``attr`` for each (own, other) pair in conflict, else ``fill``."""
-    shape = np.broadcast_shapes(own.shape, other.shape)
-    fill = np.broadcast_to(np.asarray(fill, dtype=np.float64), shape)
-    matrix = _cd_pair_matrix(attr)
-    if matrix is None:
-        return fill.copy()
-    values, present = matrix
-    return np.where(present[own, other], values[own, other] / divisor, fill)
-
-
-class _GeomPairs:
-    """The per-step conflict geometry, sliced by (own, other) index arrays.
-
-    Stands in for :class:`ConflictView` wherever only its raw per-pair arrays
-    are read - the windowed conflict functions are elementwise - but over any
-    broadcastable index shape, so one ownship's row and every ownship's matrix
-    come from the same code.
-    """
-
-    __slots__ = ("_geom", "_other", "_own")
-
-    def __init__(self, own: np.ndarray, other: np.ndarray) -> None:
-        self._geom = conflict_geometry()
-        self._own = own
-        self._other = other
-
-    def __getattr__(self, name: str) -> np.ndarray:
-        return getattr(self._geom, name)[self._own, self._other]
-
-
-def _pair_qdr_dist(own_idx: Any, other_indices: Any) -> tuple[np.ndarray, np.ndarray]:
-    own = _indices_array(own_idx)
-    other = _indices_array(other_indices)
-    lat, lon = _traf_array("lat"), _traf_array("lon")
-    qdr, dist = qdrdist(lat[own], lon[own], lat[other], lon[other])
-    shape = np.broadcast_shapes(own.shape, other.shape)
-    return (
-        np.broadcast_to(np.asarray(qdr, dtype=np.float64), shape),
-        np.broadcast_to(np.asarray(dist, dtype=np.float64), shape),
-    )
-
-
-def _pair_relative_motion(
-    own_idx: Any,
-    other_indices: Any,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return relative position and velocity as east/north arrays in SI units."""
-    qdr, dist_nm = _pair_qdr_dist(own_idx, other_indices)
-    own = _indices_array(own_idx)
-    other = _indices_array(other_indices)
-    qdrrad = np.radians(qdr)
-    dist_m = dist_nm * nm
-    rel_east_m = dist_m * np.sin(qdrrad)
-    rel_north_m = dist_m * np.cos(qdrrad)
-
-    track = np.radians(_traf_array("trk"))
-    gs = _traf_array("gs")
-    own_east_ms = gs[own] * np.sin(track[own])
-    own_north_ms = gs[own] * np.cos(track[own])
-    other_east_ms = gs[other] * np.sin(track[other])
-    other_north_ms = gs[other] * np.cos(track[other])
-
-    return (
-        rel_east_m,
-        rel_north_m,
-        other_east_ms - own_east_ms,
-        other_north_ms - own_north_ms,
-    )
-
-
-def _pair_horizontal_tcpa_s(own_idx: Any, other_indices: Any) -> np.ndarray:
-    rel_east_m, rel_north_m, rel_east_ms, rel_north_ms = _pair_relative_motion(
-        own_idx,
-        other_indices,
-    )
-    rel_speed2 = np.maximum(
-        rel_east_ms * rel_east_ms + rel_north_ms * rel_north_ms,
-        1e-6,
-    )
-    return -(
-        rel_east_m * rel_east_ms + rel_north_m * rel_north_ms
-    ) / rel_speed2
 
 
 def _scalar_value(value: Any) -> Any:
@@ -357,108 +210,6 @@ class TrkDeg(ObsField):
 # --------------------------------------------------------------------------- #
 # Active route waypoint (per-aircraft, name-free)                             #
 # --------------------------------------------------------------------------- #
-def _route_constraint(values: Any, iact: int) -> float | None:
-    """Read a per-waypoint constraint (e.g. ``wpalt``/``wpspd``) at ``iact``.
-
-    Returns ``None`` for a missing or unspecified constraint; BlueSky stores
-    "not specified" as a negative sentinel.
-    """
-    try:
-        value = float(values[iact])
-    except (IndexError, TypeError, ValueError):
-        return None
-    if np.isfinite(value) and value >= 0.0:
-        return value
-    return None
-
-
-def _active_route_waypoint(
-    idx: int,
-    offset: int = 0,
-) -> tuple[float, float, float | None, float | None] | None:
-    """Return ``(lat, lon, alt_m, spd_ms)`` for a route fix relative to the
-    aircraft's active leg, or ``None`` when there is no usable fix there.
-
-    ``offset`` selects which fix: ``0`` (default) is the active leg the
-    autopilot is currently flying to; ``1`` is the *next* leg (e.g. the exit
-    fix while still working a merge fix), ``2`` the one after, etc. ``None``
-    whenever ``iactwp + offset`` falls outside the route (no next leg on a
-    single-leg route, or beyond the final fix) - the same "no usable waypoint"
-    convention offset ``0`` already used for a routeless aircraft.
-
-    ``alt_m`` and ``spd_ms`` are ``None`` when the waypoint carries no altitude
-    or speed constraint. Shared by the active-route-waypoint observation fields
-    and the deviation-from-nominal action fields (which always use ``offset=0``
-    - actions command the leg actually being flown, never a future one) so
-    both read the same target.
-    """
-    routes = getattr(bs.traf.ap, "route", None) if bs.traf is not None else None
-    if routes is None or idx < 0 or idx >= len(routes):
-        return None
-    route = routes[idx]
-    try:
-        iact = int(route.iactwp)
-        nwp = int(route.nwp or 0)
-    except (TypeError, ValueError):
-        return None
-    if iact < 0:
-        return None
-    target = iact + offset
-    if target < 0 or target >= nwp:
-        return None
-    try:
-        lat = float(route.wplat[target])
-        lon = float(route.wplon[target])
-    except (IndexError, TypeError, ValueError):
-        return None
-    if not (np.isfinite(lat) and np.isfinite(lon)):
-        return None
-    return (
-        lat,
-        lon,
-        _route_constraint(route.wpalt, target),
-        _route_constraint(route.wpspd, target),
-    )
-
-
-def _route_along_distance_nm(idx: int, offset: int) -> float | None:
-    """Distance from the aircraft to the route fix at ``iactwp + offset``, nm,
-    measured ALONG the remaining legs.
-
-    Direct great-circle range to the active fix, then leg by leg out to the
-    target fix - the distance actually flown, not the straight line to a fix
-    two legs ahead. Reduces to the plain range at ``offset=0``, where it equals
-    :class:`ActiveRouteWaypointDistanceNm`. ``None`` whenever there is no
-    usable fix at that offset, mirroring :func:`_active_route_waypoint`'s
-    validation and convention.
-    """
-    routes = getattr(bs.traf.ap, "route", None) if bs.traf is not None else None
-    if routes is None or idx < 0 or idx >= len(routes):
-        return None
-    route = routes[idx]
-    try:
-        iact = int(route.iactwp)
-        nwp = int(route.nwp or 0)
-    except (TypeError, ValueError):
-        return None
-    target = iact + offset
-    if iact < 0 or target < 0 or target >= nwp:
-        return None
-    lat = float(bs.traf.lat[idx])
-    lon = float(bs.traf.lon[idx])
-    total_nm = 0.0
-    for leg in range(iact, target + 1):
-        try:
-            wp_lat = float(route.wplat[leg])
-            wp_lon = float(route.wplon[leg])
-        except (IndexError, TypeError, ValueError):
-            return None
-        if not (np.isfinite(wp_lat) and np.isfinite(wp_lon)):
-            return None
-        _qdr, dist = kwikqdrdist(lat, lon, wp_lat, wp_lon)
-        total_nm += float(dist)
-        lat, lon = wp_lat, wp_lon
-    return total_nm
 
 
 @dataclass(frozen=True)
@@ -1302,77 +1053,6 @@ class CrossoverAltMarginFt(ObsField):
         return self._configured_bounds()
 
 
-def reset_all_field_state(seed: int | None = None) -> None:
-    """Clear every per-aircraft field store, whatever this env configures.
-
-    Recording and per-aircraft forgetting are opt-in - a field that nobody
-    configures records nothing, so there is nothing to drop. Episode reset is
-    the exception: the stores are module-level, so two envs built from
-    different configs in one process share them, and the second env would
-    inherit whatever the first left behind in a store it has no field for.
-    One sweep, called by the environment on reset, restores that isolation
-    without reintroducing a per-store list for anyone to forget to update.
-    """
-    global _COMM_NOISE_RNG
-    _LAST_NORM_ACTION.clear()
-    _LAG_HISTORY.clear()
-    _CD_PAIR_CACHE.clear()
-    _TIME_IN_ENV.clear()
-    _COMM_MESSAGE.clear()
-    _COMM_NOISE_RNG = np.random.default_rng(seed)
-
-
-class _LastActionBacked:
-    """State hooks for the previous-action field.
-
-    The store is written only from here - the field that reads it - so a
-    recorded action and its removal cannot be maintained in two places that
-    drift apart.
-    """
-
-    def on_action_applied(self, acid: str, action) -> None:
-        _LAST_NORM_ACTION[acid] = np.asarray(action, dtype=np.float32)
-
-    def on_aircraft_removed(self, acid: str) -> None:
-        _LAST_NORM_ACTION.pop(acid, None)
-
-
-class _LagHistoryBacked:
-    """State hooks for lag/stack wrappers.
-
-    History is pushed lazily on read (see ``get_many``), so there is no
-    ``on_step`` here - only the per-aircraft drop.
-    """
-
-    def on_aircraft_removed(self, acid: str) -> None:
-        # Uid-keyed rows need nothing: the next access drops the departed
-        # aircraft. Callsign-keyed ones must forget it here, or a new aircraft
-        # given the same callsign would inherit its history.
-        for ring in _LAG_HISTORY.values():
-            ring.forget(acid)
-
-
-class _TimeInEnvBacked:
-    """State hooks for time-in-env.
-
-    Spawn times live in the environment, so the age arrives on the substep
-    context; recording and the per-aircraft drop are here.
-    """
-
-    def on_step(self, ctx) -> None:
-        _TIME_IN_ENV.update(ctx.age_s)
-
-    def on_aircraft_removed(self, acid: str) -> None:
-        _TIME_IN_ENV.pop(acid, None)
-
-
-class _CommBacked:
-    """State hooks for the comm-message channel field."""
-
-    def on_aircraft_removed(self, acid: str) -> None:
-        _COMM_MESSAGE.pop(acid, None)
-
-
 @dataclass(frozen=True)
 class TimeInEnvS(_TimeInEnvBacked, ObsField):
     """Seconds since ownship entered the environment - its age, not sim clock.
@@ -1781,194 +1461,9 @@ class FlightPhaseOneHot(ObsField):
         )
 
 
-# Per-process store of each aircraft's most recent *normalized* action, keyed by
-# callsign. The environment writes it when actions are applied (one BlueSky sim
-# per process, so this is per-env), and :class:`PrevActionNorm` reads it. Exposing
-# the previous action keeps an action-rate reward penalty (``|a_t - a_{t-1}|``)
-# Markovian w.r.t. the observation - otherwise that reward depends on unobserved
-# history, which the value function cannot predict.
-_LAST_NORM_ACTION: dict[str, np.ndarray] = {}
-
-
-
-
-
-
-
-
 # --------------------------------------------------------------------------- #
 # Lagged observations (frame stacking)                                         #
 # --------------------------------------------------------------------------- #
-# Per-process ring buffers of past raw field values, so ``field.lagged(k)`` can
-# report the value from ``k`` steps ago. Same lifecycle and rationale as
-# ``_LAST_NORM_ACTION`` above: one BlueSky sim per process, the env clears on
-# reset and drops an aircraft on despawn.
-#
-# One ring buffer per INNER field, keyed ``("obs" | "pair", repr(inner))``.
-# ``repr`` rather than ``meta.name``: two instances of the same class with
-# different kwargs (``ConflictTlosS(rpz_nm=8)`` vs ``rpz_nm=5``) share a name but
-# are different signals and must not share a buffer.
-#
-# All lags of one inner field share its buffer, and the push is guarded by sim
-# time, so ``.lagged(1)`` and ``.lagged(2)`` on the same field cost ONE inner
-# evaluation per step rather than one each - this sits in the per-agent per-step
-# rollout hot path.
-#
-# Rows follow aircraft by uid (:mod:`~bluesky_sandbox.sim.aircraft_uids`), not
-# callsign: BlueSky reuses a deleted aircraft's callsign, and a history keyed by
-# callsign would hand the new aircraft the old one's past. A field used without
-# a runtime - on its own, or under a test's stand-in for BlueSky - falls back to
-# callsigns, and ``on_aircraft_removed`` forgets them.
-_LAG_HISTORY: dict[tuple[str, str], _LagRing] = {}
-
-# How deep each inner field's history has to be: the deepest lag anyone
-# actually built on it. Derived rather than capped - a fixed ceiling made
-# ``.lagged(12)`` a source edit for no benefit. Sizing per field also stops the
-# common case over-allocating: with only ``.lagged(1)`` configured a buffer
-# holds 2 frames per aircraft instead of a blanket 9.
-#
-# Keyed by ``repr(inner)`` like the history itself, so sibling lags of one
-# field agree on a size. This is derived from CONFIGURATION, not from episode
-# state, which is why ``reset_field_state`` clears the history and leaves this
-# alone.
-_LAG_DEPTH: dict[str, int] = {}
-
-
-def _register_lag_depth(key: str, steps: int) -> None:
-    """Record that ``key``'s history must reach at least ``steps`` back."""
-    _LAG_DEPTH[key] = max(_LAG_DEPTH.get(key, 0), int(steps))
-
-
-def _lag_row_keys() -> tuple:
-    """Each live aircraft's uid, or its callsign when there is no runtime."""
-    ids = bs.traf.id
-    uids = live_aircraft_uids()
-    if uids is not None and len(uids) == len(ids):
-        return tuple(uids.tolist())
-    return tuple(ids)
-
-
-class _LagRing:
-    """Past values of one inner field, per aircraft or per ordered pair.
-
-    ``values[slot, row]`` (``values[slot, own, other]`` for pairs) is a ring of
-    ``depth`` frames. Every entry keeps its own write position and length,
-    because entries are pushed independently - only the aircraft (or pairs)
-    observed at a sim time. Rows are matched to aircraft by key on every
-    access, so an entry follows its aircraft when others spawn or leave.
-    """
-
-    def __init__(self, depth: int, *, pair: bool) -> None:
-        # Frames kept: the deepest lag registered on the field, plus the latest.
-        # Sized once, after configuration built every field; a lag constructed
-        # later on the same inner field finds it sized and degrades to a
-        # zero-order hold rather than failing.
-        self.depth = depth
-        self.pair = pair
-        self.keys: tuple = ()
-        self.row: dict = {}
-        grid = (0, 0) if pair else (0,)
-        self.values: np.ndarray | None = None  # allocated at the first push
-        self.head = np.zeros(grid, dtype=np.intp)
-        self.count = np.zeros(grid, dtype=np.intp)
-        # When each ownship row was last pushed (pairs); an ownship field is
-        # pushed as a whole, once per sim time, by whichever query comes first.
-        self.pushed_at = np.full(0, np.nan)
-        self.last_push_simt: float | None = None
-
-    def sync(self, keys: tuple) -> None:
-        """Match rows to ``keys``; survivors keep their history, newcomers none."""
-        if keys == self.keys:
-            return
-        take = np.fromiter(
-            (self.row.get(key, -1) for key in keys), dtype=np.intp, count=len(keys)
-        )
-        new_rows = np.flatnonzero(take >= 0)
-        old_rows = take[new_rows]
-        n = len(keys)
-        grid = (n, n) if self.pair else (n,)
-
-        def carry(old: np.ndarray, lead: int) -> np.ndarray:
-            tail = old.shape[lead + len(grid) :]
-            new = np.zeros(old.shape[:lead] + grid + tail, dtype=old.dtype)
-            pick = (slice(None),) * lead
-            if self.pair:
-                new[pick + np.ix_(new_rows, new_rows)] = old[
-                    pick + np.ix_(old_rows, old_rows)
-                ]
-            else:
-                new[pick + (new_rows,)] = old[pick + (old_rows,)]
-            return new
-
-        self.head = carry(self.head, 0)
-        self.count = carry(self.count, 0)
-        if self.values is not None:
-            self.values = carry(self.values, 1)
-        pushed_at = np.full(n, np.nan)
-        pushed_at[new_rows] = self.pushed_at[old_rows]
-        self.pushed_at = pushed_at
-        self.keys = keys
-        self.row = {key: i for i, key in enumerate(keys)}
-
-    def _at(self, rows: np.ndarray, cols: np.ndarray | None) -> tuple:
-        return (rows[:, None], cols[None, :]) if self.pair else (rows,)
-
-    def push(self, current, rows: np.ndarray, cols: np.ndarray | None = None) -> None:
-        """Append ``current`` to the rings of ``rows`` (x ``cols``, for pairs)."""
-        current = np.asarray(current, dtype=np.float64)
-        at = self._at(rows, cols)
-        if self.values is None:
-            tail = current.shape[len(at) :]
-            self.values = np.zeros((self.depth, *self.head.shape, *tail))
-        head = (self.head[at] + 1) % self.depth
-        self.head[at] = head
-        self.values[(head, *at)] = current
-        self.count[at] = np.minimum(self.count[at] + 1, self.depth)
-
-    def read(
-        self, steps: int, rows: np.ndarray, cols: np.ndarray | None = None
-    ) -> tuple[np.ndarray | None, np.ndarray]:
-        """``(values, missing)``: each entry ``steps`` pushes back, held at its
-        oldest frame when the history is shorter.
-
-        Zero-order hold, never zero-fill: a brand-new aircraft has no history,
-        and zero is a MEANINGFUL value for these fields (raw 0 on
-        ``ConflictTlosS`` means "in LoS right now"), so zero-filling would inject
-        a maximal-threat signal on every aircraft that just came into view.
-        Repeating the oldest value it has says "no observed change", which is
-        the honest reading. An entry with no history at all is ``missing``; the
-        caller substitutes its live value.
-        """
-        at = self._at(rows, cols)
-        count = self.count[at]
-        missing = count == 0
-        if self.values is None:
-            return None, missing
-        back = np.minimum(int(steps), np.maximum(count - 1, 0))
-        slot = (self.head[at] - back) % self.depth
-        return self.values[(slot, *at)], missing
-
-    def forget(self, key) -> None:
-        """Drop the history of the aircraft keyed ``key``, if it has a row."""
-        row = self.row.get(key)
-        if row is None:
-            return
-        if self.pair:
-            self.count[row, :] = 0
-            self.count[:, row] = 0
-        else:
-            self.count[row] = 0
-        self.pushed_at[row] = np.nan
-
-
-def _lag_ring(kind: str, key: str, steps: int) -> _LagRing:
-    """The shared ring for inner field ``key``, its rows matched to traffic."""
-    ring = _LAG_HISTORY.get((kind, key))
-    if ring is None:
-        depth = _LAG_DEPTH.get(key, int(steps)) + 1
-        ring = _LAG_HISTORY[(kind, key)] = _LagRing(depth, pair=kind == "pair")
-    ring.sync(_lag_row_keys())
-    return ring
 
 
 @dataclass(frozen=True)
@@ -2133,89 +1628,6 @@ class LaggedPair(_LagHistoryBacked, PairObsField):
         return out
 
 
-# The environment's flat normalized action-space bounds, published so
-# PrevActionNorm can size its observation bounds to the actual action space
-# (which depends on the action fields' normalizers) instead of assuming a range.
-# Per process - one BlueSky sim / env per process.
-_ACTION_SPACE_BOUNDS: tuple[np.ndarray, np.ndarray] | None = None
-
-
-def set_action_space_bounds(low: Any, high: Any) -> None:
-    """Publish the flat normalized action-space bounds (for PrevActionNorm)."""
-    global _ACTION_SPACE_BOUNDS
-    _ACTION_SPACE_BOUNDS = (
-        np.asarray(low, dtype=np.float32).ravel(),
-        np.asarray(high, dtype=np.float32).ravel(),
-    )
-
-
-def clear_action_space_bounds() -> None:
-    """Forget the published action-space bounds."""
-    global _ACTION_SPACE_BOUNDS
-    _ACTION_SPACE_BOUNDS = None
-
-
-# Per-process store of each aircraft's seconds since it entered the environment.
-# Published by the environment each step from its own spawn-time bookkeeping
-# (``BaseEnvironment.aircraft_spawn_time``), which an ObsField cannot reach: it
-# sees only ``bs.traf``, and BlueSky keeps no per-aircraft age. Read by
-# TimeInEnvS. 0.0 if unknown.
-_TIME_IN_ENV: dict[str, float] = {}
-
-
-
-
-def get_time_in_env(acid: str) -> float:
-    """Return the stored seconds-since-spawn for ``acid``, or 0.0 if unknown."""
-    return _TIME_IN_ENV.get(acid, 0.0)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Per-process store of each aircraft's broadcast communication message - a
-# small learned signal emitted through a CommBroadcast action channel and read
-# back by other agents through IntruderCommMessage. No physical effect on the
-# aircraft; purely an information channel between agents, one step delayed
-# (emitted at step t, observed by others at t+1). Keyed ``acid -> channel``.
-_COMM_MESSAGE: dict[str, dict[int, float]] = {}
-
-
-def record_comm_message(acid: str, channel: int, value: float) -> None:
-    """Store one channel of an aircraft's broadcast message (for IntruderCommMessage)."""
-    _COMM_MESSAGE.setdefault(acid, {})[int(channel)] = float(value)
-
-
-def get_comm_message(acid: str, channel: int) -> float:
-    """Return an aircraft's stored message channel, or 0.0 (silence) if unset."""
-    return _COMM_MESSAGE.get(acid, {}).get(int(channel), 0.0)
-
-
-
-
-
-
-# RNG for receiver-side communication-channel noise (IntruderCommMessage's
-# ``noise_std``). Reseeded from the episode seed at reset so training rollouts
-# stay reproducible.
-_COMM_NOISE_RNG = np.random.default_rng()
-
-
-
-
 @dataclass(frozen=True)
 class PrevActionNorm(_LastActionBacked, ObsField):
     """Ownship's previous action ``a_{t-1}`` (as the policy emitted it).
@@ -2287,8 +1699,8 @@ class PrevActionNorm(_LastActionBacked, ObsField):
                 np.full(size, float(self.low), dtype=np.float32),
                 np.full(size, float(self.high), dtype=np.float32),
             )
-        if _ACTION_SPACE_BOUNDS is not None:
-            lo, hi = _ACTION_SPACE_BOUNDS
+        if _state._ACTION_SPACE_BOUNDS is not None:
+            lo, hi = _state._ACTION_SPACE_BOUNDS
             sl = slice(self.offset, self.offset + size)
             lo_s, hi_s = lo[sl], hi[sl]
             if lo_s.shape[0] == size:
@@ -2889,21 +2301,6 @@ class BearingRateDegPerSec(_BroadcastPairs, PairObsField):
         return self._configured_bounds()
 
 
-def _track_frame(own_idx: Any, other_indices: Any):
-    """Intruder relative position (m) and velocity (m/s) in the OWNSHIP TRACK
-    frame: (along, cross) where along = down the own velocity vector (ahead +),
-    cross = to the right of it. Rotation-invariant (rotates with own track), so
-    the encounter reads the same at any absolute heading."""
-    rel_e, rel_n, ve, vn = _pair_relative_motion(own_idx, other_indices)
-    trk = np.radians(_traf_array("trk"))[_indices_array(own_idx)]
-    s, c = np.sin(trk), np.cos(trk)
-    along = rel_e * s + rel_n * c           # projection on own track (compass sin/cos)
-    cross = rel_e * c - rel_n * s           # 90 deg clockwise (to the right)
-    v_along = ve * s + vn * c
-    v_cross = ve * c - vn * s
-    return along, cross, v_along, v_cross
-
-
 @dataclass(frozen=True)
 class RelPosAlongTrackNm(_BroadcastPairs, PairObsField):
     """Intruder position relative to ownship ALONG the own track, nm (ahead +).
@@ -3003,19 +2400,6 @@ class RelVelCrossTrackKts(_BroadcastPairs, PairObsField):
         return v_cross * _MS_TO_KTS
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
-
-
-def _track_frame_at_cpa(own_idx: Any, other_indices: Any):
-    """Track-frame relative position AT the predicted (constant-velocity) CPA:
-    (along, cross) in metres = now-position + relative-velocity * tcpa, with tcpa
-    clamped to >=0 (already-passed encounters read at 'now'). Its magnitude equals
-    the horizontal miss dcpa; its cross-sign says which side the intruder passes."""
-    along, cross, v_along, v_cross = _track_frame(own_idx, other_indices)
-    # tcpa from the SAME track-frame primitives (it is rotation-invariant), so
-    # position and velocity share one projection and |result| == dcpa exactly.
-    v2 = np.maximum(v_along * v_along + v_cross * v_cross, 1e-9)
-    tcpa = np.maximum(-(along * v_along + cross * v_cross) / v2, 0.0)  # future CPA only
-    return along + v_along * tcpa, cross + v_cross * tcpa
 
 
 @dataclass(frozen=True)
@@ -3637,121 +3021,6 @@ class InLosNow(_BroadcastPairs, PairObsField):
         return self._configured_bounds()
 
 
-def _fix_projection(
-    own_idx: Any,
-    other_indices: Any,
-    route_offset: int,
-    own_eta_mode: str = "projection",
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Project observed motion onto the *ownship's* active fix (a merge signal).
-
-    Returns ``(approach_dist_nm, intruder_eta_s, own_eta_s, vsep_at_fix_ft,
-    has_fix)``, broadcast over the ``own`` / ``other`` index arrays
-    where each intruder's straight-line motion is projected to the closest
-    approach of the ownship's own fix ``F`` (offset ``0`` = active leg, ``1`` =
-    next leg): how near its current trajectory passes ``F`` (horizontal), when
-    (ETA), and the signed altitude gap at the merge (intruder minus ownship,
-    each projected to its own fix arrival by its vertical speed). ``has_fix`` is
-    False for an ownship with no usable fix there; its other values are
-    placeholders the caller replaces.
-
-    Privacy: uses only ``F`` (the ownship's *own* plan, offset 0/1 both being
-    own legs) and each intruder's *observed* position/velocity/altitude/VS
-    (radar/ADS-B grade) - never the intruder's flight plan. This is the
-    observable counterpart of reading ``ActiveRouteWaypoint*`` on the intruder,
-    which would expose unshared intent and is therefore critic-only.
-
-    ``own_eta_mode`` selects how the OWNSHIP's own ETA is formed, and the two
-    sides are deliberately NOT symmetric because the information is not:
-
-    * ``"projection"`` (default, and what every task before v52 used) applies
-      the same kinematic closest-approach projection to the ownship. Since
-      ``t* = (range / groundspeed) * cos(theta)`` for ``theta`` the angle
-      between track and bearing-to-fix, the ownship's own ETA is scaled by its
-      instantaneous heading: measured on a v51 rollout it reads 0.998x the
-      range/speed ETA while tracking the fix, but 0.29x at 45-90 deg off and
-      0.0 beyond 90 deg. That collapse is an artifact - the ownship is *not*
-      going to fly straight forever, route guidance turns it back - and it is
-      driven by the ownship's own ACTION, which is the observation-feedback
-      shape that caused the ``PrevActionNorm`` hysteresis loop.
-    * ``"route"`` uses ``range / groundspeed`` for the ownship instead: no
-      ``cos`` factor, no clamp. Legitimate precisely because the ownship's plan
-      is its OWN knowledge - it knows it is going to ``F``. Stable under
-      maneuvering, and monotone in groundspeed, so decelerating to open a gap
-      raises the ownship ETA cleanly (speed is the instrument that resolves an
-      in-trail merge, so this is the channel that has to stay readable).
-
-    The INTRUDER side keeps the kinematic projection under both modes, and must:
-    ``range / groundspeed`` for an intruder would assert "it is flying to MY
-    fix", which is exactly the intent this field exists to avoid assuming. Its
-    ``cos`` collapse is the honest reading - "this one is not going to my fix" -
-    and it is what makes a large ``IntruderFixApproachDistNm`` meaningful.
-
-    Mixing the two models does not corrupt the difference where it is used: a
-    genuine merge partner is by construction tracking the fix, so its ``theta``
-    is near 0 and its projection equals its range/speed ETA anyway (measured
-    0.998x within 5 deg, 0.987x within 20 deg). The models only diverge once the
-    intruder is off-bearing to the fix, where the approach-distance gate has
-    already flagged the pair as irrelevant.
-    """
-    if own_eta_mode not in ("projection", "route"):
-        raise ValueError(
-            f"own_eta_mode must be 'projection' or 'route', got {own_eta_mode!r}."
-        )
-    own = _indices_array(own_idx)
-    other = _indices_array(other_indices)
-    fixes = [_active_route_waypoint(int(o), route_offset) for o in own.ravel()]
-    has_fix = np.array([fix is not None for fix in fixes]).reshape(own.shape)
-    # A fix-less ownship projects onto (0, 0) - finite arithmetic, masked out.
-    fix_lat = np.array(
-        [0.0 if fix is None else float(fix[0]) for fix in fixes], dtype=np.float64
-    ).reshape(own.shape)
-    fix_lon = np.array(
-        [0.0 if fix is None else float(fix[1]) for fix in fixes], dtype=np.float64
-    ).reshape(own.shape)
-    lat, lon = _traf_array("lat"), _traf_array("lon")
-    trk, gs = _traf_array("trk"), _traf_array("gs")
-    alt, vs = _traf_array("alt"), _traf_array("vs")
-
-    def _eta_and_cpa(idx: np.ndarray):
-        # Position of each aircraft relative to its ownship's fix, east/north m.
-        qdr, dist_nm = qdrdist(fix_lat, fix_lon, lat[idx], lon[idx])
-        qdrrad = np.radians(np.asarray(qdr, dtype=np.float64))
-        dist_m = np.asarray(dist_nm, dtype=np.float64) * nm
-        r_e = dist_m * np.sin(qdrrad)
-        r_n = dist_m * np.cos(qdrrad)
-        trkrad = np.radians(trk[idx])
-        v_e = gs[idx] * np.sin(trkrad)
-        v_n = gs[idx] * np.cos(trkrad)
-        v2 = np.maximum(v_e * v_e + v_n * v_n, 1e-6)
-        # Future closest approach only (t* clamped >= 0): an aircraft receding
-        # from the fix reads its current distance, not a past pass.
-        tstar = np.maximum(-(r_e * v_e + r_n * v_n) / v2, 0.0)
-        cpa_e = r_e + v_e * tstar
-        cpa_n = r_n + v_n * tstar
-        cpa_nm = np.sqrt(cpa_e * cpa_e + cpa_n * cpa_n) / nm
-        return tstar, cpa_nm
-
-    intr_eta, intr_cpa_nm = _eta_and_cpa(other)
-    if own_eta_mode == "route":
-        # The ownship knows its own plan, so its ETA is a property of the route
-        # and the speed it is flying - not of the heading it happens to hold
-        # this step. See the docstring for why the two sides differ.
-        _own_qdr, own_dist_nm = qdrdist(fix_lat, fix_lon, lat[own], lon[own])
-        own_eta_s = (
-            np.asarray(own_dist_nm, dtype=np.float64) * nm / np.maximum(gs[own], 1e-3)
-        )
-    else:
-        own_eta_s, _own_cpa = _eta_and_cpa(own)
-    # Altitude each aircraft is projected to hold when it reaches the fix
-    # (current alt + VS x its own ETA); the merge conflict is where these
-    # coincide. Signed intruder-minus-ownship, in feet.
-    own_alt_at_fix = alt[own] + vs[own] * own_eta_s
-    intr_alt_at_fix = alt[other] + vs[other] * intr_eta
-    vsep_ft = (intr_alt_at_fix - own_alt_at_fix) * _M_TO_FT
-    return intr_cpa_nm, intr_eta, own_eta_s, vsep_ft, has_fix
-
-
 @dataclass(frozen=True)
 class IntruderFixApproachDistNm(_BroadcastPairs, PairObsField):
     """How near an intruder's *observed* path passes the ownship's active fix, nm.
@@ -3926,7 +3195,7 @@ class IntruderCommMessage(_CommBacked, PairObsField):
             dtype=np.float64,
         )
         if self.noise_std > 0.0 and values.size:
-            values += _COMM_NOISE_RNG.normal(0.0, self.noise_std, size=values.shape)
+            values += _state._COMM_NOISE_RNG.normal(0.0, self.noise_std, size=values.shape)
             np.clip(values, self.low, self.high, out=values)
         return values
 

@@ -45,7 +45,7 @@ import pytest
 import bluesky_sandbox.interface.fields.actions as actions
 import bluesky_sandbox.interface.fields.observations as observations
 from bluesky_sandbox.core import services
-from bluesky_sandbox.interface.fields import base
+from bluesky_sandbox.interface.fields import _lag, base
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
 from bluesky_sandbox.interface.wrappers.observations import normalizer as nz
 
@@ -761,7 +761,7 @@ def test_a_deep_lag_needs_no_ceiling_raised(steps):
     inner = observations.LatDeg(low=-10.0, high=10.0)
     lagged = observations.LaggedObs(inner=inner, steps=steps)
     assert lagged.meta.name.endswith(f"_lag{steps}")
-    assert observations._LAG_DEPTH[lagged._key] >= steps
+    assert _lag._LAG_DEPTH[lagged._key] >= steps
 
 
 def test_sibling_lags_size_one_shared_buffer_to_the_deepest(lag_clock):
@@ -776,7 +776,7 @@ def test_sibling_lags_size_one_shared_buffer_to_the_deepest(lag_clock):
         lag_clock.tick(float(value * 10))
         shallow.get(0)
 
-    ring = observations._LAG_HISTORY[("obs", shallow._key)]
+    ring = _lag._LAG_HISTORY[("obs", shallow._key)]
     assert ring.depth >= deep.steps + 1
     assert shallow.get(0) == pytest.approx(70.0)
     assert deep.get(0) == pytest.approx(20.0)
@@ -789,7 +789,7 @@ def test_a_buffer_holds_only_what_its_deepest_lag_needs(lag_clock):
     for value in range(1, 9):
         lag_clock.tick(float(value * 10))
         only_shallow.get(0)
-    ring = observations._LAG_HISTORY[("obs", only_shallow._key)]
+    ring = _lag._LAG_HISTORY[("obs", only_shallow._key)]
     assert ring.depth == 2, "a depth-1 lag kept more frames than it can read"
 
 
@@ -850,13 +850,14 @@ class _Clock:
 @pytest.fixture
 def lag_clock(monkeypatch):
     """A clean lag buffer and a fake sim clock, restored afterwards."""
-    observations._LAG_HISTORY.clear()
-    observations._LAG_DEPTH.clear()
+    _lag._LAG_HISTORY.clear()
+    _lag._LAG_DEPTH.clear()
     clock = _Clock()
     monkeypatch.setattr(observations, "bs", clock)
+    monkeypatch.setattr(_lag, "bs", clock)  # the lag rows read the callsigns
     _Recorded.value, _Recorded.calls = 0.0, 0
     yield clock
-    observations._LAG_HISTORY.clear()
+    _lag._LAG_HISTORY.clear()
 
 
 @pytest.mark.parametrize("steps", [1, 2, 3, 8, 40], ids=lambda n: f"lag{n}")

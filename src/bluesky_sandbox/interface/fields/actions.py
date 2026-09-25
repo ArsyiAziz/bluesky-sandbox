@@ -4,12 +4,15 @@ from dataclasses import dataclass
 from typing import Annotated, ClassVar
 
 import bluesky as bs
-from bluesky.tools.aero import ft, kts
+from bluesky.tools.aero import kts
 from bluesky.tools.geo import kwikqdrdist
 
 from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms as _cas_ceiling_ms
 from bluesky_sandbox.sim.performance.speeds import crossover_speed_state
 
+from ._common import _M_TO_FT, _MIN_DYNAMIC_SPAN, _MS_TO_KTS
+from ._route import _active_route_waypoint
+from ._state import record_comm_message
 from .base import (
     ActionField,
     ActionMeta,
@@ -18,11 +21,7 @@ from .base import (
     SwitchActionMixin,
     Unit,
 )
-from .observations import _active_route_waypoint, record_comm_message
 
-_M_TO_FT = 1.0 / ft
-_MS_TO_KTS = 1.0 / kts
-_MIN_DYNAMIC_SPAN = 1e-6
 _FMT = ".6f"
 
 
