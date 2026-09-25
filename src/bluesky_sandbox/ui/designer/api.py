@@ -327,7 +327,7 @@ def create_app() -> FastAPI:
         max_agents = int(body.get("max_agents", 3))
         max_intruders = int(body.get("max_intruders", 25))
         at_s = float(body.get("at_s", 0.0))
-        actype = body.get("type") or None
+        acid = body.get("acid") or None
         try:
             return _runner.sample_design(
                 spec,
@@ -335,7 +335,21 @@ def create_app() -> FastAPI:
                 max_agents=max_agents,
                 max_intruders=max_intruders,
                 at_s=at_s,
-                actype=actype,
+                acid=acid,
+            )
+        except (BuildError, ValueError, TypeError) as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
+    @app.post("/api/spec/episode")
+    def episode(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Each aircraft of the seeded episode as created - see
+        :func:`runner.episode_spawns`."""
+        spec = _parse_spec(body.get("spec", body))
+        try:
+            return _runner.episode_spawns(
+                spec,
+                seed=int(body.get("seed", 0)),
+                until_s=float(body.get("until_s", 3600.0)),
             )
         except (BuildError, ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=str(e)) from e

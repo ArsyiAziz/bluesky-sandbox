@@ -2,10 +2,12 @@
 // with, and the aircraft picked in it. The map, the Sampling panel and the
 // Spaces tab all read one episode, so what one shows the others agree with.
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, type SampleResult, type SpecDict } from "./api";
+import { api, type EpisodeSpawns, type SampleResult, type SpecDict } from "./api";
 import { useRefresh } from "./refresh";
 
-export type Pick = { index: number; at_s: number; type: string };
+// A picked aircraft: when it spawns, and its callsign once the episode run
+// has named it.
+export type Pick = { at_s: number; acid: string | null; key: string; actype: string };
 
 export type Episode = {
   seed: number;
@@ -38,16 +40,16 @@ export function useEpisodeSample(spec: SpecDict | null, enabled = true) {
     error: "",
   });
   const at_s = pick?.at_s ?? 0;
-  const type = pick?.type ?? null;
+  const acid = pick?.acid ?? null;
   useEffect(() => {
     if (!spec || !enabled) return;
     let canceled = false;
     setState((s) => ({ ...s, loading: true, error: "" }));
     const handle = setTimeout(() => {
-      const key = JSON.stringify([spec, seed, at_s, type, refreshKey]);
+      const key = JSON.stringify([spec, seed, at_s, acid, refreshKey]);
       let run = runs.get(key);
       if (!run) {
-        run = api.sample(spec, seed, at_s, type);
+        run = api.sample(spec, seed, at_s, acid);
         runs.set(key, run);
         run.catch(() => runs.delete(key));
       }
@@ -59,7 +61,51 @@ export function useEpisodeSample(spec: SpecDict | null, enabled = true) {
       canceled = true;
       clearTimeout(handle);
     };
-  }, [spec, seed, at_s, type, enabled, refreshKey]);
+  }, [spec, seed, at_s, acid, enabled, refreshKey]);
+  return state;
+}
+
+// The episode's aircraft as the environment creates them - run once per
+// design and seed, and shared: it runs the whole episode, which takes seconds.
+const spawnRuns = new Map<string, Promise<EpisodeSpawns>>();
+const spawnResults = new Map<string, EpisodeSpawns>();
+
+export function useEpisodeSpawns(spec: SpecDict | null, enabled = true) {
+  const { seed } = useEpisode();
+  const refreshKey = useRefresh();
+  const key = JSON.stringify([spec, seed, refreshKey]);
+  const [state, setState] = useState<{ spawns: EpisodeSpawns | null; loading: boolean; error: string }>(() => ({
+    spawns: spawnResults.get(key) ?? null,
+    loading: false,
+    error: "",
+  }));
+  useEffect(() => {
+    if (!spec || !enabled) return;
+    let canceled = false;
+    // A run already in: no wait, no request.
+    const done = spawnResults.get(key);
+    if (done) {
+      setState({ spawns: done, loading: false, error: "" });
+      return;
+    }
+    // Keep the last run on screen while the next one comes.
+    setState((s) => ({ ...s, loading: true, error: "" }));
+    const handle = setTimeout(() => {
+      let run = spawnRuns.get(key);
+      if (!run) {
+        run = api.episode(spec, seed);
+        spawnRuns.set(key, run);
+        run.then((r) => spawnResults.set(key, r)).catch(() => spawnRuns.delete(key));
+      }
+      run
+        .then((spawns) => !canceled && setState({ spawns, loading: false, error: "" }))
+        .catch((e) => !canceled && setState({ spawns: null, loading: false, error: String(e?.message ?? e) }));
+    }, 800);
+    return () => {
+      canceled = true;
+      clearTimeout(handle);
+    };
+  }, [key, enabled]);
   return state;
 }
 

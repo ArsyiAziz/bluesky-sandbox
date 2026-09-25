@@ -128,6 +128,33 @@ export interface SampleResult {
   ranges: Record<string, Record<string, [string, string, number | null, number | null][]>>;
 }
 
+// One aircraft of the seeded episode as the environment created it, with its
+// label in the pygame view.
+export interface SpawnedAircraft {
+  callsign: string;
+  actype: string;
+  time_s: number;
+  lat_deg: number;
+  lon_deg: number;
+  alt_ft: number;
+  hdg_deg: number;
+  cas_kts: number;
+  gs_kts: number;
+  mach: number;
+  controlled: boolean;
+  region_index: number;
+  route: string[] | null;
+  label: string[];
+}
+
+export interface EpisodeSpawns {
+  seed: number;
+  sim_time_s: number;
+  complete: boolean;
+  scheduled: number;
+  aircraft: SpawnedAircraft[];
+}
+
 export interface RunResult {
   ok: boolean;
   pid: number;
@@ -236,11 +263,19 @@ export const api = {
       }),
     }).then((r) => jsonOrThrow<RunResult>(r)),
 
-  sample: (spec: SpecDict, seed = 0, atS = 0, type: string | null = null, maxAgents = 3, maxIntruders = 25) =>
+  // The seeded episode run until its aircraft are all up: each as created.
+  episode: (spec: SpecDict, seed = 0, untilS = 3600) =>
+    fetch("/api/spec/episode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec, seed, until_s: untilS }),
+    }).then((r) => jsonOrThrow<EpisodeSpawns>(r)),
+
+  sample: (spec: SpecDict, seed = 0, atS = 0, acid: string | null = null, maxAgents = 3, maxIntruders = 25) =>
     fetch("/api/spec/sample", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spec, seed, at_s: atS, type, max_agents: maxAgents, max_intruders: maxIntruders }),
+      body: JSON.stringify({ spec, seed, at_s: atS, acid, max_agents: maxAgents, max_intruders: maxIntruders }),
     }).then((r) => jsonOrThrow<SampleResult>(r)),
 
   runStatus: () => fetch("/api/spec/run/status").then((r) => jsonOrThrow<RunStatus>(r)),

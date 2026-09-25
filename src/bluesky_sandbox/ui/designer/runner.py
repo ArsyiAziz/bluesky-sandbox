@@ -276,7 +276,7 @@ SEED = {seed!r}
 MAX_AGENTS = {max_agents!r}
 MAX_INTRUDERS = {max_intruders!r}
 AT_S = {at_s!r}
-TYPE = {actype!r}
+ACID = {acid!r}
 MARKER = {marker!r}
 #: Steps to wait for the first aircraft, for designs that spawn them over time.
 MAX_WAIT_STEPS = 2000
@@ -310,23 +310,15 @@ def main() -> None:
     try:
         obs, _ = env.reset(seed=SEED)
         # Step to AT_S, holding every agent still, and on until an aircraft is
-        # up - traffic that spawns over time has none at reset. With TYPE, on
-        # until one of that type spawns there: a spawn can be deferred a while.
+        # up - traffic that spawns over time has none at reset. With ACID, on
+        # until that aircraft is up.
         steps = 0
-        before = set()
-        focus = None
         while steps < MAX_WAIT_STEPS:
-            if obs and bs.sim.simt >= AT_S:
-                if TYPE is None:
-                    break
-                new = [a for a in obs if a not in before and bs.traf.type[bs.traf.id2idx(a)] == TYPE]
-                if new:
-                    focus = new[-1]
-                    break
-            else:
-                before = set(obs)
+            if obs and bs.sim.simt >= AT_S and (ACID is None or ACID in obs):
+                break
             obs, *_ = env.step({{a: zero_action(env.action_space(a)) for a in env.agents}})
             steps += 1
+        focus = ACID
         base = env.unwrapped
         cfg = base.config
         parts = observation_parts(cfg)
@@ -405,44 +397,20 @@ if __name__ == "__main__":
 '''
 
 
-def sample_design(
-    spec: DesignSpec,
-    *,
-    seed: int = 0,
-    max_agents: int = 3,
-    max_intruders: int = 25,
-    at_s: float = 0.0,
-    actype: str | None = None,
-    timeout_s: float = 180.0,
+def _run_script(
+    spec: DesignSpec, pkg: str, source: str, timeout_s: float
 ) -> dict[str, Any]:
-    """Build the env in a subprocess, reset, step to ``at_s`` (and on until an
-    aircraft is up - with ``actype``, until one of that type spawns), and
-    return what that aircraft and the newest others, ``max_agents`` in all,
-    observe - raw and normalized, with each field's range for that aircraft -
-    and a sampled action; plus every aircraft's ranges and type.
-    """
-    build_design_config(spec)  # surface a broken design before spawning anything
-
-    pkg = "designed_sample"
+    """Generate ``spec`` as ``pkg``, run ``source`` against it in a subprocess,
+    and return the JSON it prints after the marker."""
     files = codegen.generate_task(spec, pkg)
     workdir = Path(tempfile.mkdtemp(prefix="bsd_sample_"))
     try:
-        for rel, source in files.items():
+        for rel, text in files.items():
             path = workdir / rel
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(source)
+            path.write_text(text)
         script = workdir / "_sample_design.py"
-        script.write_text(
-            _SAMPLE_TEMPLATE.format(
-                pkg=pkg,
-                seed=seed,
-                max_agents=max_agents,
-                max_intruders=max_intruders,
-                at_s=float(at_s),
-                actype=actype,
-                marker=_SAMPLE_MARKER,
-            )
-        )
+        script.write_text(source)
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(
             p for p in (str(workdir), str(_REPO_ROOT), env.get("PYTHONPATH", "")) if p
@@ -464,6 +432,124 @@ def sample_design(
         )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def sample_design(
+    spec: DesignSpec,
+    *,
+    seed: int = 0,
+    max_agents: int = 3,
+    max_intruders: int = 25,
+    at_s: float = 0.0,
+    acid: str | None = None,
+    timeout_s: float = 180.0,
+) -> dict[str, Any]:
+    """Build the env in a subprocess, reset, step to ``at_s`` (and on until an
+    aircraft is up - with ``acid``, until that one is), and return what that
+    aircraft and the newest others, ``max_agents`` in all, observe - raw and normalized, with each field's range for that aircraft -
+    and a sampled action; plus every aircraft's ranges and type.
+    """
+    build_design_config(spec)  # surface a broken design before spawning anything
+    pkg = "designed_sample"
+    source = _SAMPLE_TEMPLATE.format(
+        pkg=pkg,
+        seed=seed,
+        max_agents=max_agents,
+        max_intruders=max_intruders,
+        at_s=float(at_s),
+        acid=acid,
+        marker=_SAMPLE_MARKER,
+    )
+    return _run_script(spec, pkg, source, timeout_s)
+
+
+# One-shot script: run the seeded episode, every agent held still, until its
+# scheduled spawns are all up (or ``until_s``), and dump the spawn log - each
+# aircraft as created, with the label the pygame view gives it.
+_SPAWNS_TEMPLATE = '''\
+"""Auto-generated spawn log of one seeded episode of a designed env."""
+from __future__ import annotations
+
+import json
+import math
+
+import bluesky as bs
+
+from bluesky_sandbox import zero_action
+from bluesky_sandbox.ui.drivers.common.readouts import aircraft_label_lines
+from {pkg} import Env
+
+SEED = {seed!r}
+UNTIL_S = {until_s!r}
+MAX_STEPS = {max_steps!r}
+MARKER = {marker!r}
+
+
+def _finite(value):
+    return value if isinstance(value, float) and math.isfinite(value) else None
+
+
+def main() -> None:
+    env = Env(render_mode=None)
+    try:
+        env.reset(seed=SEED)
+        base = env.unwrapped
+        steps = 0
+        while steps < MAX_STEPS and bs.sim.simt < UNTIL_S and not base.episode_done:
+            progress = base.episode_spawn_progress
+            if progress.scheduled and progress.spawned >= progress.scheduled:
+                break
+            env.step({{a: zero_action(env.action_space(a)) for a in env.agents}})
+            steps += 1
+        progress = base.episode_spawn_progress
+        aircraft = []
+        for r in base.spawn_log:
+            row = {{k: (_finite(v) if isinstance(v, float) else v) for k, v in r._asdict().items()}}
+            row["route"] = list(r.route) if r.route else None
+            row["label"] = aircraft_label_lines(
+                r.callsign, r.actype, alt_ft=r.alt_ft, gs_kts=r.gs_kts,
+                cas_kts=r.cas_kts, mach=r.mach,
+            )
+            aircraft.append(row)
+        out = {{
+            "seed": SEED,
+            "sim_time_s": float(bs.sim.simt),
+            "complete": progress.spawned >= progress.scheduled,
+            "scheduled": progress.scheduled,
+            "aircraft": aircraft,
+        }}
+        print(MARKER + json.dumps(out))
+    finally:
+        env.close()
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def episode_spawns(
+    spec: DesignSpec,
+    *,
+    seed: int = 0,
+    until_s: float = 3600.0,
+    max_steps: int = 2000,
+    timeout_s: float = 180.0,
+) -> dict[str, Any]:
+    """Run the seeded episode in a subprocess, every agent held still, until
+    its scheduled aircraft are all up (or ``until_s``), and return each
+    aircraft as it was created: callsign, type, time, position, heading and
+    speeds, and its label in the pygame view."""
+    build_design_config(spec)
+    pkg = "designed_spawns"
+    source = _SPAWNS_TEMPLATE.format(
+        pkg=pkg,
+        seed=seed,
+        until_s=float(until_s),
+        max_steps=int(max_steps),
+        marker=_SAMPLE_MARKER,
+    )
+    return _run_script(spec, pkg, source, timeout_s)
 
 
 def run_status() -> dict[str, Any]:

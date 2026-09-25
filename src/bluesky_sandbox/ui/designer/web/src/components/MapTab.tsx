@@ -1,18 +1,29 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import maplibregl from "maplibre-gl";
 import { MapboxOverlay } from "@deck.gl/mapbox";
-import { api, type SpecDict, type PreviewResult, type NavFeatures } from "../api";
+import { api, type SpecDict, type PreviewResult, type NavFeatures, type SpawnedAircraft } from "../api";
 import DesignPanel from "./DesignPanel";
 import SearchBox from "./SearchBox";
 import type { CategoryVisibility, EditHandle, EditTarget } from "../map/types";
-import { centroid, point, routePaths } from "../map/geometry";
+import { centroid, point, routePaths, zMeters } from "../map/geometry";
 import { buildEditHandles, dragStateForHandle, targetKey, updateSpecFromHandle } from "../map/editHandles";
-import { EMPTY, LABEL_FONT, MOVE_HANDLE_ICON, ROTATION_HANDLE_ICON, deckLayers, getTooltip } from "../map/deckLayers";
+import {
+  EMPTY,
+  LABEL_FONT,
+  MOVE_HANDLE_ICON,
+  ROTATION_HANDLE_ICON,
+  TAG_OFFSET_PX,
+  TAG_SIZE_PX,
+  aircraftTag,
+  deckLayers,
+  getTooltip,
+} from "../map/deckLayers";
+import { WebMercatorViewport } from "@deck.gl/core";
 import { setColorPalette } from "../map/geometry";
 import { BASEMAPS, DEFAULT_BASEMAP, basemapById, type BasemapId } from "../map/basemaps";
 import { defaultWaypoint, gcOrphanBounds, placementAltitudeRange } from "../specHelpers";
 import { useRefresh } from "../refresh";
-import { useEpisode } from "../episode";
+import { useEpisode, useEpisodeSpawns } from "../episode";
 
 type DragState = import("../map/types").DragState;
 
@@ -141,6 +152,11 @@ export default function MapTab({
   // View-only visibility (never written to the spec).
   const [visibility, setVisibility] = useState<CategoryVisibility>(DEFAULT_VISIBILITY);
   const visibilityRef = useRef(visibility);
+  // The episode run, for the aircraft as flown - only while they are shown.
+  const { spawns, loading: flying } = useEpisodeSpawns(spec, visibility.aircraft);
+  const flownRef = useRef<SpawnedAircraft[] | null>(null);
+  flownRef.current = visibility.aircraft ? spawns?.aircraft ?? null : null;
+  const taggedRef = useRef<Set<string> | null>(null);
   const [hiddenElements, setHiddenElements] = useState<Set<string>>(new Set());
   const hiddenRef = useRef(hiddenElements);
   // View-only lock: locked elements show no edit handles and can't be deleted
@@ -327,9 +343,49 @@ export default function MapTab({
           hiddenRef.current,
           lineScaleRef.current,
           activeSpec,
+          flownRef.current,
+          taggedRef.current,
         ),
       });
     }
+  };
+
+  // Which aircraft tags fit: in screen space, as the overlay projects them (at
+  // altitude, on the tilted map), each kept unless it would cover a tag kept
+  // before it - controlled traffic first. Run when the view settles.
+  const declutterTags = () => {
+    const map = mapRef.current;
+    const flown = flownRef.current;
+    if (!map || !flown) {
+      taggedRef.current = null;
+      return;
+    }
+    const center = map.getCenter();
+    const canvas = map.getCanvas();
+    const viewport = new WebMercatorViewport({
+      width: canvas.clientWidth,
+      height: canvas.clientHeight,
+      longitude: center.lng,
+      latitude: center.lat,
+      zoom: map.getZoom(),
+      pitch: map.getPitch(),
+      bearing: map.getBearing(),
+    });
+    const charW = TAG_SIZE_PX * 0.62;
+    const kept: [number, number, number, number][] = [];
+    const tagged = new Set<string>();
+    const order = [...flown].sort((a, b) => Number(b.controlled) - Number(a.controlled));
+    for (const a of order) {
+      const [x, y] = viewport.project([a.lon_deg, a.lat_deg, zMeters(a.alt_ft)]);
+      const x0 = x + TAG_OFFSET_PX - 4;
+      const box: [number, number, number, number] = [x0, y - 10, x0 + aircraftTag(a).length * charW + 8, y + 10];
+      const clash = kept.some((k) => box[0] < k[2] && k[0] < box[2] && box[1] < k[3] && k[1] < box[3]);
+      if (!clash) {
+        kept.push(box);
+        tagged.add(a.callsign);
+      }
+    }
+    taggedRef.current = tagged;
   };
 
   const ensureLabelLayer = () => {
@@ -417,6 +473,16 @@ export default function MapTab({
   };
 
   // Re-render deck + labels whenever view visibility / hide / highlight change.
+  // The flown aircraft came in, or went: draw them.
+  useEffect(() => {
+    if (ready) {
+      declutterTags();
+      refreshDeck();
+      refreshLabels();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spawns, ready]);
+
   useEffect(() => {
     visibilityRef.current = visibility;
     if (ready) {
@@ -495,6 +561,11 @@ export default function MapTab({
         const center = map.getCenter();
         setViewCenter([center.lat, center.lng]);
         if (visibilityRef.current.nav || visibilityRef.current.airways) loadNav();
+        // The view settled: find room for the aircraft tags again.
+        if (flownRef.current) {
+          declutterTags();
+          refreshDeck();
+        }
       });
       const center = map.getCenter();
       setViewCenter([center.lat, center.lng]);
@@ -543,6 +614,24 @@ export default function MapTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [basemap, ready]);
 
+  // Frame a design's airspace when it is first drawn - a design loaded or
+  // started, not every edit to it, so editing never moves the view.
+  const framedRef = useRef<string | null>(null);
+  const frameDesign = (preview: PreviewResult) => {
+    const map = mapRef.current;
+    const name = String(specRef.current?.metadata?.name ?? "");
+    const box = preview.airspace?.bounding_box;
+    if (!map || !box || framedRef.current === name) return;
+    framedRef.current = name;
+    map.fitBounds(
+      [
+        [box.lon_min, box.lat_min],
+        [box.lon_max, box.lat_max],
+      ],
+      { padding: 40, duration: 0 },
+    );
+  };
+
   // Re-render geometry whenever the (valid) spec / seed changes.
   useEffect(() => {
     const map = mapRef.current;
@@ -556,6 +645,7 @@ export default function MapTab({
         if (canceled) return;
         setError(null);
         previewRef.current = preview;
+        frameDesign(preview);
         refreshDeck();
         refreshLabels();
         setInfo(`${preview.sampled_aircraft.length} aircraft · max ${preview.max_aircraft} · ${preview.queryables.length} queryables`);
@@ -705,6 +795,15 @@ export default function MapTab({
             </label>
           </div>
           <div className="map-info">{info}</div>
+          {visibility.aircraft && (
+            <div className="map-info muted small">
+              {flying
+                ? "running the episode for the aircraft as flown…"
+                : spawns
+                  ? `aircraft as flown: ${spawns.aircraft.length}, up by t+${Math.round(spawns.sim_time_s)} s`
+                  : ""}
+            </div>
+          )}
           {selectedTarget && (
             <div className="map-hint muted small">selected · press Delete to remove</div>
           )}

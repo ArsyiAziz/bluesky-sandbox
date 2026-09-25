@@ -28,7 +28,7 @@ export function ObsSample({ spec }: { spec: SpecDict }) {
   const agent: SampleAgent | undefined = result?.agents[0];
 
   const head = loading
-    ? `stepping to ${pick ? `the ${pick.type} at t+${Math.round(pick.at_s)} s` : "the first aircraft"}…`
+    ? `stepping to ${pick ? `${pick.acid ?? "the aircraft"} at t+${Math.round(pick.at_s)} s` : "the first aircraft"}…`
     : agent
       ? `${agent.acid} · ${agent.type} · at t = ${Math.round(result!.sim_time_s)} s`
       : "";

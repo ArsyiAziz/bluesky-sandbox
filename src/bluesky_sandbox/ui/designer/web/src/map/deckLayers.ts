@@ -2,8 +2,8 @@
 // volumes, route polylines + direction arrows, sampled aircraft, and nav
 // context. Category visibility + per-element hide are applied here so the spec
 // is never mutated by view toggles.
-import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer } from "@deck.gl/layers";
-import type { NavFeatures, PreviewResult, SpecDict } from "../api";
+import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck.gl/layers";
+import type { NavFeatures, PreviewResult, SpawnedAircraft, SpecDict } from "../api";
 import type {
   CategoryVisibility,
   Edge,
@@ -57,12 +57,28 @@ const ROUTE_ARROW_ICON =
 // Tooltip for any hovered deck object (nav fixes/airports, selected waypoints,
 // aircraft, routes). Unified here because deck owns pointer events for rendered
 // task overlays, so all hover info must come through deck.
+// An aircraft's tag on the map, and how it is drawn - shared with the map's
+// declutter, which sizes tags to find the ones that fit.
+export const TAG_SIZE_PX = 12;
+export const TAG_OFFSET_PX = 9;
+export const aircraftTag = (a: SpawnedAircraft) =>
+  `${a.callsign}  FL${String(Math.round(a.alt_ft / 100)).padStart(3, "0")}`;
+
 export function getTooltip({ object }: any) {
   if (!object) return null;
   if (object.points) return { text: `route: ${object.name}` };
   if (object.routeName) return { text: `route: ${object.routeName}` };
   if (object.awid) return { text: `${object.awid}  ${object.from_id} → ${object.to_id}` };
   if (object.icao) return { text: `${object.icao}${object.name ? " — " + object.name : ""}` };
+  // An aircraft as flown: its full label, as the pygame view gives it.
+  if (object.callsign && object.label)
+    return {
+      text: [
+        ...object.label,
+        `HDG${String(Math.round(object.hdg_deg) % 360).padStart(3, "0")}  spawned t+${Math.round(object.time_s)} s`,
+        object.controlled ? "controlled" : "background traffic",
+      ].join("\n"),
+    };
   if (object.actype) return { text: `${object.actype}  ${Math.round(object.alt_ft)} ft` };
   const id = object.ident ?? object.name;
   if (id) {
@@ -98,6 +114,11 @@ export function deckLayers(
   // The live spec (draft during a drag, else the committed spec). Used to draw
   // standalone named bounds; draftSpec alone is null outside a drag.
   spec: SpecDict | null = draftSpec,
+  // The episode's aircraft as the environment created them, when its run is
+  // in: drawn in place of the preview's draw, with a heading leader each.
+  flown: SpawnedAircraft[] | null = null,
+  // The callsigns whose tags fit without overlapping; null tags them all.
+  tagged: Set<string> | null = null,
 ) {
   const shown = (key: string) => !hidden.has(key);
   // The selected element is drawn from canonical (unrotated) geometry below so
@@ -663,21 +684,91 @@ export function deckLayers(
         billboard: true,
         parameters: { depthTest: false },
       }),
-      new ScatterplotLayer({
-        id: "aircraft",
-        data: preview.sampled_aircraft,
-        getPosition: (a: any) => [a.lon, a.lat, zMeters(a.alt_ft)],
-        getFillColor: [239, 68, 68, 255],
-        getLineColor: [255, 255, 255, 220],
-        stroked: true,
-        lineWidthMinPixels: 1,
-        getRadius: 4,
-        radiusUnits: "pixels",
-        billboard: true,
-        pickable: true,
-        parameters: { depthTest: false },
-      }),
     );
+    if (flown) {
+      // A leader to where the aircraft is a minute on, at its ground speed and
+      // heading - as a radar scope draws it.
+      const ahead = (a: SpawnedAircraft): [number, number, number] => {
+        const nmAhead = a.gs_kts / 60;
+        const h = (a.hdg_deg * Math.PI) / 180;
+        return [
+          a.lon_deg + (nmAhead * Math.sin(h)) / (60 * Math.cos((a.lat_deg * Math.PI) / 180)),
+          a.lat_deg + (nmAhead * Math.cos(h)) / 60,
+          zMeters(a.alt_ft),
+        ];
+      };
+      const color = (a: SpawnedAircraft): [number, number, number, number] =>
+        a.controlled ? [239, 68, 68, 255] : [160, 160, 160, 255];
+      layers.push(
+        new LineLayer({
+          id: "aircraft-leaders",
+          data: flown,
+          getSourcePosition: (a: SpawnedAircraft) => [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)],
+          getTargetPosition: ahead,
+          getColor: color,
+          getWidth: 1.5,
+          widthUnits: "pixels",
+          parameters: { depthTest: false },
+        }),
+        new ScatterplotLayer({
+          id: "aircraft",
+          data: flown,
+          getPosition: (a: SpawnedAircraft) => [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)],
+          getFillColor: color,
+          getLineColor: [255, 255, 255, 220],
+          stroked: true,
+          lineWidthMinPixels: 1,
+          getRadius: 4,
+          radiusUnits: "pixels",
+          billboard: true,
+          pickable: true,
+          parameters: { depthTest: false },
+        }),
+      );
+      // A short tag at each aircraft's altitude, beside its dot - callsign and
+      // flight level - for those the map found room for; hovering an aircraft
+      // shows its full pygame block.
+      if (visibility.labels) {
+        layers.push(
+          new TextLayer({
+            id: "aircraft-labels",
+            data: tagged ? flown.filter((a) => tagged.has(a.callsign)) : flown,
+            getPosition: (a: SpawnedAircraft) => [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)],
+            getText: aircraftTag,
+            getColor: (a: SpawnedAircraft) => (a.controlled ? [255, 214, 214, 255] : [225, 225, 225, 255]),
+            getSize: TAG_SIZE_PX,
+            getTextAnchor: "start",
+            getAlignmentBaseline: "center",
+            getPixelOffset: [TAG_OFFSET_PX, 0],
+            fontFamily: "Helvetica, Arial, sans-serif",
+            fontWeight: 600,
+            characterSet: "auto",
+            background: true,
+            getBackgroundColor: [20, 20, 22, 215],
+            backgroundPadding: [4, 2, 4, 2],
+            billboard: true,
+            parameters: { depthTest: false },
+          }),
+        );
+      }
+    } else {
+      layers.push(
+        new ScatterplotLayer({
+          id: "aircraft",
+          data: preview.sampled_aircraft,
+          getPosition: (a: any) => [a.lon, a.lat, zMeters(a.alt_ft)],
+          getFillColor: [239, 68, 68, 255],
+          getLineColor: [255, 255, 255, 220],
+          stroked: true,
+          lineWidthMinPixels: 1,
+          getRadius: 4,
+          radiusUnits: "pixels",
+          billboard: true,
+          pickable: true,
+          parameters: { depthTest: false },
+        }),
+      );
+    }
   }
   return layers;
 }

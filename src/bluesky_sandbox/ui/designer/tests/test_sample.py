@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from bluesky_sandbox.ui.designer.runner import sample_design
+from bluesky_sandbox.ui.designer.runner import episode_spawns, sample_design
 
 from .test_designer import _example_design_spec
 
@@ -41,8 +41,21 @@ def test_every_aircraft_up_reports_its_ranges(sample):
     assert set(sample["ranges"]["action"]) == {"hdg_deg", "spd_kts"}
 
 
-def test_a_type_asked_for_is_the_first_agent():
-    first = sample_design(_example_design_spec(), seed=0, max_agents=1)
-    wanted = first["agents"][0]["type"]
-    again = sample_design(_example_design_spec(), seed=0, max_agents=1, actype=wanted)
-    assert again["agents"][0]["type"] == wanted
+def test_an_aircraft_asked_for_is_the_first_agent():
+    spawns = episode_spawns(_example_design_spec(), seed=0)
+    last = spawns["aircraft"][-1]
+    sample = sample_design(
+        _example_design_spec(), seed=0, max_agents=1, at_s=last["time_s"], acid=last["callsign"]
+    )
+    assert sample["agents"][0]["acid"] == last["callsign"]
+
+
+def test_the_episode_lists_each_aircraft_as_created():
+    spawns = episode_spawns(_example_design_spec(), seed=0)
+    assert spawns["complete"] and len(spawns["aircraft"]) == spawns["scheduled"] > 0
+    first = spawns["aircraft"][0]
+    assert {"callsign", "actype", "time_s", "lat_deg", "lon_deg", "alt_ft", "hdg_deg", "cas_kts", "gs_kts"} <= set(first)
+    assert first["label"][0].startswith(first["callsign"])
+    assert first["label"][1].startswith(f"FL{round(first['alt_ft'] / 100):03d}")
+    # The same seed, the same episode.
+    assert episode_spawns(_example_design_spec(), seed=0)["aircraft"] == spawns["aircraft"]
