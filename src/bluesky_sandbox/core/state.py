@@ -83,6 +83,8 @@ class SpawnRecord(NamedTuple):
     controlled: bool
     region_index: int
     route: tuple[str, ...] | None
+    #: The route's waypoints as resolved for this aircraft, constraints and all.
+    targets: tuple[WaypointTarget, ...] = ()
 
 
 AircraftControlStates: TypeAlias = dict[Callsign, AircraftControlState]

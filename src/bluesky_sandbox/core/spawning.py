@@ -565,7 +565,9 @@ class SpawnGenerator:
         self.env._aircraft_spawn_time[callsign] = self.env._runtime.sim_time
         self.env._aircraft_region[callsign] = item.region_index
         controlled = state is AircraftControlState.CONTROLLED
-        self._record(callsign, item.region_index, controlled, route_names)
+        self._record(
+            callsign, item.region_index, controlled, route_names, route.targets if route else ()
+        )
         return controlled
 
     def _record(
@@ -574,6 +576,7 @@ class SpawnGenerator:
         region_index: int,
         controlled: bool,
         route: list[str] | None,
+        targets: Sequence[WaypointTarget] = (),
     ) -> None:
         idx = self.env._runtime.index(callsign)
         traf = bs.traf
@@ -592,6 +595,7 @@ class SpawnGenerator:
                 controlled=controlled,
                 region_index=region_index,
                 route=tuple(route) if route else None,
+                targets=tuple(targets),
             )
         )
 
