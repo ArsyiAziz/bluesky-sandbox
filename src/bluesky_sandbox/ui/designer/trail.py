@@ -26,12 +26,14 @@ from typing import Any
 import bluesky_sandbox
 from bluesky_sandbox.core.services import QueryBatch
 from bluesky_sandbox.interface.fields import _common, _pairs, base
+from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.interface.fields import queryables as _queryable_fields
 
 __all__ = ["call_trail"]
 
 # The methods that produce a field's value or bounds - where a trail starts.
 _ENTRY = (
+    "_si_values",
     "_values",
     "_pairs",
     "get",
@@ -54,6 +56,7 @@ _PLUMBING_CLASSES = (
     base.EnvPairObsField,
     _common._BroadcastObs,
     _pairs._BroadcastPairs,
+    _observations._UnitField,
 )
 
 # Helpers too small or too generic to explain anything: index coercion,
@@ -72,6 +75,7 @@ _SKIP = frozenset(
         "_fields",
         "_clip",
         "_unavailable",
+        "_convert",
     }
 )
 

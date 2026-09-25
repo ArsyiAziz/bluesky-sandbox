@@ -58,7 +58,11 @@ def test_every_entry_points_at_real_source(cls):
             ["_pairs._fix_projection", "_route._active_route_waypoint"],
         ),
         (observations.ActiveRouteWaypointEteS, ["_route._route_along_distance_nm"]),
-        (observations.CasKts, ["_CasEnvelopeBounds._speed_bounds_ms"]),
+        (
+            observations.CasKts,
+            ["_Cas._si_values", "_CasEnvelopeBounds._speed_bounds_ms"],
+        ),
+        (observations.AltM, ["_Altitude._si_values", "_Altitude.bounds"]),
         (observations.LaggedPair, ["_lag._lag_ring", "_LagRing"]),
         # Reached through env.query_batch, which only the explicit link follows.
         (queryables.WaypointDistanceNm, ["QueryBatch._waypoint_current"]),
@@ -86,7 +90,8 @@ def test_a_helper_is_listed_below_the_one_that_calls_it():
 @pytest.mark.parametrize("cls", _built_in_fields(), ids=lambda c: c.__name__)
 def test_plumbing_is_left_out(cls):
     names = {entry["name"].rsplit(".", 1)[-1] for entry in call_trail(cls)}
-    assert not names & {"_indices_array", "_traf_array", "get_many", "get_pairs"}
+    plumbing = {"_indices_array", "_traf_array", "get_many", "get_pairs", "_convert"}
+    assert not names & plumbing
 
 
 def test_the_catalog_ships_the_trail():

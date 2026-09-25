@@ -733,6 +733,55 @@ class ActiveRouteWaypointVerticalEteS(_ActiveRouteWaypointField):
         return min(error_m / rate_ms, float(self.high))
 
 
+class _UnitField(_BroadcastObs, ObsField):
+    """A quantity computed in SI and reported in its variant's unit.
+
+    ``AltFt`` and ``AltM`` are one quantity in two units, so each is defined
+    once, in SI (``_si_values``, ``_si_expected``, and the SI inputs of its
+    dynamic bounds), and a unit mixin (:class:`_InFeet`, :class:`_InKnots`, ...)
+    sets ``_scale``, the SI-to-unit factor. Values, the test reference and
+    dynamic bounds all convert through it, so the variants cannot drift apart.
+    Bounds configured with ``low``/``high`` are already in the variant's unit.
+    """
+
+    _scale: ClassVar[float] = 1.0
+
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+    def _si_expected(self, idx: int) -> float:
+        raise NotImplementedError
+
+    def _convert(self, si: Any) -> Any:
+        return si * self._scale
+
+    def _values(self, indices: Any) -> Any:
+        return self._convert(self._si_values(_indices_array(indices)))
+
+    def _expected(self, idx: int) -> Any:
+        return self._convert(self._si_expected(idx))
+
+
+class _InMetres:
+    _scale: ClassVar[float] = 1.0
+
+
+class _InFeet:
+    _scale: ClassVar[float] = _M_TO_FT
+
+
+class _InMetresPerSecond:
+    _scale: ClassVar[float] = 1.0
+
+
+class _InKnots:
+    _scale: ClassVar[float] = _MS_TO_KTS
+
+
+class _InFeetPerMinute:
+    _scale: ClassVar[float] = _MS_TO_FTMIN
+
+
 class _AltitudeEnvelopeBounds:
     """Bounds backed by BlueSky's aircraft altitude ceiling."""
 
@@ -744,94 +793,6 @@ class _AltitudeEnvelopeBounds:
                 "pass explicit low/high bounds for pre-initialization use."
             )
         return float(bs.traf.perf.hmax[idx])
-
-    @classmethod
-    def _altitude_ceiling_ft(cls, idx: int) -> float:
-        return cls._altitude_ceiling_m(idx) * _M_TO_FT
-
-
-@dataclass(frozen=True)
-class _AltitudeEnvelopeFt(ObsField):
-    """Altitude observation with bounds from ``bs.traf.perf.hmax``."""
-
-    low: Annotated[
-        float | None,
-        "altitude feet lower bound; None = 0 ft at runtime",
-    ] = None
-    high: Annotated[
-        float | None,
-        "altitude feet upper bound; None = BlueSky perf.hmax at runtime",
-    ] = None
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(
-            lambda: (0.0, self._altitude_ceiling_ft(idx))
-        )
-
-
-@dataclass(frozen=True)
-class _AltitudeEnvelopeM(ObsField):
-    """Altitude observation with bounds from ``bs.traf.perf.hmax``."""
-
-    low: Annotated[
-        float | None,
-        "altitude metres lower bound; None = 0 m at runtime",
-    ] = None
-    high: Annotated[
-        float | None,
-        "altitude metres upper bound; None = BlueSky perf.hmax at runtime",
-    ] = None
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(
-            lambda: (0.0, self._altitude_ceiling_m(idx))
-        )
-
-
-@dataclass(frozen=True)
-class AltFt(_BroadcastObs, _AltitudeEnvelopeBounds, _AltitudeEnvelopeFt):
-    """Aircraft altitude in feet.
-
-    Metadata:
-        name: alt_ft
-        unit: ft
-        quantity: altitude
-        dynamic_bounds: True
-
-    ``low=None`` and ``high=None`` mean bounds are read from BlueSky's
-    aircraft altitude ceiling at runtime.
-    """
-
-    meta = ObsMeta("alt_ft", Unit.FT, ObsQuantity.ALTITUDE, dynamic_bounds=True)
-
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.alt[_indices_array(indices)] * _M_TO_FT
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.alt[idx]) / ft
-
-
-@dataclass(frozen=True)
-class AltM(_BroadcastObs, _AltitudeEnvelopeBounds, _AltitudeEnvelopeM):
-    """Aircraft altitude in metres.
-
-    Metadata:
-        name: alt_m
-        unit: m
-        quantity: altitude
-        dynamic_bounds: True
-
-    ``low=None`` and ``high=None`` mean bounds are read from BlueSky's
-    aircraft altitude ceiling at runtime.
-    """
-
-    meta = ObsMeta("alt_m", Unit.M, ObsQuantity.ALTITUDE, dynamic_bounds=True)
-
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.alt[_indices_array(indices)]
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.alt[idx])
 
 
 class _CasEnvelopeBounds:
@@ -852,43 +813,194 @@ class _TasEnvelopeBounds:
 
 
 @dataclass(frozen=True)
-class _SpeedEnvelopeKts(ObsField):
-    """Speed observation with bounds from ``_speed_bounds_ms(...)``."""
+class _Altitude(_AltitudeEnvelopeBounds, _UnitField):
+    """Aircraft altitude; bounds from 0 to the performance ceiling."""
 
-    low: Annotated[
-        float | None,
-        "speed knots lower bound; None = runtime speed envelope",
-    ] = None
+    low: Annotated[float | None, "lower bound; None = 0 at runtime"] = None
     high: Annotated[
-        float | None,
-        "speed knots upper bound; None = runtime speed envelope",
+        float | None, "upper bound; None = BlueSky perf.hmax at runtime"
     ] = None
+
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        return bs.traf.alt[indices]
+
+    def _si_expected(self, idx: int) -> float:
+        return float(bs.traf.alt[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(
-            lambda: tuple(value * _MS_TO_KTS for value in self._speed_bounds_ms(idx))
+            lambda: (0.0, self._convert(self._altitude_ceiling_m(idx)))
         )
 
 
 @dataclass(frozen=True)
-class _SpeedEnvelopeMs(ObsField):
-    """Speed observation with bounds from ``_speed_bounds_ms(...)``."""
+class _ApAltitude(_Altitude):
+    """Autopilot selected altitude."""
 
-    low: Annotated[
-        float | None,
-        "speed m/s lower bound; None = runtime speed envelope",
-    ] = None
-    high: Annotated[
-        float | None,
-        "speed m/s upper bound; None = runtime speed envelope",
-    ] = None
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        return bs.traf.selalt[indices]
 
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(lambda: self._speed_bounds_ms(idx))
+    def _si_expected(self, idx: int) -> float:
+        return float(bs.traf.selalt[idx])
 
 
 @dataclass(frozen=True)
-class CasKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
+class _ApAltitudeError(_AltitudeEnvelopeBounds, _UnitField):
+    """Autopilot selected altitude minus current altitude."""
+
+    low: Annotated[float | None, "lower bound; None = runtime altitude envelope"] = None
+    high: Annotated[float | None, "upper bound; None = runtime altitude envelope"] = None
+
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        return bs.traf.selalt[indices] - bs.traf.alt[indices]
+
+    def _si_expected(self, idx: int) -> float:
+        return float(bs.traf.selalt[idx]) - float(bs.traf.alt[idx])
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        def resolve() -> tuple[float, float]:
+            current = self._convert(bs.traf.alt[idx])
+            ceiling = self._convert(self._altitude_ceiling_m(idx))
+            span = max(
+                max(abs(current), abs(ceiling - current)),
+                _MIN_DYNAMIC_SPAN,
+            )
+            return -span, span
+
+        return self._dynamic_or_configured_bounds(resolve)
+
+
+@dataclass(frozen=True)
+class _Speed(_UnitField):
+    """A speed with bounds from the aircraft's envelope (``_speed_bounds_ms``)."""
+
+    low: Annotated[float | None, "lower bound; None = runtime speed envelope"] = None
+    high: Annotated[float | None, "upper bound; None = runtime speed envelope"] = None
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return self._dynamic_or_configured_bounds(
+            lambda: tuple(self._convert(value) for value in self._speed_bounds_ms(idx))
+        )
+
+
+@dataclass(frozen=True)
+class _Cas(_CasEnvelopeBounds, _Speed):
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        return bs.traf.cas[indices]
+
+    def _si_expected(self, idx: int) -> float:
+        return float(bs.traf.cas[idx])
+
+
+@dataclass(frozen=True)
+class _Tas(_TasEnvelopeBounds, _Speed):
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        return bs.traf.tas[indices]
+
+    def _si_expected(self, idx: int) -> float:
+        return float(bs.traf.tas[idx])
+
+
+@dataclass(frozen=True)
+class _Gs(_TasEnvelopeBounds, _Speed):
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        return bs.traf.gs[indices]
+
+    def _si_expected(self, idx: int) -> float:
+        return float(bs.traf.gs[idx])
+
+
+@dataclass(frozen=True)
+class _ApCas(_CasEnvelopeBounds, _Speed):
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        return bs.traf.selspd[indices]
+
+    def _si_expected(self, idx: int) -> float:
+        return float(bs.traf.selspd[idx])
+
+
+@dataclass(frozen=True)
+class _ApCasError(_CasEnvelopeBounds, _Speed):
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        return bs.traf.selspd[indices] - bs.traf.cas[indices]
+
+    def _si_expected(self, idx: int) -> float:
+        return float(bs.traf.selspd[idx]) - float(bs.traf.cas[idx])
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        # Symmetric about the current speed, wide enough to reach either end
+        # of the envelope - not the envelope itself, which is for speeds.
+        def resolve() -> tuple[float, float]:
+            lo, hi = self._speed_bounds_ms(idx)
+            current = bs.traf.cas[idx]
+            span = max(
+                self._convert(max(abs(current - lo), abs(hi - current))),
+                _MIN_DYNAMIC_SPAN,
+            )
+            return -span, span
+
+        return self._dynamic_or_configured_bounds(resolve)
+
+
+@dataclass(frozen=True)
+class _VerticalSpeed(_UnitField):
+    """Vertical speed; bounds from the performance model's descent/climb limits."""
+
+    low: Annotated[float | None, "lower bound; None = perf.vsmin at runtime"] = None
+    high: Annotated[float | None, "upper bound; None = perf.vsmax at runtime"] = None
+
+    def _si_values(self, indices: np.ndarray) -> np.ndarray:
+        return bs.traf.vs[indices]
+
+    def _si_expected(self, idx: int) -> float:
+        return float(bs.traf.vs[idx])
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        def resolve() -> tuple[float, float]:
+            vsmin = self._convert(float(bs.traf.perf.vsmin[idx]))
+            vsmax = self._convert(float(bs.traf.perf.vsmax[idx]))
+            assert vsmin <= 0.0
+            return vsmin, vsmax
+
+        return self._dynamic_or_configured_bounds(resolve)
+
+
+@dataclass(frozen=True)
+class AltFt(_InFeet, _Altitude):
+    """Aircraft altitude in feet.
+
+    Metadata:
+        name: alt_ft
+        unit: ft
+        quantity: altitude
+        dynamic_bounds: True
+
+    ``low=None`` and ``high=None`` mean bounds are read from BlueSky's
+    aircraft altitude ceiling at runtime.
+    """
+
+    meta = ObsMeta("alt_ft", Unit.FT, ObsQuantity.ALTITUDE, dynamic_bounds=True)
+
+
+@dataclass(frozen=True)
+class AltM(_InMetres, _Altitude):
+    """Aircraft altitude in metres.
+
+    Metadata:
+        name: alt_m
+        unit: m
+        quantity: altitude
+        dynamic_bounds: True
+
+    ``low=None`` and ``high=None`` mean bounds are read from BlueSky's
+    aircraft altitude ceiling at runtime.
+    """
+
+    meta = ObsMeta("alt_m", Unit.M, ObsQuantity.ALTITUDE, dynamic_bounds=True)
+
+
+@dataclass(frozen=True)
+class CasKts(_InKnots, _Cas):
     """Calibrated airspeed in knots.
 
     Metadata:
@@ -903,15 +1015,9 @@ class CasKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
 
     meta = ObsMeta("cas_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.cas[_indices_array(indices)] * _MS_TO_KTS
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.cas[idx]) / kts
-
 
 @dataclass(frozen=True)
-class CasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
+class CasMs(_InMetresPerSecond, _Cas):
     """Calibrated airspeed in m/s.
 
     Metadata:
@@ -926,15 +1032,9 @@ class CasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
 
     meta = ObsMeta("cas_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.cas[_indices_array(indices)]
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.cas[idx])
-
 
 @dataclass(frozen=True)
-class TasKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
+class TasKts(_InKnots, _Tas):
     """True airspeed in knots.
 
     Metadata:
@@ -946,15 +1046,9 @@ class TasKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
 
     meta = ObsMeta("tas_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.tas[_indices_array(indices)] * _MS_TO_KTS
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.tas[idx]) / kts
-
 
 @dataclass(frozen=True)
-class TasMs(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeMs):
+class TasMs(_InMetresPerSecond, _Tas):
     """True airspeed in m/s.
 
     Metadata:
@@ -966,15 +1060,9 @@ class TasMs(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeMs):
 
     meta = ObsMeta("tas_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.tas[_indices_array(indices)]
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.tas[idx])
-
 
 @dataclass(frozen=True)
-class VsFtMin(_BroadcastObs, ObsField):
+class VsFtMin(_InFeetPerMinute, _VerticalSpeed):
     """Vertical speed in ft/min.
 
     Metadata:
@@ -990,34 +1078,10 @@ class VsFtMin(_BroadcastObs, ObsField):
     meta = ObsMeta(
         "vs_ftmin", Unit.FT_PER_MIN, ObsQuantity.VERTICAL_SPEED, dynamic_bounds=True
     )
-    low: Annotated[
-        float | None,
-        "vertical speed ft/min lower bound; None = perf.vsmin",
-    ] = None
-    high: Annotated[
-        float | None,
-        "vertical speed ft/min upper bound; None = perf.vsmax at runtime",
-    ] = None
-
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.vs[_indices_array(indices)] * _MS_TO_FTMIN
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.vs[idx]) * 60.0 / ft
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            vsmin = float(bs.traf.perf.vsmin[idx]) * _MS_TO_FTMIN
-            vsmax = float(bs.traf.perf.vsmax[idx]) * _MS_TO_FTMIN
-            assert vsmin <= 0
-            
-            return vsmin, vsmax
-
-        return self._dynamic_or_configured_bounds(resolve)
 
 
 @dataclass(frozen=True)
-class VsMs(_BroadcastObs, ObsField):
+class VsMs(_InMetresPerSecond, _VerticalSpeed):
     """Vertical speed in m/s.
 
     Metadata:
@@ -1033,30 +1097,6 @@ class VsMs(_BroadcastObs, ObsField):
     meta = ObsMeta(
         "vs_ms", Unit.M_PER_S, ObsQuantity.VERTICAL_SPEED, dynamic_bounds=True
     )
-    low: Annotated[
-        float | None,
-        "vertical speed m/s lower bound; None = perf.vsmin at runtime",
-    ] = None
-    high: Annotated[
-        float | None,
-        "vertical speed m/s upper bound; None = perf.vsmax at runtime",
-    ] = None
-
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.vs[_indices_array(indices)]
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.vs[idx])
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            vsmin = float(bs.traf.perf.vsmin[idx])
-            vsmax = float(bs.traf.perf.vsmax[idx])
-            assert vsmin <= 0.0
-           
-            return vsmin, vsmax
-
-        return self._dynamic_or_configured_bounds(resolve)
 
 
 @dataclass(frozen=True)
@@ -1826,7 +1866,7 @@ class PrevActionNorm(_BroadcastObs, _LastActionBacked, ObsField):
 
 
 @dataclass(frozen=True)
-class GsKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
+class GsKts(_InKnots, _Gs):
     """Ground speed in knots.
 
     Metadata:
@@ -1842,15 +1882,9 @@ class GsKts(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeKts):
 
     meta = ObsMeta("gs_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.gs[_indices_array(indices)] * _MS_TO_KTS
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.gs[idx]) / kts
-
 
 @dataclass(frozen=True)
-class GsMs(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeMs):
+class GsMs(_InMetresPerSecond, _Gs):
     """Ground speed in m/s.
 
     Metadata:
@@ -1865,12 +1899,6 @@ class GsMs(_BroadcastObs, _TasEnvelopeBounds, _SpeedEnvelopeMs):
     """
 
     meta = ObsMeta("gs_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
-
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.gs[_indices_array(indices)]
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.gs[idx])
 
 
 @dataclass(frozen=True)
@@ -1899,7 +1927,7 @@ class ApHdgDeg(_BroadcastObs, ObsField):
 
 
 @dataclass(frozen=True)
-class ApCasKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
+class ApCasKts(_InKnots, _ApCas):
     """Autopilot selected calibrated airspeed in knots.
 
     Metadata:
@@ -1911,15 +1939,9 @@ class ApCasKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
 
     meta = ObsMeta("ap_cas_kts", Unit.KTS, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.selspd[_indices_array(indices)] * _MS_TO_KTS
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.selspd[idx]) / kts
-
 
 @dataclass(frozen=True)
-class ApCasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
+class ApCasMs(_InMetresPerSecond, _ApCas):
     """Autopilot selected calibrated airspeed in m/s.
 
     Metadata:
@@ -1931,15 +1953,9 @@ class ApCasMs(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeMs):
 
     meta = ObsMeta("ap_cas_ms", Unit.M_PER_S, ObsQuantity.SPEED, dynamic_bounds=True)
 
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.selspd[_indices_array(indices)]
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.selspd[idx])
-
 
 @dataclass(frozen=True)
-class ApAltFt(AltFt):
+class ApAltFt(_InFeet, _ApAltitude):
     """Autopilot selected altitude in feet.
 
     Metadata:
@@ -1951,15 +1967,9 @@ class ApAltFt(AltFt):
 
     meta = ObsMeta("ap_alt_ft", Unit.FT, ObsQuantity.ALTITUDE, dynamic_bounds=True)
 
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.selalt[_indices_array(indices)] * _M_TO_FT
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.selalt[idx]) / ft
-
 
 @dataclass(frozen=True)
-class ApAltM(AltM):
+class ApAltM(_InMetres, _ApAltitude):
     """Autopilot selected altitude in metres.
 
     Metadata:
@@ -1970,12 +1980,6 @@ class ApAltM(AltM):
     """
 
     meta = ObsMeta("ap_alt_m", Unit.M, ObsQuantity.ALTITUDE, dynamic_bounds=True)
-
-    def _values(self, indices: Any) -> Any:
-        return bs.traf.selalt[_indices_array(indices)]
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.selalt[idx])
 
 
 @dataclass(frozen=True)
@@ -2018,7 +2022,7 @@ class ApHdgErrorDeg(_BroadcastObs, ObsField):
 
 
 @dataclass(frozen=True)
-class ApCasErrorKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
+class ApCasErrorKts(_InKnots, _ApCasError):
     """Autopilot selected CAS error relative to current CAS in knots."""
 
     meta = ObsMeta(
@@ -2028,28 +2032,9 @@ class ApCasErrorKts(_BroadcastObs, _CasEnvelopeBounds, _SpeedEnvelopeKts):
         dynamic_bounds=True,
     )
 
-    def _values(self, indices: Any) -> Any:
-        indices = _indices_array(indices)
-        return (bs.traf.selspd[indices] - bs.traf.cas[indices]) * _MS_TO_KTS
-
-    def _expected(self, idx: int) -> Any:
-        return (float(bs.traf.selspd[idx]) - float(bs.traf.cas[idx])) / kts
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            lo, hi = self._speed_bounds_ms(idx)
-            current = bs.traf.cas[idx]
-            span = max(
-                max(abs(current - lo), abs(hi - current)) * _MS_TO_KTS,
-                _MIN_DYNAMIC_SPAN,
-            )
-            return -span, span
-
-        return self._dynamic_or_configured_bounds(resolve)
-
 
 @dataclass(frozen=True)
-class ApAltErrorFt(_BroadcastObs, _AltitudeEnvelopeBounds, ObsField):
+class ApAltErrorFt(_InFeet, _ApAltitudeError):
     """Autopilot selected altitude error relative to current altitude in feet."""
 
     meta = ObsMeta(
@@ -2058,37 +2043,10 @@ class ApAltErrorFt(_BroadcastObs, _AltitudeEnvelopeBounds, ObsField):
         ObsQuantity.ALTITUDE,
         dynamic_bounds=True,
     )
-    low: Annotated[
-        float | None,
-        "autopilot altitude error feet lower bound; None = runtime altitude envelope",
-    ] = None
-    high: Annotated[
-        float | None,
-        "autopilot altitude error feet upper bound; None = runtime altitude envelope",
-    ] = None
-
-    def _values(self, indices: Any) -> Any:
-        indices = _indices_array(indices)
-        return (bs.traf.selalt[indices] - bs.traf.alt[indices]) * _M_TO_FT
-
-    def _expected(self, idx: int) -> Any:
-        return (float(bs.traf.selalt[idx]) - float(bs.traf.alt[idx])) / ft
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            current_ft = bs.traf.alt[idx] * _M_TO_FT
-            ceiling_ft = self._altitude_ceiling_ft(idx)
-            span = max(
-                max(abs(current_ft), abs(ceiling_ft - current_ft)),
-                _MIN_DYNAMIC_SPAN,
-            )
-            return -span, span
-
-        return self._dynamic_or_configured_bounds(resolve)
 
 
 @dataclass(frozen=True)
-class ApAltErrorM(_BroadcastObs, _AltitudeEnvelopeBounds, ObsField):
+class ApAltErrorM(_InMetres, _ApAltitudeError):
     """Autopilot selected altitude error relative to current altitude in metres."""
 
     meta = ObsMeta(
@@ -2097,33 +2055,6 @@ class ApAltErrorM(_BroadcastObs, _AltitudeEnvelopeBounds, ObsField):
         ObsQuantity.ALTITUDE,
         dynamic_bounds=True,
     )
-    low: Annotated[
-        float | None,
-        "autopilot altitude error metres lower bound; None = runtime altitude envelope",
-    ] = None
-    high: Annotated[
-        float | None,
-        "autopilot altitude error metres upper bound; None = runtime altitude envelope",
-    ] = None
-
-    def _values(self, indices: Any) -> Any:
-        indices = _indices_array(indices)
-        return bs.traf.selalt[indices] - bs.traf.alt[indices]
-
-    def _expected(self, idx: int) -> Any:
-        return float(bs.traf.selalt[idx]) - float(bs.traf.alt[idx])
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            current_m = bs.traf.alt[idx]
-            ceiling_m = self._altitude_ceiling_m(idx)
-            span = max(
-                max(abs(current_m), abs(ceiling_m - current_m)),
-                _MIN_DYNAMIC_SPAN,
-            )
-            return -span, span
-
-        return self._dynamic_or_configured_bounds(resolve)
 
 
 @dataclass(frozen=True)

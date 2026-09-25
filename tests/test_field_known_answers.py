@@ -164,3 +164,57 @@ def test_a_reset_does_not_serve_the_last_episodes_geometry(env):
     own = _place("OWN", 0.0, 0.0, 90.0, 250.0)
     other = _place("INTR", gs_kts=250.0, **_ENCOUNTERS["abeam"])
     assert float(field.get_pairs(own, [other])[0]) == 0.0
+
+
+# --- units --------------------------------------------------------------------
+# A quantity is computed once in SI; each unit variant converts it with
+# BlueSky's own constants. Pin those to the unit definitions, and each pair's
+# values AND dynamic bounds to each other - the reference tests compare values
+# only.
+_UNIT_PAIRS = [
+    (obs.AltFt, obs.AltM, 1 / ft),
+    (obs.ApAltFt, obs.ApAltM, 1 / ft),
+    (obs.ApAltErrorFt, obs.ApAltErrorM, 1 / ft),
+    (obs.CasKts, obs.CasMs, 1 / kts),
+    (obs.TasKts, obs.TasMs, 1 / kts),
+    (obs.GsKts, obs.GsMs, 1 / kts),
+    (obs.ApCasKts, obs.ApCasMs, 1 / kts),
+    (obs.VsFtMin, obs.VsMs, 60 / ft),
+]
+
+
+def test_the_conversion_constants_are_the_unit_definitions():
+    # International foot and nautical mile; BlueSky rounds kts to 0.514444.
+    assert ft == pytest.approx(0.3048, rel=1e-9)
+    assert kts == pytest.approx(1852 / 3600, rel=1e-6)
+    assert nm == pytest.approx(1852.0, rel=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("in_unit", "in_si", "factor"),
+    _UNIT_PAIRS,
+    ids=[f"{u.__name__}-{s.__name__}" for u, s, _f in _UNIT_PAIRS],
+)
+def test_a_unit_variant_is_its_si_twin_converted(env, in_unit, in_si, factor):
+    env.reset(seed=0)
+    idx = _place("OWN", 0.0, 0.0, 90.0, 250.0, alt_ft=12_000.0, vs_fpm=-800.0)
+    bs.traf.selalt[idx] = 9_000.0 * ft
+    bs.traf.selspd[idx] = 230.0 * kts
+    unit, si = in_unit(), in_si()
+    assert float(unit.get(idx)) == pytest.approx(float(si.get(idx)) * factor, rel=1e-9)
+    for got, want in zip(unit.bounds(idx), si.bounds(idx), strict=True):
+        assert float(got) == pytest.approx(float(want) * factor, rel=1e-9)
+
+
+def test_the_speed_error_bounds_reach_either_end_of_the_envelope(env):
+    env.reset(seed=0)
+    idx = _place("OWN", 0.0, 0.0, 90.0, 250.0)
+    low, high = obs.ApCasErrorKts().bounds(idx)
+    cas = float(bs.traf.cas[idx]) / kts
+    vmin, vmax = (
+        float(v) / kts for v in (bs.traf.perf.vmin[idx], bs.traf.perf.vmax[idx])
+    )
+    # Symmetric about zero error, wide enough to command the slower or the
+    # faster envelope edge from the current speed.
+    assert low == -high
+    assert high == pytest.approx(max(cas - vmin, vmax - cas), rel=1e-9)
