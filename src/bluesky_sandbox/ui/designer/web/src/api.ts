@@ -97,6 +97,8 @@ export interface SearchResult {
 export interface GenerateResult {
   package: string;
   files: Record<string, string>;
+  // What the chosen template cannot do with this design (SB3's limits).
+  notes?: { level: "error" | "warning" | "info"; message: string }[];
 }
 
 

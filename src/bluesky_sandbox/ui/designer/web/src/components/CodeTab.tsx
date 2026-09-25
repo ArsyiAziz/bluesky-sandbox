@@ -402,9 +402,17 @@ export default function CodeTab({
           editable
           onClick={() => setSelected("taskinfo:setup")}
         />
-        <button className="hook-add" title="add a task-info provider: code that writes under info[&quot;task&quot;]" onClick={addTaskInfoProvider}>
-          + task info
-        </button>
+        {/* Looks like its neighbors' pickers, though it has one thing to add. */}
+        <div className="hook-add">
+          <button
+            type="button"
+            className="picker-trigger"
+            title="add a task-info provider: code that writes under info[&quot;task&quot;]"
+            onClick={addTaskInfoProvider}
+          >
+            <span className="picker-placeholder">+ task info…</span>
+          </button>
+        </div>
         {taskInfo.map((provider, i) => (
           <FileItem
             key={`${provider.name}-${i}`}

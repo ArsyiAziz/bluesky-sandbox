@@ -3593,3 +3593,33 @@ button:disabled {
 .notes-card {
   min-height: calc(100vh - 380px);
 }
+
+/* What a generated template cannot do with the design. */
+.generate-notes {
+  list-style: none;
+  margin: 0;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.generate-note {
+  display: flex;
+  gap: 8px;
+  line-height: 1.4;
+}
+.generate-note b {
+  flex: none;
+  width: 92px;
+}
+.generate-note.error b {
+  color: #f87171;
+}
+.generate-note.warning b {
+  color: #fbbf24;
+}
+.generate-note.info b {
+  color: var(--muted);
+}

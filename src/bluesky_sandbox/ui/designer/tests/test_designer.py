@@ -1609,3 +1609,25 @@ def test_an_rl_package_adds_a_scaffold_shaped_by_the_mdp():
 def test_an_unknown_template_is_refused():
     with pytest.raises(ValueError, match="unknown template"):
         _templated("fancy")
+
+
+def test_an_sb3_package_trains_with_ppo_and_flags_what_sb3_cannot_do():
+    plain = _templated("sb3")["train.py"]
+    assert "PPO(" in plain and "pettingzoo_env_to_vec_env_v1" in plain
+    assert "ActorView" not in plain and "raise NotImplementedError" not in plain
+    ast.parse(plain)
+
+    spec = _example_design_spec()
+    spec.metadata["template"] = "sb3"
+    spec.env.action_fields = [*spec.env.action_fields, S.FieldRef("AutopilotLnav")]
+    spec.env.critic_obs_fields = [S.FieldRef("CasKts")]
+    spec.env.hook_setup = "import numpy as np\n" + (spec.env.hook_setup or "")
+    spec.env.hooks = {**spec.env.hooks, "cost": "return 0.0"}
+    levels = sorted(n["level"] for n in codegen.sb3_notes(spec))
+    assert levels == ["error", "info", "warning", "warning"]
+    train = next(t for p, t in codegen.generate_task(spec, "Sb3").items() if p.endswith("train.py"))
+    # A switch action blocks SB3: train() says so before building anything.
+    guard = train.split("def train(", 1)[1].split("vec = ", 1)[0]
+    assert "raise NotImplementedError(" in guard and "SB3 cannot train this design" in guard
+    # The critic-only fields are dropped rather than shown to the actor.
+    assert "env = ActorView(env)" in train

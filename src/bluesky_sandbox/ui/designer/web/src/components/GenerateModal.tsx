@@ -14,6 +14,11 @@ const TEMPLATES = [
     title:
       "Adds train.py: a training-loop scaffold for this MDP - the privileged critic's views when the design has critic-only fields, a cost critic when it defines a cost",
   },
+  {
+    id: "sb3",
+    label: "SB3",
+    title: "Adds train.py: every agent trained with one shared Stable-Baselines3 PPO policy, flagging what SB3 cannot do with this design",
+  },
 ];
 
 export default function GenerateModal({
@@ -45,7 +50,7 @@ export default function GenerateModal({
         setResult(r);
         const files = Object.keys(r.files);
         setSelected(
-          files.find((f) => f.endsWith(template === "rl" ? "train.py" : "env.py")) ?? files[0],
+          files.find((f) => f.endsWith(template === "plain" ? "env.py" : "train.py")) ?? files[0],
         );
       })
       .catch((e) => setError(String(e)));
@@ -143,6 +148,16 @@ export default function GenerateModal({
           <button onClick={onClose}>Close</button>
         </header>
         {error && <pre className="error-text">{error}</pre>}
+        {result?.notes && result.notes.length > 0 && (
+          <ul className="generate-notes">
+            {result.notes.map((n, i) => (
+              <li key={i} className={`generate-note ${n.level}`}>
+                <b>{n.level === "error" ? "Cannot train" : n.level === "warning" ? "Differs" : "Note"}</b>
+                <span>{n.message}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         {status && <p className="muted small generate-status">{status}</p>}
         {result && (
           <div className="modal-body">

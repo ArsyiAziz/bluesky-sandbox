@@ -279,7 +279,8 @@ def create_app() -> FastAPI:
             files = _codegen.generate_task(spec, package_name)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
-        return {"package": next(iter(files)).split("/", 1)[0], "files": files}
+        notes = _codegen.sb3_notes(spec) if _codegen.template_of(spec) == "sb3" else []
+        return {"package": next(iter(files)).split("/", 1)[0], "files": files, "notes": notes}
 
     @app.post("/api/spec/run")
     def run_design(body: dict[str, Any] = Body(...)) -> dict[str, Any]:

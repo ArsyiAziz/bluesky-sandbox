@@ -29,9 +29,12 @@ import ast
 import copy
 import keyword
 import re
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from bluesky_sandbox.interface.fields.base import ActionKind
 
 from . import setup_code
 from .builder import (
@@ -138,6 +141,13 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
         has_cost=defines_cost(e),
         typed=typed,
     )
+    if template == "sb3":
+        files[f"{pkg}/train.py"] = _sb3_train_py(
+            pkg,
+            class_stem,
+            privileged=bool(e.critic_obs_fields or e.critic_intruder_obs_fields),
+            notes=sb3_notes(spec),
+        )
     if template == "rl":
         files[f"{pkg}/train.py"] = _train_py(
             pkg,
@@ -516,8 +526,9 @@ def _emit_hooks(
 
 
 #: The kinds of package the designer generates: ``plain`` is the environment
-#: and a smoke rollout; ``rl`` adds ``train.py``, a training-loop scaffold.
-TEMPLATES = ("plain", "rl")
+#: and a smoke rollout; ``rl`` adds ``train.py``, a training-loop scaffold;
+#: ``sb3`` adds a ``train.py`` that trains it with Stable-Baselines3 PPO.
+TEMPLATES = ("plain", "rl", "sb3")
 
 
 def template_of(spec: DesignSpec) -> str:
@@ -532,6 +543,150 @@ def defines_cost(env: Any) -> bool:
     """Whether the design defines a cost hook, per agent or batched."""
     hooks = getattr(env, "hooks", None) or {}
     return any((hooks.get(h) or "").strip() for h in ("cost", "cost_batch"))
+
+
+def sb3_notes(spec: DesignSpec) -> list[dict[str, str]]:
+    """What Stable-Baselines3 cannot do with this design: ``error`` where the
+    SB3 package cannot train it at all, ``warning`` where it trains something
+    other than the design asks for. Empty when the design does not build."""
+    try:
+        config = build_design_config(spec)
+    except Exception:  # a broken design says so elsewhere
+        return []
+    notes: list[dict[str, str]] = []
+    kinds = {getattr(f, "kind", None) for f in config.action_fields}
+    if ActionKind.BINARY in kinds:
+        notes.append({
+            "level": "error",
+            "message": "A switch (0/1) action makes the action space a Dict of a continuous and a "
+            "binary part; SB3's algorithms do not train Dict action spaces. Drop the switch "
+            "actions, or use the RL template.",
+        })
+    if defines_cost(spec.env):
+        notes.append({
+            "level": "warning",
+            "message": "SB3 has no constrained algorithm: PPO optimizes the reward alone and "
+            "info[\"cost\"] is ignored. Fold the cost into the reward (a Lagrangian penalty), "
+            "or use the RL template.",
+        })
+    if spec.env.critic_obs_fields or spec.env.critic_intruder_obs_fields:
+        notes.append({
+            "level": "warning",
+            "message": "SB3's actor and critic see one observation, so the critic cannot be "
+            "privileged: train.py drops the critic-only fields rather than show them to the "
+            "actor.",
+        })
+    notes.append({
+        "level": "info",
+        "message": "SB3 needs one number per agent per step: a reward hook that returns an "
+        "array of components must return their sum here.",
+    })
+    return notes
+
+
+def _sb3_train_py(pkg: str, class_stem: str, privileged: bool, notes: list[dict[str, str]]) -> str:
+    """``train.py`` for Stable-Baselines3: every agent shares one PPO policy,
+    through SuperSuit's PettingZoo-to-vector-env conversion."""
+    listed = "".join(
+        "\n" + textwrap.fill(f"- {n['level'].upper()}: {n['message']}", width=76, subsequent_indent="  ")
+        for n in notes
+        if n["level"] != "info"
+    )
+    blocked = [n for n in notes if n["level"] == "error"]
+    guard = (
+        "\n    raise NotImplementedError(\n        "
+        + repr("SB3 cannot train this design: " + " ".join(n["message"] for n in blocked))
+        + "\n    )\n"
+        if blocked
+        else ""
+    )
+    actor_view = (
+        """
+
+class ActorView(BaseParallelWrapper):
+    \"\"\"The observation without its critic-only fields: SB3's critic cannot
+    have them apart from the actor, and the actor must not see them.\"\"\"
+
+    def observation_space(self, agent):
+        return actor_observation_space(self.env.observation_space(agent))
+
+    def reset(self, seed=None, options=None):
+        obs, infos = self.env.reset(seed=seed, options=options)
+        return {a: actor_obs(o) for a, o in obs.items()}, infos
+
+    def step(self, actions):
+        obs, rewards, terminations, truncations, infos = self.env.step(actions)
+        return {a: actor_obs(o) for a, o in obs.items()}, rewards, terminations, truncations, infos
+"""
+        if privileged
+        else ""
+    )
+    view_imports = (
+        "from pettingzoo.utils.wrappers import BaseParallelWrapper\n\n"
+        "from bluesky_sandbox import actor_obs, actor_observation_space\n"
+        if privileged
+        else ""
+    )
+    wrap_view = "\n    env = ActorView(env)" if privileged else ""
+    notes_block = f"\n\nWhat SB3 does differently from this design:{listed}\n" if listed else "\n"
+    return f'''"""Train this task with Stable-Baselines3: one PPO policy shared by every
+agent, the multi-agent env made a vector env by SuperSuit.
+
+    pip install stable-baselines3 supersuit
+    python -m {pkg}.train
+{notes_block}"""
+
+from __future__ import annotations
+
+import gymnasium as gym
+import supersuit as ss
+{view_imports}from stable_baselines3 import PPO
+from supersuit.vector.sb3_vector_wrapper import SB3VecEnvWrapper
+
+from bluesky_sandbox.integrations import wrap_parallel_env
+
+from .env import {class_stem}Env
+{actor_view}
+
+class OneEnvVec(SB3VecEnvWrapper):
+    """SuperSuit's SB3 wrapper around one env, rather than the concatenated
+    envs it expects: the seed SB3 sets is kept for the next reset."""
+
+    _seed = None
+
+    def seed(self, seed=None):
+        self._seed = seed
+        return [seed]
+
+    def reset(self, seed=None, options=None):
+        seed, self._seed = (self._seed if seed is None else seed), None
+        observations, self.reset_infos = self.venv.reset(seed=seed, options=options)
+        return observations
+
+
+def make_env(render_mode=None):
+    """The env as SB3 needs it: a fixed pool of agent IDs, intruders padded to
+    a fixed shape."""
+    env = {class_stem}Env(render_mode=render_mode){wrap_view}
+    max_agents = env.unwrapped.scenario.support().max_aircraft
+    return wrap_parallel_env(env, max_agents=max_agents)
+
+
+def train(total_timesteps: int = 100_000, seed: int = 0) -> PPO:{guard}
+    # BlueSky is one simulator per process: one env, its agents the vector's
+    # entries. (SuperSuit's concat_vec_envs would copy the env, and a live
+    # simulator cannot be copied.)
+    vec = OneEnvVec(ss.pettingzoo_env_to_vec_env_v1(make_env()))
+    policy = "MultiInputPolicy" if isinstance(vec.observation_space, gym.spaces.Dict) else "MlpPolicy"
+    model = PPO(policy, vec, seed=seed, verbose=1)
+    model.learn(total_timesteps=total_timesteps)
+    model.save("ppo_{pkg}")
+    return model
+
+
+if __name__ == "__main__":
+    train()
+'''
 
 
 def _step_unpack(has_cost: bool, indent: str) -> str:
@@ -924,18 +1079,22 @@ def _readme_md(
 ) -> str:
     meta = meta or {}
     has_cost = defines_cost(env)
-    train_line = "\n  train.py      # training-loop scaffold (python -m {pkg}.train)".format(pkg=pkg) if template == "rl" else ""
+    train_what = {"rl": "training-loop scaffold", "sb3": "Stable-Baselines3 PPO training"}
+    train_line = (
+        f"\n  train.py      # {train_what[template]} (python -m {pkg}.train)" if template in train_what else ""
+    )
     cost_line = (
         '\ncosts = {agent: info["cost"] for agent, info in infos.items()}  # this task defines a cost'
         if has_cost
         else ""
     )
-    train_note = (
-        "\n`train.py` lays a training loop out around this MDP: what each network sees,"
-        "\nand what a transition holds. Fill in its stubs.\n"
-        if template == "rl"
-        else ""
-    )
+    train_note = {
+        "rl": "\n`train.py` lays a training loop out around this MDP: what each network sees,"
+        "\nand what a transition holds. Fill in its stubs.\n",
+        "sb3": "\n`train.py` trains every agent with one shared Stable-Baselines3 PPO policy"
+        "\n(`pip install stable-baselines3 supersuit`); its docstring says what SB3 does"
+        "\ndifferently from this design.\n",
+    }.get(template, "")
     version = str(meta.get("version", "") or "0")
     note = str(meta.get("note", "") or "").strip()
     note_block = f"\n{note}\n" if note else ""
