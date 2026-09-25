@@ -79,10 +79,14 @@ class Part(NamedTuple):
 
 
 def setup_parts(
-    task_info_setup: str, task_info: list[TaskInfoSpec], hook_setup: str
+    task_info_setup: str,
+    task_info: list[TaskInfoSpec],
+    hook_setup: str,
+    signature: str = PROVIDER_SIGNATURE,
 ) -> list[Part]:
     """The setup module's code in order: the task-info setup, each inline
-    task-info entry as a function, then the hook setup."""
+    task-info entry as a function, then the hook setup. ``signature`` is each
+    entry's parameter list - annotated, in a generated package."""
     defined = _defined(task_info_setup, hook_setup)
     setup = dedupe_imports(task_info_setup, PRELUDE).rstrip()
     parts = [Part("task-info setup", "task_info_setup", setup)]
@@ -99,7 +103,8 @@ def setup_parts(
         if direct_provider(provider, defined) is not None:
             continue
         body = textwrap.indent(provider.body.rstrip() or "pass", "    ")
-        code = f"def {name}{PROVIDER_SIGNATURE} -> None:\n{body}\n"
+        tail = "" if "->" in signature else " -> None"
+        code = f"def {name}{signature}{tail}:\n{body}\n"
         parts.append(Part(f"task info {name!r}", f"task_info:{name}", code))
     hook_setup = dedupe_imports(hook_setup, PRELUDE + task_info_setup)
     parts.append(Part("hook setup", "hook_setup", hook_setup.rstrip()))
@@ -107,17 +112,23 @@ def setup_parts(
 
 
 def setup_source(
-    task_info_setup: str, task_info: list[TaskInfoSpec], hook_setup: str
+    task_info_setup: str,
+    task_info: list[TaskInfoSpec],
+    hook_setup: str,
+    signature: str = PROVIDER_SIGNATURE,
 ) -> str:
     """The setup module's code after :data:`PRELUDE`: :func:`setup_parts`, joined."""
-    return located_setup_source(task_info_setup, task_info, hook_setup)[0]
+    return located_setup_source(task_info_setup, task_info, hook_setup, signature)[0]
 
 
 def located_setup_source(
-    task_info_setup: str, task_info: list[TaskInfoSpec], hook_setup: str
+    task_info_setup: str,
+    task_info: list[TaskInfoSpec],
+    hook_setup: str,
+    signature: str = PROVIDER_SIGNATURE,
 ) -> tuple[str, list[tuple[Part, int]]]:
     """:func:`setup_source`, and the line (1-based) each part starts on."""
-    parts = setup_parts(task_info_setup, task_info, hook_setup)
+    parts = setup_parts(task_info_setup, task_info, hook_setup, signature)
     setup = [p for p in parts if p.block == "task_info_setup"]
     entries = [p for p in parts if p.block.startswith("task_info:")]
     hooks = [p for p in parts if p.block == "hook_setup"]

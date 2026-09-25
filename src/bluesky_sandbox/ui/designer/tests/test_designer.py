@@ -889,7 +889,11 @@ def test_env_hooks_catalog_and_codegen():
     assert S.DesignSpec.from_json(spec.to_json()).env.hooks == spec.env.hooks
     files = codegen.generate_task(spec, "Hooks Demo")
     env_py = files[f"{next(iter(files)).split('/', 1)[0]}/env.py"]
-    assert "def on_aircraft_spawned(self, callsign, route):" in env_py
+    # The natural parameter names, annotated in the task's types.
+    assert (
+        "def on_aircraft_spawned(self, callsign: str, route: list[str] | None) -> None:"
+        in env_py
+    )
     assert "{callsign}" in env_py  # body uses the natural param name
     # uncustomized hooks are NOT emitted (inherited; no super() stub)
     assert "def on_sim_step" not in env_py
@@ -1176,7 +1180,7 @@ def test_codegen_generates_importable_package():
     # reward/terminated/truncated are emitted as hooks in env.py, so no task.py.
     expected = {f"{pkg}/{n}" for n in
                 ("__init__.py", "design.json", "scenario.py", "config.py", "setup.py",
-                 "env.py", "__main__.py", "README.md")}
+                 "env.py", "__main__.py", "README.md", "task_types.py")}
     assert set(files) == expected
     assert S.DesignSpec.from_json(files[f"{pkg}/design.json"]).to_dict() == spec.to_dict()
 
@@ -1202,7 +1206,10 @@ def test_codegen_generates_importable_package():
     assert setup_py.count("import math") == 1
     assert "import numpy as np" in setup_py
     assert "LIMITS = np.zeros(1, dtype=np.float32)" in setup_py
-    assert "def task_metric(obs, action, info, context, rng) -> None:" in setup_py
+    assert (
+        "def task_metric(obs: BaseObs, action: np.ndarray | None, info: BaseAgentInfo, "
+        "context: TaskAgentStepContext, rng: np.random.Generator) -> None:"
+    ) in setup_py
     assert 'info["task"]["metric"] = float(LIMITS[0] + 1.0)' in setup_py
     assert "HOOK_SCALE = math.sqrt(4.0)" in setup_py
     assert "def define_task_info_providers(self):" in env_py
@@ -1407,7 +1414,7 @@ def test_codegen_with_custom_code_imports():
     assert "import custom_pkg.custom_fields as custom_fields" in config_py
     assert "custom_fields.DoubleLat(" in config_py
     # reward is emitted as a hook method body (not imported from task.py)
-    assert "def reward(self, obs, action, terminated, truncated, context, info, rng):" in env_py
+    assert "def reward(\n" in env_py and "context: TaskAgentStepContext," in env_py
     assert "return 1.5" in env_py and "_reward_fn" not in env_py
 
     with tempfile.TemporaryDirectory() as tmp:

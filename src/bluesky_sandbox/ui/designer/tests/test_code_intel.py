@@ -15,8 +15,9 @@ import pytest
 
 from bluesky_sandbox.interface.task import AgentStepContext, DesignKeys
 from bluesky_sandbox.sim.queryables import Waypoint
+from bluesky_sandbox.ui.designer import design_keys as design_keys_module
 from bluesky_sandbox.ui.designer import spec as S
-from bluesky_sandbox.ui.designer.code_intel import TypeTable, code_intel, hints
+from bluesky_sandbox.ui.designer.code_intel import code_intel, hints
 
 from .test_designer import _example_design_spec
 
@@ -150,9 +151,8 @@ def test_private_members_stay_out(intel):
 
 
 def test_every_design_key_source_is_described():
-    # A new DesignKeys source must be described, or the editor would silently
-    # offer nothing for it.
+    # A new DesignKeys source must be described, or the editor and the
+    # generated types would silently offer nothing for it.
     sources = get_args(get_type_hints(DesignKeys)["source"])
     assert "observation" in sources
-    for source in sources:
-        assert hasattr(TypeTable, f"_design_{source}"), source
+    assert set(sources) == set(design_keys_module._SOURCES)

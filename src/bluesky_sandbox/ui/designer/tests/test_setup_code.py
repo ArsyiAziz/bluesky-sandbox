@@ -9,7 +9,9 @@ replaces its per-agent one in the package, and never sits beside it.
 
 from __future__ import annotations
 
+import ast
 import importlib
+import re
 import sys
 
 import pytest
@@ -77,10 +79,19 @@ def test_the_builder_runs_the_code_the_package_writes():
         hook_setup="import math\ndef _scale(x):\n    return 3 * x",
     )
     written = codegen.generate_task(design, "task_pkg")["task_pkg/setup.py"]
+    # The package annotates each entry's parameters for editors; the code is
+    # otherwise the same, and so are the parameters.
+    signature = re.search(r"^def metric(\(.*\)) -> None:$", written, re.M).group(1)
     source = setup_code.setup_source(
-        design.env.task_info_setup, design.env.task_info, design.env.hook_setup
+        design.env.task_info_setup,
+        design.env.task_info,
+        design.env.hook_setup,
+        signature,
     )
-    assert written.endswith(setup_code.PRELUDE + "\n" + source + "\n")
+    assert written.endswith(source + "\n")
+    plain = ast.parse(f"def f{setup_code.PROVIDER_SIGNATURE}: ...").body[0].args
+    annotated = ast.parse(f"def f{signature}: ...").body[0].args
+    assert [a.arg for a in annotated.args] == [a.arg for a in plain.args]
     module = run_setup_module(design.env, build_design_config(design))
     assert setup_code.setup_names(source) <= set(vars(module))
 
@@ -118,9 +129,9 @@ def _batched_design() -> S.DesignSpec:
 
 def test_a_batched_hook_replaces_its_per_agent_one_in_the_package():
     env_py = codegen.generate_task(_batched_design(), "task_pkg")["task_pkg/env.py"]
-    assert "def reward_batch(self, batch):" in env_py
+    assert "def reward_batch(self, batch: TaskStepBatch) -> np.ndarray:" in env_py
     assert "def reward(self" not in env_py
-    assert "def terminated(self" in env_py  # still per agent
+    assert "def terminated(" in env_py  # still per agent
 
 
 def test_the_generated_env_uses_the_batched_hook(tmp_path):

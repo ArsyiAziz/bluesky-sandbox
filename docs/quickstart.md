@@ -19,6 +19,7 @@ demo_task/
   config.py     # observation + action fields, simulator settings
   setup.py      # module-level helpers the hooks lean on
   env.py        # reward, termination, and other task hooks
+  task_types.py # this design's keys as types, for your editor
   __main__.py   # python -m demo_task - a short smoke rollout
 ```
 

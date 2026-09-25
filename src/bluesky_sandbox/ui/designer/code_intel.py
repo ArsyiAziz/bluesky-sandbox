@@ -27,17 +27,13 @@ import typing
 from collections.abc import Callable, Iterable
 from typing import Annotated, Any, Union, get_args, get_origin
 
-import numpy as np
-
 from bluesky_sandbox.config import EnvConfig
-from bluesky_sandbox.core.layout import observation_parts
-from bluesky_sandbox.core.step_values import ACID, unique_names_of
 from bluesky_sandbox.env import BlueskyEnv
-from bluesky_sandbox.interface.fields.base import ActionKind
 from bluesky_sandbox.interface.task import DesignKeys, TaskInfoProvider
 
 from . import setup_code
 from .builder import build_design_config, build_scenario, run_setup_module
+from .design_keys import Key, design_keys
 from .spec import SCENARIO_HOOKS, DesignSpec
 
 __all__ = ["code_intel", "hints"]
@@ -279,133 +275,32 @@ class TypeTable:
         """The key of a synthetic type whose items are the design's keys."""
         suffix = ":batched" if marker.batched else ""
         key = f"design:{marker.source}{suffix}"
-        if key in self.types:
-            return key
-        # Closed: the design has these keys and no others.
-        self.types[key] = {
-            "name": marker.source,
-            "doc": "",
-            "attrs": [],
-            "closed": True,
-        }
-        build = getattr(self, f"_design_{marker.source}")
-        self.types[key]["items"] = build(marker.batched, depth)
+        if key not in self.types:
+            keys = design_keys(marker, self._config, self._support)
+            self._closed(key, marker.source, keys, depth)
         return key
 
-    def _design_observation(self, batched: bool, depth: int) -> list[dict[str, Any]]:
+    def _closed(self, key: str, name: str, keys: list[Key], depth: int) -> None:
+        """A type whose items are ``keys`` - closed: the design has no others."""
+        self.types[key] = {"name": name, "doc": "", "attrs": [], "closed": True}
         items = []
-        for part, fields in observation_parts(self._config).items():
-            key = f"design:observation:{part}{':batched' if batched else ''}"
-            per_intruder = part.endswith("intruders")
-            leaves = [
-                self._field_item(name, field, batched, per_intruder, depth)
-                for name, field in zip(unique_names_of(fields), fields)
-            ]
-            if per_intruder:
-                shape = _shape(batched, True, 1)
-                leaves.insert(
-                    0,
-                    _member(
-                        ACID,
-                        "field",
-                        detail=f"{shape} str",
-                        doc="Each intruder row's callsign.",
-                        type=self.ref(np.ndarray, depth),
-                    ),
-                )
-            self.types[key] = {
-                "name": part,
-                "doc": "",
-                "attrs": [],
-                "items": leaves,
-                "closed": True,
-            }
-            items.append(
-                _member(part, "field", detail=f"{len(fields)} fields", type=key)
-            )
-        return items
-
-    def _design_action(self, batched: bool, depth: int) -> list[dict[str, Any]]:
-        fields = list(self._config.action_fields)
-        items = []
-        for name, field in zip(unique_names_of(fields), fields):
-            values = "0 or 1" if field.kind is ActionKind.BINARY else _unit(field)
-            shape = "ndarray (n_agents,)" if batched else "float"
-            items.append(
-                _member(
-                    name,
+        for k in keys:
+            if k.keys is not None:
+                inner = f"{key}:{k.name}"
+                self._closed(inner, k.name, k.keys, depth)
+                item = _member(k.name, "field", detail=k.detail, type=inner)
+            else:
+                item = _member(
+                    k.name,
                     "field",
-                    detail=" · ".join(p for p in (shape, values) if p),
-                    doc=_field_doc(field),
-                    type=self.ref(np.ndarray, depth) if batched else None,
+                    detail=k.detail,
+                    doc=k.doc,
+                    type=self.ref(k.value, depth),
                 )
-            )
-        return items
-
-    def _design_queryable(self, batched: bool, depth: int) -> list[dict[str, Any]]:
-        return self._queryables(depth, lambda q: type(q))
-
-    def _design_queryable_result(
-        self, batched: bool, depth: int
-    ) -> list[dict[str, Any]]:
-        return self._queryables(depth, lambda q: getattr(q, "result_type", None))
-
-    def _queryables(
-        self, depth: int, value: Callable[[Any], Any]
-    ) -> list[dict[str, Any]]:
-        items = []
-        for name, queryable in self._support.queryables.items():
-            result = value(queryable)
-            item = _member(
-                name,
-                "field",
-                detail=label(result),
-                doc=_doc(type(queryable)),
-                type=self.ref(result, depth),
-            )
-            color = getattr(queryable, "color", None)
-            if color:
-                item["color"] = color
+            if k.color:
+                item["color"] = k.color
             items.append(item)
-        return items
-
-    def _field_item(
-        self, name: str, field: Any, batched: bool, per_intruder: bool, depth: int
-    ) -> dict[str, Any]:
-        width = (
-            field.output_size() if callable(getattr(field, "output_size", None)) else 1
-        )
-        shape = _shape(batched, per_intruder, width)
-        array = batched or per_intruder or width > 1
-        return _member(
-            name,
-            "field",
-            detail=" · ".join(p for p in (shape, _unit(field)) if p),
-            doc=_field_doc(field),
-            type=self.ref(np.ndarray, depth) if array else None,
-        )
-
-
-def _shape(batched: bool, per_intruder: bool, width: int) -> str:
-    axes = (["n_agents"] if batched else []) + (["n_intruders"] if per_intruder else [])
-    axes += [str(width)] if width > 1 else []
-    if not axes:
-        return "float"
-    return f"ndarray ({', '.join(axes)}{',' if len(axes) == 1 else ''})"
-
-
-def _unit(field: Any) -> str:
-    unit = str(getattr(getattr(field, "meta", None), "unit", "") or "")
-    return "" if unit in ("", "unitless") else unit
-
-
-def _field_doc(field: Any) -> str:
-    doc = f"`{type(field).__name__}`: {_doc(type(field))}"
-    normalizer = getattr(field, "normalizer", None)
-    if normalizer is not None:
-        observed = type(normalizer).__name__
-        doc += f"\n\nObserved through `{observed}`; this is the raw value."
-    return doc
+        self.types[key]["items"] = items
 
 
 def _is_typed_dict(cls: type) -> bool:

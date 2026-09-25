@@ -29,15 +29,22 @@ import ast
 import copy
 import keyword
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from . import setup_code
-from .builder import with_inferred_temporal_tracking
+from .builder import (
+    build_design_config,
+    build_scenario,
+    with_inferred_temporal_tracking,
+)
 from .catalog import hooks as _hook_catalog
 from .emit import emit_env_sources, emit_scenario_sources
 from .setup_code import PRELUDE
 from .spec import SCENARIO_HOOKS, DesignSpec, TaskInfoSpec
+from .typed_api import MODULE as TYPES_MODULE
+from .typed_api import Renderer, TaskTypes
 
 
 def _valid_package_name(name: str) -> str:
@@ -114,6 +121,10 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
     files[f"{pkg}/config.py"] = _config_py(
         env_sources,
     )
+    # The design's keys, typed for editors - when the design builds.
+    typed = _task_types(spec)
+    if typed is not None:
+        files[f"{pkg}/{TYPES_MODULE}.py"] = typed.module_source()
     files[f"{pkg}/env.py"], files[f"{pkg}/setup.py"] = _env_py(
         pkg,
         class_stem,
@@ -124,8 +135,50 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
         e.task_info,
         e.task_info_providers,
         privileged=bool(e.critic_obs_fields or e.critic_intruder_obs_fields),
+        typed=typed,
     )
     return files
+
+
+def _task_types(spec: DesignSpec) -> TaskTypes | None:
+    """The task's typed classes, or None for a design that does not build -
+    it still generates, as it always has, just without them."""
+    try:
+        config = build_design_config(spec)
+        support = build_scenario(spec).support()
+    except Exception:
+        return None
+    return TaskTypes(config, support, _module_aliases(spec))
+
+
+def _module_aliases(spec: DesignSpec) -> dict[str, str]:
+    """The modules the setup code imports whole, by the name it gives them -
+    ``{"numpy": "np"}`` - so the annotations read as the code does."""
+    aliases: dict[str, str] = {}
+    for source in (spec.env.task_info_setup, spec.env.hook_setup):
+        try:
+            tree = ast.parse(source or "")
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    aliases.setdefault(alias.name, alias.asname or alias.name)
+    return aliases
+
+
+def _typing_imports(render: Renderer | None) -> str:
+    """What the annotations need, imported only for type checkers."""
+    if render is None:
+        return ""
+    lines = render.import_lines(indent="    ")
+    if render.local_used:
+        names = ", ".join(sorted(render.local_used))
+        lines.append(f"    from .{TYPES_MODULE} import {names}")
+    if not lines:
+        return ""
+    block = "\n".join(lines)
+    return f"\nfrom typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n{block}\n"
 
 
 def _ref_import(ref: str, pkg: str, alias: str) -> str:
@@ -427,7 +480,9 @@ _DEFAULT_HOOK_BODIES = {
 }
 
 
-def _emit_hooks(hooks: dict[str, str]) -> str:
+def _emit_hooks(
+    hooks: dict[str, str], signature: Callable[[str], str | None] | None = None
+) -> str:
     """Emit env hook overrides.
 
     reward/terminated/truncated are always emitted (body from ``hooks`` or their
@@ -443,7 +498,7 @@ def _emit_hooks(hooks: dict[str, str]) -> str:
     ]
     blocks: list[str] = []
     for name in names:
-        sig = sigs.get(name)
+        sig = (signature(name) if signature else None) or sigs.get(name)
         if not sig:
             continue  # unknown hook (e.g. API changed); skip rather than emit invalid code
         body = (hooks.get(name) or _DEFAULT_HOOK_BODIES.get(name) or "").rstrip() or "pass"
@@ -582,7 +637,7 @@ def _names_used(source: str) -> set[str]:
     }
 
 
-def _setup_py(body: str) -> str:
+def _setup_py(body: str, typing_imports: str = "") -> str:
     """The task's module-level setup code, split out of ``env.py``.
 
     ``env.py`` is where someone goes to read what the task *does* - the reward,
@@ -605,7 +660,7 @@ now rebinds only ``env.py``'s name, and the helpers here keep using the
 original object. Mutate; never reassign.
 """
 
-{PRELUDE}
+{PRELUDE}{typing_imports}
 {body}
 '''
 
@@ -620,10 +675,15 @@ def _env_py(
     task_info: list[TaskInfoSpec],
     task_info_refs: list[str],
     privileged: bool = False,
+    typed: TaskTypes | None = None,
 ) -> tuple[str, str]:
     """Return ``(env_source, setup_source)`` - the task's behavior, and the
-    module-level helpers it leans on, as two files."""
-    hook_overrides = _emit_hooks(hooks)
+    module-level helpers it leans on, as two files. With ``typed``, the hooks
+    and task-info functions are annotated in the task's own types."""
+    env_render = typed.renderer() if typed else None
+    hook_overrides = _emit_hooks(
+        hooks, (lambda hook: typed.hook_signature(hook, env_render)) if typed else None
+    )
     training_loop = _emit_training_loop(class_stem) if privileged else ""
     provider_aliases = [
         f"_task_info_provider_{i}" for i, _ in enumerate(task_info_refs)
@@ -646,8 +706,13 @@ from bluesky_sandbox.env import BlueskyEnv
 
 from .config import CONFIG
 from .scenario import {class_stem}Scenario"""
+    setup_render = typed.renderer() if typed else None
+    signature = setup_code.PROVIDER_SIGNATURE
+    if typed:
+        signature = typed.provider_signature(setup_render)
     setup_source = _setup_py(
-        setup_code.setup_source(task_info_setup, task_info, hook_setup)
+        setup_code.setup_source(task_info_setup, task_info, hook_setup, signature),
+        _typing_imports(setup_render),
     )
     body = f'''
 
@@ -721,13 +786,22 @@ def main() -> None:
         "\n".join(part for part in (base_imports, task_info_imports) if part)
     )
     exports = setup_code.setup_names(setup_source) - already_bound
-    used = sorted(_names_used(body) & exports)
+    # Annotations are type-only; what they name is imported for type checkers.
+    plain_body = body.replace(hook_overrides, _emit_hooks(hooks))
+    used = sorted(_names_used(plain_body) & exports)
     setup_import = ""
     if used:
         joined = ",\n    ".join(used)
         setup_import = f"from .setup import (\n    {joined},\n)"
     header = "\n".join(
-        part for part in (base_imports, task_info_imports, setup_import) if part
+        part
+        for part in (
+            base_imports,
+            task_info_imports,
+            setup_import,
+            _typing_imports(env_render).strip("\n"),
+        )
+        if part
     )
     env_source = f'''"""Environment wrapper for this generated task."""
 

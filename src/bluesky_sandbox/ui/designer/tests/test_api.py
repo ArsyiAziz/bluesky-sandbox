@@ -141,7 +141,8 @@ def main() -> int:
         and "demo_env/design.py" not in gen["files"]
         and "demo_env/design.json" in gen["files"]
         and "RegionBounds(" in gen["files"]["demo_env/scenario.py"]
-        and "def reward(self," in gen["files"]["demo_env/env.py"],
+        and "def reward(" in gen["files"]["demo_env/env.py"]
+        and "demo_env/task_types.py" in gen["files"],
     )
 
     # store round-trip
