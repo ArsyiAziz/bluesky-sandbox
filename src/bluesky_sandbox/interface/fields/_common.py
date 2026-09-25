@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import bluesky as bs
@@ -27,6 +28,28 @@ def _indices_array(indices: Any) -> np.ndarray:
 
 def _traf_array(name: str) -> np.ndarray:
     return np.asarray(getattr(bs.traf, name), dtype=np.float64)
+
+
+# Every per-process field store, as the function that resets it. Each store
+# registers where it is defined, so none can be left out of a reset.
+_RESETS: list[Callable[[int | None], None]] = []
+
+
+def on_reset(fn: Callable[[int | None], None]) -> Callable[[int | None], None]:
+    """Register ``fn(seed)`` to run whenever the environment resets field state."""
+    _RESETS.append(fn)
+    return fn
+
+
+def reset_field_state(seed: int | None = None) -> None:
+    """Reset every per-process field store; the environment calls this on reset.
+
+    The stores are module-level - one BlueSky per process - so two envs built
+    from different configs in one process share them, and without this the
+    second would inherit what the first left in a store it has no field for.
+    """
+    for reset in _RESETS:
+        reset(seed)
 
 
 class _BroadcastObs:

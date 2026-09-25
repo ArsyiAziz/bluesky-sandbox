@@ -21,10 +21,8 @@ from bluesky_sandbox.config import (
     EnvConfig,
     resolve_spawn_aircraft_types,
 )
-from bluesky_sandbox.interface.fields._state import (
-    reset_all_field_state,
-    set_action_space_bounds,
-)
+from bluesky_sandbox.interface.fields._common import reset_field_state
+from bluesky_sandbox.interface.fields._state import set_action_space_bounds
 from bluesky_sandbox.interface.fields.base import StepContext
 from bluesky_sandbox.interface.task import (
     AgentStepContext,
@@ -370,7 +368,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
         self._live_info = {}
 
-        reset_all_field_state(seed)
+        reset_field_state(seed)
         self._aircraft_spawn_time.clear()
         self._aircraft_control_state.clear()
         self._aircraft_region.clear()

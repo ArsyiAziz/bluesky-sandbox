@@ -15,9 +15,9 @@ import numpy as np
 import pytest
 
 from bluesky_sandbox.config import EnvConfig
-from bluesky_sandbox.interface.fields import observations as obs
 from bluesky_sandbox.core.spawning import _CallsignIssuer
 from bluesky_sandbox.env import BlueskyEnv
+from bluesky_sandbox.interface.fields import observations as obs
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
 from bluesky_sandbox.sim.queryables import QueryRegion
 from bluesky_sandbox.sim.scenario import EpisodeSpec
@@ -210,7 +210,7 @@ def test_a_reused_callsign_starts_with_no_memory(env):
 
 
 def test_memory_follows_its_aircraft_when_others_leave(env):
-    from bluesky_sandbox.interface.fields import _state  # noqa: PLC0415
+    from bluesky_sandbox.interface.fields import _common, _state  # noqa: PLC0415
 
     for callsign in ("AAA001", "AAA002", "AAA003"):
         _cre(callsign)
@@ -219,7 +219,7 @@ def test_memory_follows_its_aircraft_when_others_leave(env):
         memory.write(_index(callsign), value)
     bs.traf.delete(_index("AAA002"))
     assert memory.read([_index("AAA001"), _index("AAA003")]) == [1.0, 3.0]
-    _state.reset_all_field_state()
+    _common.reset_field_state()
     assert memory.read([_index("AAA001")]) == [-1.0]
 
 
@@ -238,3 +238,68 @@ def test_without_a_runtime_memory_falls_back_to_callsigns(monkeypatch):
     assert memory.read([0, 1]) == [0.0, 2.0]
     memory.forget("B")  # the despawn hook: callsign keys must be dropped
     assert memory.read([1]) == [0.0]
+
+
+def test_an_env_reset_clears_every_field_store(env):
+    from bluesky_sandbox.interface.fields import _lag, _pairs, _state  # noqa: PLC0415
+
+    _cre("AAA001")
+    _state._TIME_IN_ENV.write(_index("AAA001"), 5.0)
+    _lag._LAG_HISTORY[("obs", "stale")] = object()
+    _pairs._CD_PAIR_CACHE["tcpa"] = ((), (None, None))
+    _state._COMM_NOISE_RNG.normal(size=3)  # advance the stream
+    env.reset(seed=4)
+    assert not _lag._LAG_HISTORY and not _pairs._CD_PAIR_CACHE
+    _cre("AAA001")
+    assert _state._TIME_IN_ENV.read_one(_index("AAA001")) == 0.0
+    fresh = np.random.default_rng(4).normal(size=3)
+    np.testing.assert_array_equal(_state._COMM_NOISE_RNG.normal(size=3), fresh)
+
+
+def test_a_despawn_reaches_every_stateful_fields_hook():
+    # The env tells each configured stateful field when one of its aircraft
+    # leaves; a hook that fails only then goes unnoticed in runs where none do.
+    from bluesky_sandbox.sim.spawn import SpawnRegion  # noqa: PLC0415
+
+    class _Spawning(_Scenario):
+        def support(self):
+            region = SpawnRegion(
+                bounds=_SECTOR,
+                n_aircraft=3,
+                params={"alt_ft": (8_000, 9_000), "spd_kts": (230, 270)},
+            )
+            return EpisodeSpec(
+                airspace_bounds=None,
+                spawn=SpawnConfig(
+                    regions=[region], aircraft_type="B744", conflict_free_spawn=False
+                ),
+                queryables={},
+                max_aircraft=3,
+            )
+
+    env = BlueskyEnv(
+        scenario=_Spawning(),
+        config=EnvConfig(
+            dt=12.0,
+            obs_fields=[
+                obs.CasKts().lagged(steps=1),
+                obs.PrevActionNorm(),
+                obs.TimeInEnvS(),
+            ],
+            intruder_obs_fields=[
+                obs.DistToOwnNm().lagged(steps=1),
+                obs.IntruderCommMessage(),
+            ],
+            action_fields=[],
+        ),
+    )
+    try:
+        env.reset(seed=0)
+        assert bs.traf.ntraf == 3
+        env.step({})
+        gone = bs.traf.id[0]
+        bs.traf.delete(0)
+        env.step({})  # the env notices the aircraft left and calls every hook
+        assert gone not in bs.traf.id
+    finally:
+        env.close()

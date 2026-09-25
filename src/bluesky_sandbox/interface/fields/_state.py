@@ -1,8 +1,8 @@
 """Per-process stores that stateful fields read and the environment writes.
 
-One BlueSky sim per process, so each store is per env. The environment clears
-them all on reset (:func:`reset_all_field_state`) and fields drop an aircraft's
-entries on despawn through their ``on_aircraft_removed`` hooks.
+One BlueSky sim per process, so each store is per env. Each registers its reset
+with :func:`~._common.on_reset`, and fields drop an aircraft's entries on
+despawn through their ``on_aircraft_removed`` hooks.
 """
 
 from __future__ import annotations
@@ -15,11 +15,7 @@ import numpy as np
 
 from bluesky_sandbox.sim.aircraft_uids import aircraft_keys
 
-from ._lag import _LAG_HISTORY
-from ._pairs import _CD_PAIR_CACHE
-
-# Every AircraftMemory, so a reset clears them all without a list to maintain.
-_MEMORIES: list[AircraftMemory] = []
+from ._common import on_reset
 
 
 class AircraftMemory:
@@ -30,11 +26,10 @@ class AircraftMemory:
     BlueSky reuses a deleted aircraft's callsign, and a store keyed by callsign
     hands the new aircraft the old one's value - its last action, its age, its
     last broadcast. Without a runtime it falls back to callsigns, which
-    :meth:`forget` drops on despawn.
+    :meth:`forget` drops on despawn. Cleared on every environment reset.
 
     Written and read by BlueSky traffic index, while the aircraft is live;
-    ``default`` is what an aircraft with nothing recorded reads. Cleared by
-    :func:`reset_all_field_state`.
+    ``default`` is what an aircraft with nothing recorded reads.
     """
 
     def __init__(self, default: Any = None) -> None:
@@ -42,7 +37,7 @@ class AircraftMemory:
         # key -> (callsign when written, value); the callsign lets a despawn
         # forget the entry even once its uid can no longer be looked up.
         self._entries: dict[Hashable, tuple[str, Any]] = {}
-        _MEMORIES.append(self)
+        on_reset(lambda _seed: self.clear())
 
     def write(self, idx: int, value: Any) -> None:
         ids = bs.traf.id
@@ -77,25 +72,6 @@ class AircraftMemory:
         self._entries.clear()
 
 
-def reset_all_field_state(seed: int | None = None) -> None:
-    """Clear every per-aircraft field store, whatever this env configures.
-
-    Recording and per-aircraft forgetting are opt-in - a field that nobody
-    configures records nothing, so there is nothing to drop. Episode reset is
-    the exception: the stores are module-level, so two envs built from
-    different configs in one process share them, and the second env would
-    inherit whatever the first left behind in a store it has no field for.
-    One sweep, called by the environment on reset, restores that isolation
-    without reintroducing a per-store list for anyone to forget to update.
-    """
-    global _COMM_NOISE_RNG
-    for memory in _MEMORIES:
-        memory.clear()
-    _LAG_HISTORY.clear()
-    _CD_PAIR_CACHE.clear()
-    _COMM_NOISE_RNG = np.random.default_rng(seed)
-
-
 class _LastActionBacked:
     """State hooks for the previous-action field.
 
@@ -109,21 +85,6 @@ class _LastActionBacked:
 
     def on_aircraft_removed(self, acid: str) -> None:
         _LAST_NORM_ACTION.forget(acid)
-
-
-class _LagHistoryBacked:
-    """State hooks for lag/stack wrappers.
-
-    History is pushed lazily on read (see ``get_many``), so there is no
-    ``on_step`` here - only the per-aircraft drop.
-    """
-
-    def on_aircraft_removed(self, acid: str) -> None:
-        # Uid-keyed rows need nothing: the next access drops the departed
-        # aircraft. Callsign-keyed ones must forget it here, or a new aircraft
-        # given the same callsign would inherit its history.
-        for ring in _LAG_HISTORY.values():
-            ring.forget(acid)
 
 
 class _TimeInEnvBacked:
@@ -213,3 +174,9 @@ def comm_messages(channel: int) -> np.ndarray:
 # ``noise_std``). Reseeded from the episode seed at reset so training rollouts
 # stay reproducible.
 _COMM_NOISE_RNG = np.random.default_rng()
+
+
+@on_reset
+def _reseed_comm_noise(seed: int | None) -> None:
+    global _COMM_NOISE_RNG
+    _COMM_NOISE_RNG = np.random.default_rng(seed)

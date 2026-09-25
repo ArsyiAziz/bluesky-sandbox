@@ -17,7 +17,7 @@ from bluesky.tools.geo import qdrdist
 
 from bluesky_sandbox.sim.geometry.conflict import conflict_geometry
 
-from ._common import _M_TO_FT, _indices_array, _traf_array
+from ._common import _M_TO_FT, _indices_array, _traf_array, on_reset
 from ._route import _active_route_waypoint
 from .base import ObsField
 
@@ -67,6 +67,7 @@ def _per_aircraft(field: ObsField, idx: np.ndarray) -> np.ndarray:
 # of its arrays. Laid out as an ``n x n`` matrix once per sim time, so every
 # ownship reads its row instead of rescanning the pair list.
 _CD_PAIR_CACHE: dict[str, tuple[tuple, tuple[np.ndarray, np.ndarray]]] = {}
+on_reset(lambda _seed: _CD_PAIR_CACHE.clear())
 
 
 def _cd_pair_matrix(attr: str) -> tuple[np.ndarray, np.ndarray] | None:

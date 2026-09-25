@@ -43,7 +43,7 @@ from ._common import (
     _signed_angle_delta_deg,
     _traf_array,
 )
-from ._lag import _lag_ring, _register_lag_depth
+from ._lag import _lag_ring, _LagHistoryBacked, _register_lag_depth
 from ._pairs import (
     _BroadcastPairs,
     _cd_pair_values,
@@ -62,7 +62,6 @@ from ._state import (
     _LAST_NORM_ACTION,
     _TIME_IN_ENV,
     _CommBacked,
-    _LagHistoryBacked,
     _LastActionBacked,
     _TimeInEnvBacked,
     comm_messages,
