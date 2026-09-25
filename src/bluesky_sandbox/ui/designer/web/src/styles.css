@@ -83,9 +83,9 @@ body {
   gap: 4px;
 }
 
-/* Below this the shrinkable fields have bottomed out and the actions would
-   start to clip, so the brand - the one element carrying no function - goes. */
-@media (max-width: 760px) {
+/* Below this the toolbar's controls need the brand's width, and the brand is
+   the one element carrying no function, so it goes first. */
+@media (max-width: 1240px) {
   .brand {
     display: none;
   }
@@ -124,6 +124,27 @@ body {
 
 .undo-redo svg {
   display: block;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 7px;
+}
+
+.icon-btn svg {
+  display: block;
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 button,

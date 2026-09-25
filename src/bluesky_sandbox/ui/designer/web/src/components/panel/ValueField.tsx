@@ -9,6 +9,7 @@ import { Hint } from "./Hint";
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { Picker } from "./Picker";
+import { useRefresh } from "../../refresh";
 
 export type SampledValue = number | { type: string; [k: string]: any } | undefined;
 
@@ -169,9 +170,10 @@ export function ValueField({
   allowChoice?: boolean;
 }) {
   const [dists, setDists] = useState<DistInfo[]>([]);
+  const refreshKey = useRefresh();
   useEffect(() => {
     api.catalogOnce().then((c) => setDists(c?.distributions ?? [])).catch(() => setDists([]));
-  }, []);
+  }, [refreshKey]);
   const distByName = (name: string) => dists.find((d) => d.name === name);
 
   const mode = modeOf(value);

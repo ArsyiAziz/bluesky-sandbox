@@ -3,6 +3,7 @@
 // plus a native custom-color input. The palette comes from the catalog.
 import { useEffect, useState } from "react";
 import { api } from "../../api";
+import { useRefresh } from "../../refresh";
 
 const FALLBACK = "#888888";
 
@@ -21,9 +22,10 @@ export function ColorPicker({
 }) {
   const [palette, setPalette] = useState<Record<string, string>>({});
 
+  const refreshKey = useRefresh();
   useEffect(() => {
     api.catalogOnce().then((c) => setPalette(c?.colors ?? {})).catch(() => setPalette({}));
-  }, []);
+  }, [refreshKey]);
 
   const isSelected = (name: string, hex: string) =>
     value === name || (value?.startsWith("#") && value.toLowerCase() === hex.toLowerCase());

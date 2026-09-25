@@ -198,6 +198,11 @@ def call_trail(cls: type) -> list[dict[str, Any]]:
     return [dict(entry) for entry in _call_trail(cls)]
 
 
+def forget_call_trails() -> None:
+    """Trace each class's call trail again on next use."""
+    _call_trail.cache_clear()
+
+
 @functools.cache
 def _call_trail(cls: type) -> tuple[dict[str, Any], ...]:
     """The functions ``cls``'s value is computed with, in call order.

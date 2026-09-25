@@ -6,6 +6,7 @@ import { AvailablePanel } from "../code/AvailablePanel";
 import { scopeKey } from "../code/intel";
 import { registerPythonIntel, useIntel } from "../code/pythonEditor";
 import { Picker } from "./panel/Picker";
+import { useRefresh } from "../refresh";
 
 const TASK_INFO_BODY_TEMPLATE = `task = info["task"]
 task["metric"] = 0.0
@@ -138,6 +139,7 @@ export default function CodeTab({
   // The header a new custom code module starts with (catalog.scaffolds).
   const [moduleHeader, setModuleHeader] = useState<string>("");
 
+  const refreshKey = useRefresh();
   useEffect(() => {
     api
       .catalogOnce()
@@ -152,7 +154,7 @@ export default function CodeTab({
         setScenarioHookCatalog([]);
         setTaskInfoTypes([]);
       });
-  }, []);
+  }, [refreshKey]);
 
   const intel = useIntel();
   // The Monaco editor, for inserting what the "Available here" panel offers.
@@ -370,7 +372,7 @@ export default function CodeTab({
         .catch((e) => setGenError(String(e)));
     }, 500);
     return () => clearTimeout(handle);
-  }, [spec]);
+  }, [spec, refreshKey]);
 
   // Generated files that are NOT editable design code (those come from spec.code).
   const structuralFiles = useMemo(() => {

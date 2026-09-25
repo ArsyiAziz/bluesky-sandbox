@@ -4,6 +4,7 @@
 // its normalizer's settings and mapping.
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api, type SpecDict } from "../api";
+import { useRefresh } from "../refresh";
 
 type Curve = { x: number[]; series: number[][]; x_label: string; y_label: string };
 type Field = {
@@ -80,6 +81,7 @@ function grouped(fields: Field[]): { field: Field; lags: Field[] }[] {
 
 export default function MdpTab({ spec }: { spec: SpecDict | null }) {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const refreshKey = useRefresh();
 
   useEffect(() => {
     if (!spec) return;
@@ -94,7 +96,7 @@ export default function MdpTab({ spec }: { spec: SpecDict | null }) {
       canceled = true;
       clearTimeout(handle);
     };
-  }, [spec]);
+  }, [spec, refreshKey]);
 
   if (!spec) return <div className="mdp-tab muted">The spec has a JSON error; fix it in the Code tab.</div>;
   if (!summary) return <div className="mdp-tab muted">Loading…</div>;

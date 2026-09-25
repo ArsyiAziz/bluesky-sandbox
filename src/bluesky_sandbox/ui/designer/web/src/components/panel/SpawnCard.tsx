@@ -11,6 +11,7 @@ import { CollapsibleCard, EyeToggle } from "./Section";
 import { FieldGroup } from "./FieldGroup";
 import { VisualizationToggles } from "./QueryableCard";
 import { RouteSpecControl } from "./RouteSettings";
+import { useRefresh } from "../../refresh";
 
 type SpawnBodyProps = {
   region: SpecDict;
@@ -48,12 +49,13 @@ export function SpawnBody({
   // The zone a conflict-free spawn is actually cleared against, from BlueSky's
   // CD rather than hardcoded here, so the buffers say what they are added to.
   const [sep, setSep] = useState<Record<string, number>>({});
+  const refreshKey = useRefresh();
   useEffect(() => {
     api
       .catalogOnce()
       .then((c) => setSep(c?.separation ?? {}))
       .catch(() => setSep({}));
-  }, []);
+  }, [refreshKey]);
   const zone =
     sep.pz_radius_nm === undefined
       ? "the protected zone"

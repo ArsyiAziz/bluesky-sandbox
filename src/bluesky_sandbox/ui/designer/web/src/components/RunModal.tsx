@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type SpecDict } from "../api";
 import { Picker } from "./panel/Picker";
+import { useRefresh } from "../refresh";
 
 type Driver = { render_mode: string; views: string[]; default_views: string[] };
 type Phase = "idle" | "launching" | "running" | "exited";
@@ -46,9 +47,10 @@ export default function RunModal({ spec, onClose }: { spec: SpecDict; onClose: (
     }
   };
 
+  const refreshKey = useRefresh();
   useEffect(() => {
     api.catalogOnce().then((c) => setDrivers(c?.drivers ?? [])).catch(() => setDrivers([]));
-  }, []);
+  }, [refreshKey]);
 
   const modeDriver = drivers.find((d) => d.render_mode === mode);
   useEffect(() => {

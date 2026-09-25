@@ -10,6 +10,7 @@ import type { CategoryVisibility, EditTarget } from "../map/types";
 import { centroid, frontendBoundsGeometry, routePaths } from "../map/geometry";
 import { deckLayers, getTooltip } from "../map/deckLayers";
 import { basemapById, DEFAULT_BASEMAP } from "../map/basemaps";
+import { useRefresh } from "../refresh";
 
 // Extra connector layers for the route view: spawn region → the route's first
 // waypoint(s), and any sampled waypoint → the region it draws its position from.
@@ -165,6 +166,7 @@ export default function RouteMap({
   }, []);
 
   // Re-fetch the preview when the spec changes; redraw when ready/highlight change.
+  const refreshKey = useRefresh();
   useEffect(() => {
     if (!ready || !spec) return;
     let canceled = false;
@@ -180,7 +182,7 @@ export default function RouteMap({
       canceled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spec, ready]);
+  }, [spec, ready, refreshKey]);
 
   useEffect(() => {
     if (ready) refresh();

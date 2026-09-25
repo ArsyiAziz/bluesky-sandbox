@@ -11,6 +11,7 @@ import { EMPTY, LABEL_FONT, MOVE_HANDLE_ICON, ROTATION_HANDLE_ICON, deckLayers, 
 import { setColorPalette } from "../map/geometry";
 import { BASEMAPS, DEFAULT_BASEMAP, basemapById, type BasemapId } from "../map/basemaps";
 import { defaultWaypoint, gcOrphanBounds, placementAltitudeRange } from "../specHelpers";
+import { useRefresh } from "../refresh";
 
 type DragState = import("../map/types").DragState;
 
@@ -441,6 +442,7 @@ export default function MapTab({
 
   // Load the color palette (same list the picker shows + the drivers render) so
   // named colors like black / gray / purple resolve in the map preview.
+  const refreshKey = useRefresh();
   useEffect(() => {
     api
       .catalogOnce()
@@ -455,7 +457,7 @@ export default function MapTab({
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready]);
+  }, [ready, refreshKey]);
 
   // (Re)load nav whenever the nav or airways visibility toggles.
   useEffect(() => {
@@ -566,7 +568,7 @@ export default function MapTab({
     return () => {
       canceled = true;
     };
-  }, [spec, ready, seed]);
+  }, [spec, ready, seed, refreshKey]);
 
   const focusBounds = (bounds: SpecDict) => {
     const map = mapRef.current;

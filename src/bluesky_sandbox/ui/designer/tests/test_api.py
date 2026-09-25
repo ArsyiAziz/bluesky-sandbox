@@ -13,7 +13,7 @@ from bluesky_sandbox.sim.bounds import BoxFootprint, ConstantAltitudeBand, Regio
 from bluesky_sandbox.sim.queryables import QueryRegion
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
 from bluesky_sandbox.ui.designer import spec as S
-from bluesky_sandbox.ui.designer.api import create_app
+from bluesky_sandbox.ui.designer.api import _python_module_members, create_app
 
 
 def _example_spec_dict() -> dict:
@@ -168,6 +168,15 @@ def test_api_smoke() -> None:
     import) without ever executing a single check.
     """
     assert main() == 0
+
+
+def test_refresh_reads_module_members_again() -> None:
+    client = TestClient(create_app())
+    first = client.get("/api/python/module-members", params={"module": "math"})
+    assert first.status_code == 200
+    assert _python_module_members.cache_info().currsize >= 1
+    assert client.post("/api/refresh").json() == {"ok": True}
+    assert _python_module_members.cache_info().currsize == 0
 
 
 if __name__ == "__main__":

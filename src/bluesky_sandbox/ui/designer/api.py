@@ -4,6 +4,7 @@ Exposes the backend foundation over HTTP so the web frontend (map + code tabs)
 can drive it:
 
 * ``GET  /api/health``                 - liveness.
+* ``POST /api/refresh``                - forget what the server has cached.
 * ``GET  /api/catalog``                - palette of footprints / bands /
   queryables / obs & action fields / aircraft types.
 * ``POST /api/nav/features``           - navdb features within a bounds window.
@@ -42,12 +43,13 @@ from . import nav as _nav
 from . import runner as _runner
 from . import spec as _spec
 from .builder import BuildError, build_design_config, build_scenario
-from .code_intel import code_intel
+from .code_intel import code_intel, forget_type_checking_names
 from .diagnostics import diagnostics
 from .mdp import mdp_summary
 from .preview import airspace_warnings, scenario_preview
 from .spec import DesignSpec, SpecError
 from .store import SpecStore
+from .trail import forget_call_trails
 
 _WEB_DIST = Path(__file__).parent / "web" / "dist"
 
@@ -155,6 +157,17 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/api/refresh")
+    def refresh() -> dict[str, bool]:
+        # What was read from Python code: a module's members, the names it
+        # imports for type checking, a field's call trail. Library code itself
+        # is not re-imported; that takes a restart, or --reload.
+        importlib.invalidate_caches()
+        _python_module_members.cache_clear()
+        forget_type_checking_names()
+        forget_call_trails()
+        return {"ok": True}
 
     # ---------------------------------------------------------------- catalog
     @app.get("/api/catalog")

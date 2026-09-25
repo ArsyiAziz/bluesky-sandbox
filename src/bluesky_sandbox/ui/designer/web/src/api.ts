@@ -154,6 +154,8 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return res.json();
 }
 
+let catalogCache: Promise<any> | null = null;
+
 export const api = {
   health: () => fetch("/api/health").then((r) => jsonOrThrow<{ status: string }>(r)),
 
@@ -241,10 +243,13 @@ export const api = {
       return r.blob();
     }),
 
-  catalogOnce: (() => {
-    let cache: Promise<any> | null = null;
-    return () => (cache ??= fetch("/api/catalog").then((r) => jsonOrThrow<any>(r)));
-  })(),
+  catalogOnce: () => (catalogCache ??= fetch("/api/catalog").then((r) => jsonOrThrow<any>(r))),
+
+  // Drop what the backend and this page have cached, so the next reads are fresh.
+  refresh: () => {
+    catalogCache = null;
+    return fetch("/api/refresh", { method: "POST" }).then((r) => jsonOrThrow<{ ok: boolean }>(r));
+  },
 
   pythonModuleMembers: (moduleName: string) =>
     fetch(`/api/python/module-members?module=${encodeURIComponent(moduleName)}`).then((r) =>

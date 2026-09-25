@@ -33,6 +33,7 @@ import { ValueField, NumInput } from "./ValueField";
 import { QueryableBody } from "./QueryableCard";
 import { SpawnBody } from "./SpawnCard";
 import { RouteSettings } from "./RouteSettings";
+import { useRefresh } from "../../refresh";
 
 const emptySpawn = (): SpecDict => ({ type: "spawn_config", regions: [], aircraft_type: null, route: null, routes: {} });
 
@@ -92,6 +93,7 @@ export default function GeometryTab({
   const [sep, setSep] = useState<Record<string, number>>({});
   // SpawnConfig's own retry defaults, shown when a field is left empty.
   const [spawnDefaults, setSpawnDefaults] = useState<Record<string, number>>({});
+  const refreshKey = useRefresh();
   useEffect(() => {
     api
       .catalogOnce()
@@ -100,7 +102,7 @@ export default function GeometryTab({
         setSpawnDefaults(c?.spawn_defaults ?? {});
       })
       .catch(() => setSep({}));
-  }, []);
+  }, [refreshKey]);
   const sepZone =
     sep.pz_radius_nm === undefined
       ? "the protected zone"

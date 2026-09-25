@@ -78,6 +78,11 @@ def hints(obj: Any) -> dict[str, Any]:
         return {}
 
 
+def forget_type_checking_names() -> None:
+    """Read each module's type-checking imports again on next use."""
+    _type_checking_names.cache_clear()
+
+
 @functools.cache
 def _type_checking_names(module: pytypes.ModuleType) -> dict[str, Any]:
     """The names ``module`` imports under ``if TYPE_CHECKING:``."""

@@ -2,6 +2,7 @@
 // The seed is shared with the map's reseed/reset, so both stay in sync.
 import { useEffect, useState } from "react";
 import { api, type PreviewResult, type SpecDict } from "../../api";
+import { useRefresh } from "../../refresh";
 
 export function SamplingReadout({
   spec,
@@ -16,6 +17,7 @@ export function SamplingReadout({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const refreshKey = useRefresh();
   useEffect(() => {
     let canceled = false;
     setLoading(true);
@@ -27,7 +29,7 @@ export function SamplingReadout({
     return () => {
       canceled = true;
     };
-  }, [spec, seed]);
+  }, [spec, seed, refreshKey]);
 
   if (error) return <div className="error-text">{error}</div>;
   if (!preview) return <p className="muted">…</p>;

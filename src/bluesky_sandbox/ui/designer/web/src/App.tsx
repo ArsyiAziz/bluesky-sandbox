@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type SpecDict, type ValidateResult } from "./api";
-import { useCodeIntel } from "./code/pythonEditor";
+import { forgetModuleMembers, useCodeIntel } from "./code/pythonEditor";
 import { DEFAULT_SPEC } from "./defaultSpec";
 import { migrateRewardHooks, migrateRotationGroups, normalizeToRegions } from "./specHelpers";
 import MapTab from "./components/MapTab";
@@ -8,6 +8,7 @@ import CodeTab from "./components/CodeTab";
 import RouteTab from "./route/RouteTab";
 import GenerateModal from "./components/GenerateModal";
 import MdpTab from "./components/MdpTab";
+import { RefreshContext } from "./refresh";
 import MetadataTab from "./components/MetadataTab";
 import RunModal from "./components/RunModal";
 import { Picker } from "./components/panel/Picker";
@@ -18,6 +19,8 @@ const normalizeSpec = (spec: SpecDict): SpecDict =>
   migrateRotationGroups(migrateRewardHooks(normalizeToRegions(spec)));
 
 const IMPORT_JSON_VALUE = "__import_json__";
+const NEW_PROJECT_VALUE = "__new_project__";
+const DELETE_PROJECT_VALUE = "__delete_project__";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("map");
@@ -31,6 +34,8 @@ export default function App() {
   const [status, setStatus] = useState<string>("");
   const [generateOpen, setGenerateOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   // Parse the editor text into a spec object; null while the JSON is invalid.
@@ -41,8 +46,10 @@ export default function App() {
       return { spec: null, parseError: (e as Error).message };
     }
   }, [specText]);
-  // What the design's code can use, for every code editor.
-  useCodeIntel(spec);
+  // What the design's code can use, for every code editor. App is outside the
+  // refresh context it provides, so it passes the count itself.
+  useCodeIntel(spec, refreshKey);
+
 
   // The spec object is the source of truth; structured edits (the properties
   // panel) re-serialize it back into the editor text so both views stay in sync.
@@ -136,7 +143,22 @@ export default function App() {
 
   useEffect(() => {
     refreshSaved();
-  }, [refreshSaved]);
+  }, [refreshSaved, refreshKey]);
+
+  // Read everything from the backend again - the catalog, previews, code intel,
+  // validation, saved projects - keeping the design and its undo history.
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    forgetModuleMembers();
+    api
+      .refresh()
+      .catch(() => undefined)
+      .finally(() => {
+        setRefreshKey((k) => k + 1);
+        setRefreshing(false);
+        setStatus("refreshed");
+      });
+  }, []);
 
   // Validate against the backend (debounced) whenever the parsed spec changes.
   useEffect(() => {
@@ -151,7 +173,7 @@ export default function App() {
         .catch((e) => setValidation({ ok: false, error: String(e) }));
     }, 400);
     return () => clearTimeout(handle);
-  }, [spec, parseError]);
+  }, [spec, parseError, refreshKey]);
 
   const onSave = useCallback(() => {
     if (!spec) return;
@@ -181,6 +203,14 @@ export default function App() {
 
   const onLoad = useCallback((name: string) => {
     if (!name) return;
+    if (name === NEW_PROJECT_VALUE) {
+      onNewTaskRef.current();
+      return;
+    }
+    if (name === DELETE_PROJECT_VALUE) {
+      onDeleteRef.current();
+      return;
+    }
     if (name === IMPORT_JSON_VALUE) {
       importInputRef.current?.click();
       return;
@@ -247,6 +277,14 @@ export default function App() {
   }, [currentSavedName, saveName, savedSpecs]);
 
   const loadOptions = useMemo(() => [
+    { value: NEW_PROJECT_VALUE, label: "New project", description: "Start from the default design", category: "project" },
+    {
+      value: DELETE_PROJECT_VALUE,
+      label: deleteName ? `Delete ${deleteName}` : "Delete",
+      description: deleteName ? "Remove this saved project" : "The open design is not saved",
+      category: "project",
+      disabled: !deleteName,
+    },
     {
       value: IMPORT_JSON_VALUE,
       label: "Import JSON file…",
@@ -268,7 +306,7 @@ export default function App() {
         description: s.name,
         category: "saved",
       })),
-  ], [savedSpecs]);
+  ], [savedSpecs, deleteName]);
 
   const onDelete = useCallback(() => {
     if (!deleteName) return;
@@ -283,7 +321,14 @@ export default function App() {
       .catch((e) => setStatus(`delete failed: ${e}`));
   }, [currentSavedName, deleteName, refreshSaved]);
 
+  // onLoad is declared before these; it reaches them through refs.
+  const onNewTaskRef = useRef(onNewTask);
+  onNewTaskRef.current = onNewTask;
+  const onDeleteRef = useRef(onDelete);
+  onDeleteRef.current = onDelete;
+
   return (
+    <RefreshContext.Provider value={refreshKey}>
     <div className="app">
       <header className="toolbar">
         <strong className="brand">Environment Designer</strong>
@@ -324,27 +369,18 @@ export default function App() {
         </div>
         <div className="spacer" />
         <div className="toolbar-group">
-          <button onClick={onNewTask} title="Start a new project from the default design">
-            New Project
-          </button>
-          <label className="project-name" title="project name (used for save + generated package)">
-            project
-            <input
-              className="name-input"
-              value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
-              placeholder="untitled"
-            />
-          </label>
-          <button onClick={onSave} disabled={!spec}>
+          <input
+            className="name-input"
+            value={saveName}
+            onChange={(e) => setSaveName(e.target.value)}
+            placeholder="untitled"
+            title="Project name: the saved design's name and the generated package's"
+            aria-label="project name"
+          />
+          <button onClick={onSave} disabled={!spec} title="Save (⌘/Ctrl+S)">
             Save
           </button>
-          <Picker
-            className="load-select"
-            placeholder="Load…"
-            onChange={onLoad}
-            options={loadOptions}
-          />
+          <Picker className="load-select" placeholder="Project…" onChange={onLoad} options={loadOptions} />
           <input
             ref={importInputRef}
             className="hidden-file-input"
@@ -355,8 +391,19 @@ export default function App() {
               e.currentTarget.value = "";
             }}
           />
-          <button onClick={onDelete} disabled={!deleteName} title={deleteName ? `delete saved project ${deleteName}` : "no saved project selected"}>
-            Delete
+          <button
+            className="icon-btn"
+            onClick={onRefresh}
+            disabled={refreshing}
+            title="Refresh: read the catalog, previews, code help and saved projects from the server again. Changes to library code need the server restarted, or --reload."
+            aria-label="Refresh"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" className={refreshing ? "spin" : ""}>
+              <path
+                fill="currentColor"
+                d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
+              />
+            </svg>
           </button>
         </div>
         <span className="toolbar-divider" />
@@ -418,6 +465,7 @@ export default function App() {
       )}
       {runOpen && spec && <RunModal spec={spec} onClose={() => setRunOpen(false)} />}
     </div>
+    </RefreshContext.Provider>
   );
 }
 

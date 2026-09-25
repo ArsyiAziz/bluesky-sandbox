@@ -9,6 +9,7 @@ import { ConfigEditor } from "./panel/ConfigEditor";
 import { SamplingReadout } from "./panel/SamplingReadout";
 import { ObsSample } from "./panel/ObsSample";
 import GeometryTab from "./panel/GeometryTab";
+import { useRefresh } from "../refresh";
 
 const FIELD_LISTS = [
   "obs_fields",
@@ -57,9 +58,10 @@ export default function DesignPanel({
 }) {
   const [catalog, setCatalog] = useState<any>(null);
   const [tab, setTab] = useState<"geometry" | "fields" | "env" | "sampling">("geometry");
+  const refreshKey = useRefresh();
   useEffect(() => {
     api.catalogOnce().then(setCatalog).catch(() => setCatalog(null));
-  }, []);
+  }, [refreshKey]);
 
   // Edits build on the latest spec, not this render's: one gesture can make
   // several (a rename changes custom_fields.py and the field's ref), and each

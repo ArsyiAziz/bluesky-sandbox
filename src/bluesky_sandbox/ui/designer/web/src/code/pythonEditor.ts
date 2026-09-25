@@ -44,7 +44,7 @@ export function useIntel(): Intel | null {
 }
 
 // Keep the intel current with the spec; editors re-color when it changes.
-export function useCodeIntel(spec: SpecDict | null) {
+export function useCodeIntel(spec: SpecDict | null, refreshKey = 0) {
   useEffect(() => {
     if (!spec) return;
     let canceled = false;
@@ -72,7 +72,12 @@ export function useCodeIntel(spec: SpecDict | null) {
       canceled = true;
       clearTimeout(handle);
     };
-  }, [spec]);
+  }, [spec, refreshKey]);
+}
+
+/** Forget the modules' members read so far, so they are read again. */
+export function forgetModuleMembers() {
+  moduleMembers.clear();
 }
 
 function membersOfModule(module: string): Promise<Member[]> {
