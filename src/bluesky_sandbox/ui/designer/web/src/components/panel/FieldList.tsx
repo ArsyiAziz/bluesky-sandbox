@@ -21,8 +21,18 @@ export interface FieldOption {
     meta?: Record<string, any>;
     queryable_spec?: QueryableFieldSpec | null;
     source?: string;
+    trail?: TrailEntry[];
   };
 }
+
+// One function the field's value is computed with (see ui/designer/trail.py).
+type TrailEntry = {
+  name: string;
+  location: string;
+  depth: number;
+  source: string | null;
+  external: boolean;
+};
 
 type QueryableFieldSpec = {
   kind: "any" | "region" | "waypoint";
@@ -450,7 +460,10 @@ function FieldConfigModal({
                 />
               </div>
             ) : source ? (
-              <pre className="source-profile" aria-readonly="true"><code>{source}</code></pre>
+              <>
+                <pre className="source-profile" aria-readonly="true"><code>{source}</code></pre>
+                <CallTrail trail={option?.profile?.trail ?? []} />
+              </>
             ) : (
               <div className="muted small">source profile unavailable for this custom reference</div>
             )}
@@ -689,6 +702,33 @@ function NormalizerParams({
           }}
         />
       ))}
+    </div>
+  );
+}
+
+// The functions a built-in field's value is computed with, in call order and
+// indented by call depth: its class source is often a single call into these.
+function CallTrail({ trail }: { trail: TrailEntry[] }) {
+  if (!trail.length) return null;
+  return (
+    <div className="call-trail">
+      <div className="sub-label">computed with</div>
+      {trail.map((entry, i) =>
+        entry.source ? (
+          <details key={i} className="trail-entry" style={{ marginLeft: entry.depth * 14 }}>
+            <summary>
+              <code>{entry.name}</code>
+              <span className="trail-location">{entry.location}</span>
+            </summary>
+            <pre className="source-profile" aria-readonly="true"><code>{entry.source}</code></pre>
+          </details>
+        ) : (
+          <div key={i} className="trail-entry trail-leaf" style={{ marginLeft: entry.depth * 14 }}>
+            <code>{entry.name}</code>
+            <span className="trail-location">{entry.external ? `BlueSky · ${entry.location}` : entry.location}</span>
+          </div>
+        ),
+      )}
     </div>
   );
 }

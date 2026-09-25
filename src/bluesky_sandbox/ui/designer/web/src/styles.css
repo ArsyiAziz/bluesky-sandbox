@@ -2330,6 +2330,37 @@ button:disabled {
   white-space: pre;
 }
 
+.call-trail {
+  margin-top: 10px;
+}
+
+.trail-entry {
+  margin: 2px 0;
+  font-size: 11px;
+}
+
+.trail-entry summary {
+  cursor: pointer;
+}
+
+.trail-entry code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.trail-leaf {
+  padding-left: 14px; /* line up with the disclosure-marker entries */
+}
+
+.trail-location {
+  margin-left: 8px;
+  color: var(--muted, #8a93a3);
+}
+
+.trail-entry .source-profile {
+  margin-top: 4px;
+  max-height: 360px;
+}
+
 .custom-code-editor {
   height: 520px;
   min-height: 280px;

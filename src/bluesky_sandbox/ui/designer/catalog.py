@@ -42,6 +42,7 @@ from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from .emit import _normalizer_import_line
 from .spec import SCENARIO_HOOKS
+from .trail import call_trail
 
 
 def _doc(obj: Any) -> str:
@@ -248,6 +249,13 @@ def _profile(cls) -> dict[str, Any]:
         "meta": meta_dict,
         "queryable_spec": _queryable_spec(cls),
         "source": source,
+        # What the value is computed with, beneath the class source: fields
+        # are often one call into a shared helper.
+        "trail": (
+            call_trail(cls)
+            if issubclass(cls, (ObsField, PairObsField, ActionField))
+            else []
+        ),
     }
 
 
