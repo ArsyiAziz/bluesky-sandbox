@@ -470,7 +470,12 @@ export default function App() {
       </footer>
 
       {generateOpen && spec && (
-        <GenerateModal spec={spec} defaultName={saveName} onClose={() => setGenerateOpen(false)} />
+        <GenerateModal
+          spec={spec}
+          defaultName={saveName}
+          onSpecChange={updateSpec}
+          onClose={() => setGenerateOpen(false)}
+        />
       )}
       {runOpen && spec && <RunModal spec={spec} onClose={() => setRunOpen(false)} />}
     </div>

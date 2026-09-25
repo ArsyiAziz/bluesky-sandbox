@@ -4,15 +4,32 @@ import { api, type GenerateResult, type SpecDict } from "../api";
 // "Generate task structure": turns the current design into a runnable task
 // package (design.json + scenario/env/task scaffolding) the user can download
 // and keep iterating on in code.
+// The packages it can make: the environment alone, or with a training-loop
+// scaffold laid out around the design's MDP. The choice is kept in the design.
+const TEMPLATES = [
+  { id: "plain", label: "Plain", title: "The environment, and a smoke rollout (python -m <package>)" },
+  {
+    id: "rl",
+    label: "RL",
+    title:
+      "Adds train.py: a training-loop scaffold for this MDP - the privileged critic's views when the design has critic-only fields, a cost critic when it defines a cost",
+  },
+];
+
 export default function GenerateModal({
   spec,
   defaultName,
+  onSpecChange,
   onClose,
 }: {
   spec: SpecDict;
   defaultName: string;
+  onSpecChange: (next: SpecDict) => void;
   onClose: () => void;
 }) {
+  const template = String(spec.metadata?.template ?? "plain");
+  const chooseTemplate = (id: string) =>
+    onSpecChange({ ...spec, metadata: { ...(spec.metadata ?? {}), template: id } });
   const [name, setName] = useState(defaultName);
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [selected, setSelected] = useState<string>("");
@@ -26,15 +43,19 @@ export default function GenerateModal({
       .generate(spec, name)
       .then((r) => {
         setResult(r);
-        setSelected(Object.keys(r.files).find((f) => f.endsWith("env.py")) ?? Object.keys(r.files)[0]);
+        const files = Object.keys(r.files);
+        setSelected(
+          files.find((f) => f.endsWith(template === "rl" ? "train.py" : "env.py")) ?? files[0],
+        );
       })
       .catch((e) => setError(String(e)));
   };
 
+  // Generate on opening, and again when the template changes.
   useEffect(() => {
     generate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [template]);
 
   const writeFolder = async (
     root: FileSystemDirectoryHandle,
@@ -94,6 +115,20 @@ export default function GenerateModal({
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <strong>Generate task package</strong>
+          <div className="seg" role="radiogroup" aria-label="template">
+            {TEMPLATES.map((t) => (
+              <button
+                key={t.id}
+                role="radio"
+                aria-checked={template === t.id}
+                className={template === t.id ? "on" : ""}
+                title={t.title}
+                onClick={() => chooseTemplate(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
           <span className="spacer" />
           <input value={name} onChange={(e) => setName(e.target.value)} />
           <button onClick={generate}>Regenerate</button>

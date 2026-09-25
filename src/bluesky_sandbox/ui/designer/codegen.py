@@ -75,6 +75,7 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
     """
     pkg = _valid_package_name(package_name)
     class_stem = _class_stem(pkg)
+    template = template_of(spec)
     title = str(spec.metadata.get("name", pkg))
     meta = dict(spec.metadata)
 
@@ -99,7 +100,7 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
         f"{pkg}/__init__.py": _init_py(pkg, title, class_stem, meta),
         f"{pkg}/design.json": spec.to_json(),
         f"{pkg}/__main__.py": _main_py(),
-        f"{pkg}/README.md": _readme_md(pkg, title, e, meta),
+        f"{pkg}/README.md": _readme_md(pkg, title, e, meta, template),
     }
 
     # Write the design's editable code modules verbatim (custom_fields.py, etc.).
@@ -134,9 +135,16 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
         e.task_info_setup,
         e.task_info,
         e.task_info_providers,
-        privileged=bool(e.critic_obs_fields or e.critic_intruder_obs_fields),
+        has_cost=defines_cost(e),
         typed=typed,
     )
+    if template == "rl":
+        files[f"{pkg}/train.py"] = _train_py(
+            pkg,
+            class_stem,
+            privileged=bool(e.critic_obs_fields or e.critic_intruder_obs_fields),
+            has_cost=defines_cost(e),
+        )
     return files
 
 
@@ -507,105 +515,114 @@ def _emit_hooks(
     return ("\n\n".join(blocks) + "\n") if blocks else ""
 
 
-def _emit_training_loop(class_stem: str) -> str:
-    """A scaffold showing how a training loop is arranged around the
-    privileged observations.
+#: The kinds of package the designer generates: ``plain`` is the environment
+#: and a smoke rollout; ``rl`` adds ``train.py``, a training-loop scaffold.
+TEMPLATES = ("plain", "rl")
 
-    Emitted into ``env.py`` only when the design declares critic-only fields.
-    Those fields are the one part of the observation contract that is invisible
-    from the outside: the env builds, bounds and normalizes the extra blocks,
-    then hands them over and does nothing further with them. Someone who feeds
-    the raw observation to a single network trains with the privileged features
-    silently ignored - no error, just a critic that is not privileged.
+
+def template_of(spec: DesignSpec) -> str:
+    """The template the design asks for (``metadata["template"]``), else plain."""
+    template = str(spec.metadata.get("template") or "plain")
+    if template not in TEMPLATES:
+        raise ValueError(f"unknown template {template!r}; choose one of {TEMPLATES}")
+    return template
+
+
+def defines_cost(env: Any) -> bool:
+    """Whether the design defines a cost hook, per agent or batched."""
+    hooks = getattr(env, "hooks", None) or {}
+    return any((hooks.get(h) or "").strip() for h in ("cost", "cost_batch"))
+
+
+def _step_unpack(has_cost: bool, indent: str) -> str:
+    """The step call, unpacked into what this design's MDP gives."""
+    line = f"{indent}next_obs, rewards, terminations, truncations, infos = env.step(actions)\n"
+    if has_cost:
+        line += (
+            f"{indent}# This design defines a cost: each agent's is in its info.\n"
+            f'{indent}costs = {{agent: info["cost"] for agent, info in infos.items()}}\n'
+        )
+    return line
+
+
+def _train_py(pkg: str, class_stem: str, privileged: bool, has_cost: bool) -> str:
+    """``train.py``: how a training loop is arranged around this design's MDP.
 
     Deliberately not runnable: the networks, buffer and update step are the
-    reader's to supply. Filling them in with stand-ins would make the sketch
-    longer and the arrangement harder to see, which is the only thing it is
-    here to show.
+    reader's to supply. It fixes what depends on the design - which view each
+    network sees (the privileged critic's, when the design has critic-only
+    fields), and what a transition holds (a cost, and a critic for it, when the
+    design defines a cost) - and leaves the learning to them.
     """
-    return f'''
+    cost_value_def = (
+        """
 
-def build_policy(observation_space):
-    """Your actor, built from the ACTOR observation space."""
-    raise NotImplementedError(
-        "build_policy: return an actor network for the actor observation "
-        "space - the ordinary blocks, no privileged keys."
+def build_cost_value(observation_space):
+    \"\"\"Your cost critic, built from the CRITIC observation space: it
+    estimates the cost-to-go a constraint (a Lagrangian, say) is enforced on.\"\"\"
+    raise NotImplementedError("build_cost_value: return a cost-value network.")
+"""
+        if has_cost
+        else ""
     )
+    add_args = "obs, action, value, reward, terminated, truncated"
+    if has_cost:
+        add_args = "obs, action, value, cost_value, reward, cost, terminated, truncated"
+    bootstrap_args = "value, cost_value" if has_cost else "value"
+    update_args = "policy, value, cost_value, buffer" if has_cost else "policy, value, buffer"
+    actor = "actor_obs(ob)" if privileged else "ob"
+    critic = "critic_obs(ob)" if privileged else "ob"
+    critic_next = "critic_obs(next_obs[agent])" if privileged else "next_obs[agent]"
+    actor_space = "actor_observation_space(space)" if privileged else "space"
+    critic_space = "critic_observation_space(space)" if privileged else "space"
+    imports = (
+        """from bluesky_sandbox import (
+    actor_obs,
+    actor_observation_space,
+    critic_obs,
+    critic_observation_space,
+)
 
-
-def build_value(observation_space):
-    """Your critic, built from the CRITIC observation space."""
-    raise NotImplementedError(
-        "build_value: return a value network for the critic observation "
-        "space - the same blocks, widened by the privileged features."
+"""
+        if privileged
+        else ""
     )
-
-
-class Buffer:
-    """Your rollout storage. Holds RAW observations, not either view."""
-
-    def add(self, agent, obs, action, value, reward, terminated, truncated):
-        raise NotImplementedError("Buffer.add: store one transition.")
-
-    def bootstrap(self, agent, value):
-        raise NotImplementedError(
-            "Buffer.bootstrap: record V(s_T) for a truncated trajectory."
-        )
-
-
-def update(policy, value, buffer):
-    """Your learning step."""
-    raise NotImplementedError(
-        "update: fit the policy and value networks on the collected rollout."
+    views_note = (
+        """
+The design declares critic-only observation fields, so every observation
+carries ``critic_ownship`` / ``critic_intruders`` alongside the ordinary blocks.
+The env never merges them: the actor sees ``actor_obs(ob)``, the critic
+``critic_obs(ob)``, and the buffer keeps the raw observation both derive from.
+"""
+        if privileged
+        else ""
     )
-
-
-def training_loop(steps: int = 200, seed: int = 0) -> None:
-    """Scaffold: how a training loop is arranged around the privileged obs.
-
-    This design declares critic-only observation fields, so every observation
-    carries ``critic_ownship`` / ``critic_intruders`` alongside the ordinary
-    blocks. The env never merges them - deciding which network sees what is the
-    trainer's job, and the numbered steps below are where that happens.
-
-    Raises ``NotImplementedError`` from the first stub above; the arrangement
-    is what this is here to show.
-    """
-    from bluesky_sandbox import (
-        actor_obs,
-        actor_observation_space,
-        critic_obs,
-        critic_observation_space,
+    cost_note = (
+        """
+The design defines a cost, so each step's ``info[agent]["cost"]`` is stored
+with the reward, and a cost critic is bootstrapped beside the value.
+"""
+        if has_cost
+        else ""
     )
-
-    env = {class_stem}Env(render_mode=None)
-    obs, _info = env.reset(seed=seed)
-
-    # 1. Build each network from its own SPLIT space, never the raw one.
-    #    Aircraft arrive on a schedule, so wait for the first agent.
-    while not env.agents and not env.episode_done:
-        obs, *_ = env.step({{}})
-    space = env.observation_space(env.agents[0])
-    policy = build_policy(actor_observation_space(space))
-    value = build_value(critic_observation_space(space))
-    buffer = Buffer()
-
-    for _ in range(steps):
-        if env.episode_done:
-            obs, _info = env.reset()
-            continue
-
-        # 2. Act on the actor view, score on the critic view - the asymmetry.
-        actions, values = {{}}, {{}}
-        for agent, ob in obs.items():
-            actions[agent] = policy(actor_obs(ob))
-            values[agent] = value(critic_obs(ob))
-
-        next_obs, rewards, terminations, truncations, _infos = env.step(actions)
-
-        # 3. Store the RAW observation; a stored view cannot be widened back.
-        for agent, action in actions.items():
-            buffer.add(
+    cost_value_build = f"\n    cost_value = build_cost_value({critic_space})" if has_cost else ""
+    cost_value_call = f"\n            cost_values[agent] = cost_value({critic})" if has_cost else ""
+    cost_values_init = ", cost_values" if has_cost else ""
+    cost_values_init_rhs = ", {}" if has_cost else ""
+    add_call = (
+        """            buffer.add(
+                agent,
+                obs[agent],
+                action,
+                values[agent],
+                cost_values[agent],
+                rewards[agent],
+                costs[agent],
+                terminations[agent],
+                truncations[agent],
+            )"""
+        if has_cost
+        else """            buffer.add(
                 agent,
                 obs[agent],
                 action,
@@ -613,18 +630,88 @@ def training_loop(steps: int = 200, seed: int = 0) -> None:
                 rewards[agent],
                 terminations[agent],
                 truncations[agent],
-            )
+            )"""
+    )
+    bootstrap_call = (
+        f"last = {critic_next}\n                buffer.bootstrap(agent, value(last), cost_value(last))"
+        if has_cost
+        else f"buffer.bootstrap(agent, value({critic_next}))"
+    )
+    return f'''"""A training-loop scaffold for this task: what each network sees, and what
+a transition holds - the rest is yours.
+{views_note}{cost_note}
+{"A reward or cost" if has_cost else "A reward"} may be a number or an array of components, per the task's
+hooks. Run ``python -m {pkg}.train`` once the stubs are filled in.
+"""
 
-        # 4. Bootstrapping is a value call, so it takes the critic view too.
+from __future__ import annotations
+
+{imports}from .env import {class_stem}Env
+
+
+def build_policy(observation_space):
+    """Your actor, built from the ACTOR observation space."""
+    raise NotImplementedError("build_policy: return an actor network.")
+
+
+def build_value(observation_space):
+    """Your critic, built from the CRITIC observation space."""
+    raise NotImplementedError("build_value: return a value network.")
+{cost_value_def}
+
+class Buffer:
+    """Your rollout storage. Holds RAW observations."""
+
+    def add(self, agent, {add_args}):
+        raise NotImplementedError("Buffer.add: store one transition.")
+
+    def bootstrap(self, agent, {bootstrap_args}):
+        raise NotImplementedError("Buffer.bootstrap: record the tail estimate of a truncated trajectory.")
+
+
+def update({update_args}):
+    """Your learning step."""
+    raise NotImplementedError("update: fit the networks on the collected rollout.")
+
+
+def training_loop(steps: int = 200, seed: int = 0) -> None:
+    env = {class_stem}Env(render_mode=None)
+    obs, _infos = env.reset(seed=seed)
+
+    # Aircraft arrive on a schedule: wait for the first agent to size the nets.
+    while not env.agents and not env.episode_done:
+        obs, *_ = env.step({{}})
+    space = env.observation_space(env.agents[0])
+    policy = build_policy({actor_space})
+    value = build_value({critic_space}){cost_value_build}
+    buffer = Buffer()
+
+    for _ in range(steps):
+        if env.episode_done:
+            obs, _infos = env.reset()
+            continue
+
+        actions, values{cost_values_init} = {{}}, {{}}{cost_values_init_rhs}
+        for agent, ob in obs.items():
+            actions[agent] = policy({actor})
+            values[agent] = value({critic}){cost_value_call}
+
+{_step_unpack(has_cost, "        ")}
+        for agent, action in actions.items():
+{add_call}
+
+        # A truncated trajectory is bootstrapped from its last observation.
         for agent, truncated in truncations.items():
             if truncated and agent in next_obs:
-                buffer.bootstrap(agent, value(critic_obs(next_obs[agent])))
+                {bootstrap_call}
 
         obs = next_obs
 
-    # 5. Re-derive both views from the stored raw observations at update time.
-    update(policy, value, buffer)
+    update({update_args})
 
+
+if __name__ == "__main__":
+    training_loop()
 '''
 
 
@@ -674,7 +761,7 @@ def _env_py(
     task_info_setup: str,
     task_info: list[TaskInfoSpec],
     task_info_refs: list[str],
-    privileged: bool = False,
+    has_cost: bool = False,
     typed: TaskTypes | None = None,
 ) -> tuple[str, str]:
     """Return ``(env_source, setup_source)`` - the task's behavior, and the
@@ -684,7 +771,6 @@ def _env_py(
     hook_overrides = _emit_hooks(
         hooks, (lambda hook: typed.hook_signature(hook, env_render)) if typed else None
     )
-    training_loop = _emit_training_loop(class_stem) if privileged else ""
     provider_aliases = [
         f"_task_info_provider_{i}" for i, _ in enumerate(task_info_refs)
     ]
@@ -714,6 +800,12 @@ from .scenario import {class_stem}Scenario"""
         setup_code.setup_source(task_info_setup, task_info, hook_setup, signature),
         _typing_imports(setup_render),
     )
+    cost_total = "\n    total_cost = 0.0" if has_cost else ""
+    cost_or = " or cost" if has_cost else ""
+    cost_sum = (
+        "\n        total_cost += sum(float(np.sum(c)) for c in costs.values())" if has_cost else ""
+    )
+    cost_print = ", total cost {total_cost:.3f}" if has_cost else ""
     body = f'''
 
 class {class_stem}Env(BlueskyEnv):
@@ -742,7 +834,7 @@ class {class_stem}Env(BlueskyEnv):
     # Env hooks. reward / terminated / truncated are always present; other
     # @overridable hooks appear only when customized (else inherit the base).
 {hook_overrides}
-{training_loop}
+
 def main() -> None:
     """Smoke rollout: print the task spec, then step with random actions.
 
@@ -760,7 +852,10 @@ def main() -> None:
         print(f"observation_space[{{agent}}]: {{env.observation_space(agent)}}")
         print(f"action_space[{{agent}}]:      {{env.action_space(agent)}}")
 
+    import numpy as np
+
     steps = 0
+    total_reward = 0.0{cost_total}
     for _ in range(100):
         if env.episode_done:
             env.reset()
@@ -770,12 +865,13 @@ def main() -> None:
         actions = {{
             agent: env.action_space(agent).sample() for agent in env.agents
         }}
-        env.step(actions)
+{_step_unpack(has_cost, "        ")}        # A reward{cost_or} may be a number or an array of components.
+        total_reward += sum(float(np.sum(r)) for r in rewards.values()){cost_sum}
         if env.render_mode is not None:
             env.render()
         steps += 1
     env.close()
-    print(f"ran {{steps}} steps OK")
+    print(f"ran {{steps}} steps OK: total reward {{total_reward:.3f}}{cost_print}")
 '''
     # Import only the setup names this module actually reads, so the import
     # line doubles as a summary of what the hooks depend on.
@@ -823,8 +919,23 @@ if __name__ == "__main__":
 '''
 
 
-def _readme_md(pkg: str, title: str, env: Any, meta: dict[str, Any] | None = None) -> str:
+def _readme_md(
+    pkg: str, title: str, env: Any, meta: dict[str, Any] | None = None, template: str = "plain"
+) -> str:
     meta = meta or {}
+    has_cost = defines_cost(env)
+    train_line = "\n  train.py      # training-loop scaffold (python -m {pkg}.train)".format(pkg=pkg) if template == "rl" else ""
+    cost_line = (
+        '\ncosts = {agent: info["cost"] for agent, info in infos.items()}  # this task defines a cost'
+        if has_cost
+        else ""
+    )
+    train_note = (
+        "\n`train.py` lays a training loop out around this MDP: what each network sees,"
+        "\nand what a transition holds. Fill in its stubs.\n"
+        if template == "rl"
+        else ""
+    )
     version = str(meta.get("version", "") or "0")
     note = str(meta.get("note", "") or "").strip()
     note_block = f"\n{note}\n" if note else ""
@@ -841,7 +952,7 @@ Generated by the bluesky-sandbox Environment Designer.
   config.py     # static EnvConfig fields/settings
   setup.py      # module-level helpers / constants / task-info providers
   env.py        # hooks / BlueskyEnv subclass
-  __main__.py   # python -m {pkg}  (10-step smoke rollout)
+  __main__.py   # python -m {pkg}  (smoke rollout){train_line}
 ```
 
 ## Use
@@ -849,9 +960,14 @@ Generated by the bluesky-sandbox Environment Designer.
 ```python
 from {pkg} import Env
 env = Env(render_mode="pygame")  # "pygame" | "panda3d" | "qtgl" | None (headless)
-obs, info = env.reset(seed=0)
+obs, infos = env.reset(seed=0)
+actions = {{agent: env.action_space(agent).sample() for agent in env.agents}}
+next_obs, rewards, terminations, truncations, infos = env.step(actions){cost_line}
 ```
 
+Each is a dict keyed by agent. A reward{" or cost" if has_cost else ""} is a number, or an array of
+components if the task's hook returns one.
+{train_note}
 Reload `design.json` in the designer, or edit `scenario.py` for
 geometry/spawn/queryables, `config.py` for fields and simulator settings,
 `setup.py` for the helpers the hooks lean on, and `env.py` for hooks, reward,

@@ -14,6 +14,10 @@ Covers the three foundation pieces:
 
 from __future__ import annotations
 
+import ast
+
+import pytest
+
 import importlib
 import itertools
 import math
@@ -1562,3 +1566,46 @@ def test_a_designed_normalizer_carries_its_normalized_range_through_the_spec():
     )
     assert isinstance(built, SymmetricNormalizer)
     assert built.normalized_interval == (-math.pi, math.pi)
+
+
+def _templated(template: str, *, cost: bool = False, privileged: bool = False) -> dict[str, str]:
+    spec = _example_design_spec()
+    spec.metadata["template"] = template
+    if cost:
+        spec.env.hook_setup = "import numpy as np\n" + (spec.env.hook_setup or "")
+        spec.env.hooks = {**spec.env.hooks, "cost": "return np.array([1.0, 0.0])"}
+    if privileged:
+        spec.env.critic_obs_fields = [S.FieldRef("CasKts")]
+    files = codegen.generate_task(spec, "Tmpl")
+    return {path.split("/", 1)[1]: text for path, text in files.items()}
+
+
+def test_a_plain_package_has_no_training_scaffold():
+    files = _templated("plain", privileged=True)
+    assert "train.py" not in files
+    assert "def training_loop" not in files["env.py"]
+    assert "next_obs, rewards, terminations, truncations, infos = env.step(actions)" in files["env.py"]
+    assert 'info["cost"]' not in files["env.py"]
+
+
+def test_the_rollout_unpacks_a_cost_when_the_design_defines_one():
+    env_py = _templated("plain", cost=True)["env.py"]
+    assert 'costs = {agent: info["cost"] for agent, info in infos.items()}' in env_py
+    assert "total cost" in env_py
+
+
+def test_an_rl_package_adds_a_scaffold_shaped_by_the_mdp():
+    plain = _templated("rl")["train.py"]
+    assert "actor_obs" not in plain and "cost" not in plain
+    assert "buffer.add(\n                agent,\n                obs[agent]," in plain
+
+    full = _templated("rl", cost=True, privileged=True)["train.py"]
+    assert "policy(actor_obs(ob))" in full and "value(critic_obs(ob))" in full
+    assert "def build_cost_value" in full
+    assert "costs[agent]" in full and "cost_values[agent]" in full
+    ast.parse(full)
+
+
+def test_an_unknown_template_is_refused():
+    with pytest.raises(ValueError, match="unknown template"):
+        _templated("fancy")
