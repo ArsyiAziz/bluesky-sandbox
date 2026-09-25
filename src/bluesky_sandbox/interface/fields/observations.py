@@ -1113,7 +1113,7 @@ class AxMs2(ObsField):
         return float(bs.traf.ax[idx])
 
     def get_many(self, indices: Any) -> Any:
-        return np.asarray(bs.traf.ax, dtype=np.float32)[_indices_array(indices)]
+        return np.asarray(bs.traf.ax, dtype=np.float64)[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1144,7 +1144,7 @@ class MachNumber(ObsField):
         return float(bs.traf.M[idx])
 
     def get_many(self, indices: Any) -> Any:
-        return np.asarray(bs.traf.M, dtype=np.float32)[_indices_array(indices)]
+        return np.asarray(bs.traf.M, dtype=np.float64)[_indices_array(indices)]
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1182,9 +1182,7 @@ class CrossoverAltMarginFt(ObsField):
         cas = np.asarray(bs.traf.cas, dtype=np.float64)[i]
         alt = np.asarray(bs.traf.alt, dtype=np.float64)[i]
         mmo = np.asarray(bs.traf.perf.mmo, dtype=np.float64)[i]
-        return ((alt - np.asarray(crossoveralt(cas, mmo))) * _M_TO_FT).astype(
-            np.float32
-        )
+        return (alt - np.asarray(crossoveralt(cas, mmo))) * _M_TO_FT
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -1303,7 +1301,7 @@ class TimeInEnvS(_TimeInEnvBacked, ObsField):
         indices = _indices_array(indices)
         ids = bs.traf.id
         return np.asarray(
-            [get_time_in_env(ids[int(i)]) for i in indices], dtype=np.float32
+            [get_time_in_env(ids[int(i)]) for i in indices], dtype=np.float64
         )
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -1587,7 +1585,7 @@ class MtowT(ObsField):
         types = bs.traf.type
         return np.asarray(
             [_mtow_kg(types[int(i)]) / 1000.0 for i in _indices_array(indices)],
-            dtype=np.float32,
+            dtype=np.float64,
         )
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -2508,7 +2506,7 @@ class AngleDifference(Difference):
     def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
         left, right = self._fields()
         return (
-            np.asarray(left.get_many(other_indices), dtype=np.float32)
+            np.asarray(left.get_many(other_indices), dtype=np.float64)
             - float(right.get(own_idx))
             + 540.0
         ) % 360.0 - 180.0
@@ -2535,12 +2533,7 @@ class DistToOwnNm(PairObsField):
     high: Annotated[float, "distance nautical miles"] = 200.0
 
     def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return kwikqdrdist(
-            bs.traf.lat[own_idx],
-            bs.traf.lon[own_idx],
-            bs.traf.lat[other_idx],
-            bs.traf.lon[other_idx],
-        )[1]
+        return float(self.get_pairs(own_idx, [other_idx])[0])
 
     def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
         _qdr, dist = _pair_qdr_dist(own_idx, other_indices)
@@ -3912,12 +3905,7 @@ class BrgFromOwnDeg(PairObsField):
     high: Annotated[float, "bearing degrees"] = 180.0
 
     def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        return kwikqdrdist(
-            bs.traf.lat[own_idx],
-            bs.traf.lon[own_idx],
-            bs.traf.lat[other_idx],
-            bs.traf.lon[other_idx],
-        )[0]
+        return float(self.get_pairs(own_idx, [other_idx])[0])
 
     def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
         qdr, _dist = _pair_qdr_dist(own_idx, other_indices)
@@ -3958,18 +3946,12 @@ class BrgFromOwnRelTrkDeg(PairObsField):
     high: Annotated[float, "bearing degrees"] = 180.0
 
     def get_pair(self, own_idx: int, other_idx: Any) -> Any:
-        qdr = kwikqdrdist(
-            bs.traf.lat[own_idx],
-            bs.traf.lon[own_idx],
-            bs.traf.lat[other_idx],
-            bs.traf.lon[other_idx],
-        )[0]
-        return _signed_angle_delta_deg(float(qdr), float(bs.traf.trk[own_idx]))
+        return float(self.get_pairs(own_idx, [other_idx])[0])
 
     def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
         qdr, _dist = _pair_qdr_dist(own_idx, other_indices)
         return (
-            np.asarray(qdr, dtype=np.float32) - float(bs.traf.trk[own_idx]) + 540.0
+            np.asarray(qdr, dtype=np.float64) - float(bs.traf.trk[own_idx]) + 540.0
         ) % 360.0 - 180.0
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
