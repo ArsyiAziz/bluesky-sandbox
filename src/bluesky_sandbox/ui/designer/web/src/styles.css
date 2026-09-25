@@ -3041,8 +3041,9 @@ button:disabled {
 }
 
 .field-row {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 10px 18px minmax(0, 1fr) auto auto auto;
   align-items: center;
   column-gap: 8px;
   row-gap: 2px;
@@ -3063,7 +3064,51 @@ button:disabled {
   border-color: #f87171;
 }
 
+/* Its place in the list, and a grip to drag it by. */
+.field-row-grip {
+  grid-column: 1;
+  color: #5a5a5c;
+  cursor: grab;
+  font-size: 11px;
+  line-height: 1;
+}
+.field-row:hover .field-row-grip {
+  color: var(--muted);
+}
+.field-row-num {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.field-row.dragging {
+  opacity: 0.4;
+}
+.field-row:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+/* Where a dragged row would land: a line in the gap. */
+.field-row.drop-before::before,
+.field-row.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+.field-row.drop-before::before {
+  top: -4px;
+}
+.field-row.drop-after::after {
+  bottom: -4px;
+}
+
 .field-row-name {
+  grid-column: 3;
   font-family: ui-monospace, monospace;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3071,18 +3116,18 @@ button:disabled {
 }
 
 .field-row .geo-row-kind {
-  grid-column: 2;
+  grid-column: 4;
 }
 
 .field-row-norm {
-  grid-column: 3;
+  grid-column: 5;
   width: 84px;
   color: var(--muted);
   white-space: nowrap;
 }
 
 .field-row-x {
-  grid-column: 4;
+  grid-column: 6;
   background: transparent;
   border: none;
   color: var(--muted);
@@ -3099,7 +3144,7 @@ button:disabled {
 }
 
 .field-row-params {
-  grid-column: 1 / -1;
+  grid-column: 3 / -1;
   color: var(--muted);
   font-size: 11px;
   overflow: hidden;

@@ -86,6 +86,27 @@ export function FieldList({
   allowRelative?: boolean;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
+  // A row being dragged, and the gap it would drop into (0 is before the first).
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dropAt, setDropAt] = useState<number | null>(null);
+  // Move the field at `from` into the gap `gap`, keeping the rest in order.
+  const move = (from: number, gap: number) => {
+    const to = gap > from ? gap - 1 : gap;
+    if (to === from || to < 0 || to >= fields.length) return;
+    const next = [...fields];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onChange(next);
+  };
+  // The gap a pointer over row i points at: before it in its upper half.
+  const gapAt = (e: React.DragEvent<HTMLElement>, i: number) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    return e.clientY < box.top + box.height / 2 ? i : i + 1;
+  };
+  const endDrag = () => {
+    setDragFrom(null);
+    setDropAt(null);
+  };
   const normalizerOrder = normalizers.map((n) => n.name);
   const optByName = (n: string) => options.find((o) => o.name === n);
   const pickerLabel =
@@ -117,11 +138,46 @@ export function FieldList({
           const depth = Number(f.transform_kwargs?.depth) || 3;
           return (
             <div
-              className={problem ? "field-row invalid" : "field-row"}
+              className={[
+                "field-row",
+                problem ? "invalid" : "",
+                dragFrom === i ? "dragging" : "",
+                dragFrom !== null && dropAt === i ? "drop-before" : "",
+                dragFrom !== null && dropAt === i + 1 && i === fields.length - 1 ? "drop-after" : "",
+              ].join(" ")}
               key={`${f.field}-${i}`}
-              title={problem ? validationError : opt?.doc || f.field}
+              title={`${problem ? validationError : opt?.doc || f.field}\n\nDrag, or Alt+↑/↓, to reorder.`}
+              tabIndex={0}
+              draggable
               onClick={() => setEditing(i)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") setEditing(i);
+                else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+                  e.preventDefault();
+                  move(i, e.key === "ArrowUp" ? i - 1 : i + 2);
+                }
+              }}
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", f.field);
+                setDragFrom(i);
+              }}
+              onDragOver={(e) => {
+                if (dragFrom === null) return; // another list's row, or not a row
+                e.preventDefault();
+                setDropAt(gapAt(e, i));
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragFrom !== null) move(dragFrom, gapAt(e, i));
+                endDrag();
+              }}
+              onDragEnd={endDrag}
             >
+              <span className="field-row-grip" aria-hidden="true">
+                ⠿
+              </span>
+              <span className="field-row-num">{i + 1}</span>
               <span className="field-row-name">{custom ? `⚙ ${f.field.split(":").pop()}` : f.field}</span>
               {f.transform === "relative_to_own" && (
                 <span className="geo-row-kind" title="intruder value − ownship value">
