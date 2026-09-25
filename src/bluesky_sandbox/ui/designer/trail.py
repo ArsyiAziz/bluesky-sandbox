@@ -26,8 +26,8 @@ from typing import Any
 import bluesky_sandbox
 from bluesky_sandbox.core.services import QueryBatch
 from bluesky_sandbox.interface.fields import _common, _pairs, base
-from bluesky_sandbox.interface.fields import observations as _observations
-from bluesky_sandbox.interface.fields import queryables as _queryable_fields
+from bluesky_sandbox.interface.fields.observations import ownship as _ownship
+from bluesky_sandbox.interface.fields.observations import queryable as _queryable_fields
 
 __all__ = ["call_trail"]
 
@@ -56,7 +56,7 @@ _PLUMBING_CLASSES = (
     base.EnvPairObsField,
     _common._BroadcastObs,
     _pairs._BroadcastPairs,
-    _observations._UnitField,
+    _ownship._UnitField,
 )
 
 # Helpers too small or too generic to explain anything: index coercion,

@@ -8,7 +8,9 @@ does not grow a hand-written copy again.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
+import pkgutil
 from dataclasses import dataclass
 
 import pytest
@@ -23,7 +25,13 @@ from bluesky_sandbox.interface.fields.base import (
     _render_metadata,
 )
 
-_MODULES = (observations, actions)
+_MODULES = (
+    *(
+        importlib.import_module(f"{observations.__name__}.{info.name}")
+        for info in pkgutil.iter_modules(observations.__path__)
+    ),
+    actions,
+)
 _DOCUMENTED = [
     cls
     for module in _MODULES

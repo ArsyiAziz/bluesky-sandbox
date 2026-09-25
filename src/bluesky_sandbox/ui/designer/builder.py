@@ -31,7 +31,6 @@ from typing import Any
 from bluesky_sandbox.config import EnvConfig, apply_performance_model
 from bluesky_sandbox.interface.fields import actions as _actions
 from bluesky_sandbox.interface.fields import observations as _observations
-from bluesky_sandbox.interface.fields import queryables as _queryable_fields
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
     ObsField,
@@ -260,7 +259,7 @@ def resolve_obs_field(
     """
     field_obj = _resolve_field(
         ref,
-        (_observations, _queryable_fields),
+        (_observations,),
         "observation",
     )
     candidates = field_obj if isinstance(field_obj, (list, tuple)) else [field_obj]
@@ -291,7 +290,7 @@ DesignScenario = RandomizedScenario
 def _field_queryable_spec(ref: FieldRef):
     if ":" in ref.name:
         return None
-    cls = getattr(_queryable_fields, ref.name, None)
+    cls = getattr(_observations, ref.name, None)
     if cls is None:
         return None
     return getattr(cls, "queryable_spec", None)

@@ -11,7 +11,7 @@ import dataclasses
 import inspect
 from typing import Any
 
-from bluesky_sandbox.interface.fields import queryables as _queryable_fields
+from bluesky_sandbox.interface.fields.observations import queryable as _queryable_fields
 from bluesky_sandbox.interface.wrappers.observations import normalizer as _norm
 from bluesky_sandbox.sim.spawn import SpawnConfig
 

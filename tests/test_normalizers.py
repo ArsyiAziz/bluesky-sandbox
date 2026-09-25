@@ -46,6 +46,7 @@ import bluesky_sandbox.interface.fields.actions as actions
 import bluesky_sandbox.interface.fields.observations as observations
 from bluesky_sandbox.core import services
 from bluesky_sandbox.interface.fields import _lag, base
+from bluesky_sandbox.interface.fields.observations import transforms
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
 from bluesky_sandbox.interface.wrappers.observations import normalizer as nz
 
@@ -67,6 +68,8 @@ def _concrete(module, base) -> list[type]:
             and issubclass(obj, base)
             and obj not in _BASES
             and not inspect.isabstract(obj)
+            # These read a configured queryable; test_queryable_batching has them.
+            and not issubclass(obj, observations.QueryableObsField)
         ):
             found.append(obj)
     return found
@@ -853,7 +856,7 @@ def lag_clock(monkeypatch):
     _lag._LAG_HISTORY.clear()
     _lag._LAG_DEPTH.clear()
     clock = _Clock()
-    monkeypatch.setattr(observations, "bs", clock)
+    monkeypatch.setattr(transforms, "bs", clock)
     monkeypatch.setattr(_lag, "bs", clock)  # the lag rows read the callsigns
     _Recorded.value, _Recorded.calls = 0.0, 0
     yield clock

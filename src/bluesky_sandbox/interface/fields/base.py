@@ -508,7 +508,7 @@ class ObsField(_BoundedField, ABC):
         underlying field's (possibly per-aircraft dynamic) bounds.
         """
         # cycle: .observations imports .base
-        from .observations import AngleDifference, Difference  # noqa: PLC0415
+        from .observations.transforms import AngleDifference, Difference  # noqa: PLC0415
 
         field_name = name or f"relative_{self.meta.name}"
         if self.meta.circular:
@@ -539,7 +539,7 @@ class ObsField(_BoundedField, ABC):
         field (``AltFt`` next to ``VsFtMin``) just widens the vector.
         """
         # cycle: .observations imports .base
-        from .observations import LaggedObs  # noqa: PLC0415
+        from .observations.transforms import LaggedObs  # noqa: PLC0415
 
         # Inherit the normalizer: the assembler picks it off the OUTER field
         # (``_field_normalizer``/``_field_output_size`` in core.services), so a
@@ -656,10 +656,10 @@ class PairObsField(_BoundedField, ABC):
         scalars (``ConflictTlosS``, ``ConflictTcpaS``, the separation-at-CPA
         fields), not anything in the ownship track frame (``RelPos*``,
         ``RelVel*``, along/cross realized accelerations). See
-        :class:`~.observations.LaggedPair` for why.
+        :class:`~.observations.transforms.LaggedPair` for why.
         """
         # cycle: .observations imports .base
-        from .observations import LaggedPair  # noqa: PLC0415
+        from .observations.transforms import LaggedPair  # noqa: PLC0415
 
         # Inherits the inner normalizer - see :meth:`ObsField.lagged`.
         return LaggedPair(inner=self, steps=int(steps), normalizer=self.normalizer)

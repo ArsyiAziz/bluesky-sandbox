@@ -46,6 +46,8 @@ def _concrete(base: type) -> list[type]:
         and issubclass(obj, base)
         and obj not in (ObsField, PairObsField)
         and not inspect.isabstract(obj)
+        # These read a configured queryable; test_queryable_batching has them.
+        and not issubclass(obj, observations.QueryableObsField)
     ]
 
 

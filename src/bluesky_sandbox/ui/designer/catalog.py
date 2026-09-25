@@ -26,7 +26,6 @@ from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as _actions
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.config import bluesky_simdt_s
-from bluesky_sandbox.interface.fields import queryables as _queryable_fields
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
 from bluesky_sandbox.interface.wrappers.observations import normalizer as _normalizers
 from bluesky_sandbox.sim import bounds as _bounds
@@ -277,19 +276,17 @@ def _queryable_spec(cls) -> dict[str, Any] | None:
 def obs_fields() -> list[dict[str, Any]]:
     """Observation fields available to ``obs_fields`` / ``intruder_obs_fields``."""
     out = []
-    for module in (_observations, _queryable_fields):
-        classes = _concrete_subclasses(module, (ObsField, PairObsField))
-        for cls in classes:
-            out.append(
-                {
-                    "name": cls.__name__,
-                    "doc": _doc(cls),
-                    "pair_only": issubclass(cls, PairObsField),
-                    "params": _field_params(cls),
-                    "profile": _profile(cls),
-                    "queryable_spec": _queryable_spec(cls),
-                }
-            )
+    for cls in _concrete_subclasses(_observations, (ObsField, PairObsField)):
+        out.append(
+            {
+                "name": cls.__name__,
+                "doc": _doc(cls),
+                "pair_only": issubclass(cls, PairObsField),
+                "params": _field_params(cls),
+                "profile": _profile(cls),
+                "queryable_spec": _queryable_spec(cls),
+            }
+        )
     return sorted(out, key=lambda d: d["name"])
 
 

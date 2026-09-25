@@ -1,8 +1,6 @@
 __version__ = "0.1.0"
 
 import sys as _sys
-from importlib import import_module
-from typing import TYPE_CHECKING
 
 from bluesky_sandbox.core.base_environment import AircraftControlState
 from bluesky_sandbox.env import BlueskyEnv
@@ -35,6 +33,7 @@ from bluesky_sandbox.interface.fields.base import (
     TaskContextPairObsField,
     Unit,
 )
+from bluesky_sandbox.interface.fields.observations import queryable as qobs
 from bluesky_sandbox.interface.task import (
     AchievedGoalFn,
     AgentStepContext,
@@ -113,17 +112,6 @@ from bluesky_sandbox.ui.display.readouts import waypoint_readouts
 
 _sys.modules.setdefault(__name__ + ".driver", _drivers)
 
-
-if TYPE_CHECKING:
-    from bluesky_sandbox.interface.fields import queryables as qobs
-
-
-def __getattr__(name: str):
-    if name == "qobs":
-        module = import_module(f"{__name__}.interface.fields.queryables")
-        globals()[name] = module
-        return module
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "AchievedGoalFn",

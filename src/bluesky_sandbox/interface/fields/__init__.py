@@ -1,4 +1,4 @@
-from importlib import import_module
+import sys as _sys
 
 from . import actions, observations
 from .base import (
@@ -21,14 +21,11 @@ from .base import (
     TaskContextPairObsField,
     Unit,
 )
+from .observations import queryable as queryables
 
-
-def __getattr__(name: str):
-    if name == "queryables":
-        module = import_module(f"{__name__}.queryables")
-        globals()[name] = module
-        return module
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# The queryable fields' module before it joined ``observations``; generated
+# configs import it as ``qobs``.
+_sys.modules.setdefault(f"{__name__}.queryables", queryables)
 
 __all__ = [
     "ActionField",
