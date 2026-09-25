@@ -1,5 +1,8 @@
-"""Ownship state: position, heading and track, altitude, speeds, and the
-envelope margins derived from them.
+"""An aircraft's kinematic state: position, heading and track, altitude,
+speeds, and the envelope margins derived from them.
+
+Read for whichever aircraft is observed: the ownship in ``obs_fields``, each
+intruder in ``intruder_obs_fields``.
 """
 
 from __future__ import annotations

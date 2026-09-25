@@ -1,17 +1,19 @@
 """The built-in observation fields, one module per kind of quantity.
 
-- :mod:`.ownship` - position, heading, altitude and speeds
+- :mod:`.kinematics` - position, heading, altitude and speeds
 - :mod:`.autopilot` - the autopilot's selections and the error from each
 - :mod:`.performance` - capability descriptors and the flight phase
 - :mod:`.route` - the aircraft's own route fixes
-- :mod:`.intruders` - each intruder relative to the ownship
+- :mod:`.relative` - another aircraft relative to the ownship
 - :mod:`.conflict` - conflict detection and geometry, per intruder
 - :mod:`.episode` - time in the environment and the previous action
 - :mod:`.transforms` - fields built from other fields
 - :mod:`.queryable` - fields read from a queryable the scenario configures
   (a named waypoint or region); these declare the queryable they need
 
-Every field is importable from here, whichever module defines it.
+Every field is importable from here, whichever module defines it. A field that
+reads one aircraft works in ``obs_fields`` and ``intruder_obs_fields`` alike;
+a pair field (:class:`PairObsField`) only in ``intruder_obs_fields``.
 """
 
 from __future__ import annotations
@@ -44,29 +46,7 @@ from .episode import (
     PrevActionNorm,
     TimeInEnvS,
 )
-from .intruders import (
-    BearingRateDegPerSec,
-    BrgFromOwnDeg,
-    BrgFromOwnRelTrkDeg,
-    ClosingRateKts,
-    DistToOwnNm,
-    HorizontalDistAtCpaNm,
-    IntruderCommMessage,
-    IntruderFixApproachDistNm,
-    IntruderFixArrivalDeltaS,
-    IntruderFixVerticalSepFt,
-    RelPosAlongTrackNm,
-    RelPosAtCpaAlongTrackNm,
-    RelPosAtCpaCrossTrackNm,
-    RelPosCrossTrackNm,
-    RelVelAlongTrackKts,
-    RelVelCrossTrackKts,
-    RelVsFtMin,
-    TcpaS,
-    TlosS,
-    VerticalSepAtCpaFt,
-)
-from .ownship import (
+from .kinematics import (
     AltFt,
     AltM,
     AxMs2,
@@ -122,6 +102,28 @@ from .queryable import (
     WaypointSatisfiedDuringStep,
     WaypointSatisfiedTimeTotalS,
     WaypointTrackErrorDeg,
+)
+from .relative import (
+    BearingRateDegPerSec,
+    BrgFromOwnDeg,
+    BrgFromOwnRelTrkDeg,
+    ClosingRateKts,
+    DistToOwnNm,
+    HorizontalDistAtCpaNm,
+    IntruderCommMessage,
+    IntruderFixApproachDistNm,
+    IntruderFixArrivalDeltaS,
+    IntruderFixVerticalSepFt,
+    RelPosAlongTrackNm,
+    RelPosAtCpaAlongTrackNm,
+    RelPosAtCpaCrossTrackNm,
+    RelPosCrossTrackNm,
+    RelVelAlongTrackKts,
+    RelVelCrossTrackKts,
+    RelVsFtMin,
+    TcpaS,
+    TlosS,
+    VerticalSepAtCpaFt,
 )
 from .route import (
     ActiveRouteWaypointAltDiffFt,

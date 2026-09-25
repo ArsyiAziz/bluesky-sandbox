@@ -1,5 +1,5 @@
 """The autopilot's selections - heading, speed, altitude, LNAV/VNAV - and the
-ownship's error from each.
+aircraft's error from each.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from .._common import (
     _InMetersPerSecond,
 )
 from ..base import ObsField, ObsMeta, ObsQuantity, Unit
-from .ownship import (
+from .kinematics import (
     _Altitude,
     _AltitudeEnvelopeBounds,
     _CasEnvelopeBounds,

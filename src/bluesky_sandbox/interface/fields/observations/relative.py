@@ -1,5 +1,7 @@
-"""Intruder fields: each intruder's position and motion relative to the
-ownship, the closest point of approach, shared route fixes, and messages.
+"""Another aircraft relative to the ownship: its position and motion, the
+closest point of approach, shared route fixes, and messages.
+
+Pair fields, so ``intruder_obs_fields`` only.
 """
 
 from __future__ import annotations

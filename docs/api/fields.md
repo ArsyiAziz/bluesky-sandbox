@@ -20,19 +20,19 @@ The built-in observation fields, one module per kind of quantity. Every field is
 from bluesky_sandbox import obs
 ```
 
-### `observations.ownship`
+### `observations.kinematics`
 
-Position, heading and track, altitude, and speeds.
+Position, heading and track, altitude, and speeds - of whichever aircraft is observed.
 
 ```{eval-rst}
-.. automodule:: bluesky_sandbox.interface.fields.observations.ownship
+.. automodule:: bluesky_sandbox.interface.fields.observations.kinematics
    :members:
    :show-inheritance:
 ```
 
 ### `observations.autopilot`
 
-The autopilot's selections and the ownship's error from each.
+The autopilot's selections and the aircraft's error from each.
 
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.interface.fields.observations.autopilot
@@ -60,12 +60,12 @@ The aircraft's own route fixes, read from BlueSky's route.
    :show-inheritance:
 ```
 
-### `observations.intruders`
+### `observations.relative`
 
-Each intruder relative to the ownship: position, motion, closest point of approach.
+Another aircraft relative to the ownship: position, motion, closest point of approach.
 
 ```{eval-rst}
-.. automodule:: bluesky_sandbox.interface.fields.observations.intruders
+.. automodule:: bluesky_sandbox.interface.fields.observations.relative
    :members:
    :show-inheritance:
 ```
