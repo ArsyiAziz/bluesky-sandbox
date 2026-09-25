@@ -1,9 +1,10 @@
 // Observation/action field lists: add/remove/parametrize field refs, edit
 // constructor kwargs + normalization in a modal, and scaffold/edit custom field
 // classes in custom_fields.py.
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { SpecDict } from "../../api";
+import { scaffoldClass, type Scaffolds } from "../../specHelpers";
 import { registerModalCompletions } from "./monacoCompletions";
 import { FieldPicker } from "./FieldPicker";
 import { Picker } from "./Picker";
@@ -14,6 +15,8 @@ export interface FieldOption {
   // The module the field is defined in, and that module's description.
   category?: string;
   category_doc?: string;
+  // Whether the constructor takes a normalizer (a switch action does not).
+  normalizable?: boolean;
   pair_only?: boolean;
   params?: { name: string; type: string; default: any }[];
   queryable_spec?: QueryableFieldSpec | null;
@@ -62,6 +65,7 @@ export function FieldList({
   onChange,
   onRemove,
   onAddScaffold,
+  scaffolds,
   allowRelative,
 }: {
   label: string;
@@ -75,6 +79,7 @@ export function FieldList({
   onChange: (fields: SpecDict[]) => void;
   onRemove: (index: number) => void;
   onAddScaffold?: () => void;
+  scaffolds?: Scaffolds;
   // When set (intruder list), offer a second picker that turns any ownship
   // observation into an intruder-relative pair field via `.relative_to_own()`.
   allowRelative?: boolean;
@@ -148,6 +153,7 @@ export function FieldList({
           queryables={queryables}
           code={code}
           onCodeChange={onCodeChange}
+          scaffolds={scaffolds}
           kwargs={fields[editing].kwargs ?? {}}
           allowRelative={allowRelative}
           onChange={(kw) => setKwargs(editing, kw)}
@@ -232,6 +238,7 @@ function FieldConfigModal({
   queryables,
   code,
   onCodeChange,
+  scaffolds,
   kwargs,
   allowRelative,
   onChange,
@@ -245,6 +252,7 @@ function FieldConfigModal({
   queryables: Record<string, SpecDict>;
   code: Record<string, string>;
   onCodeChange: (code: Record<string, string>) => void;
+  scaffolds?: Scaffolds;
   kwargs: SpecDict;
   allowRelative?: boolean;
   onChange: (kwargs: SpecDict) => void;
@@ -306,7 +314,22 @@ function FieldConfigModal({
     }
   };
   const custom = !option && field.field?.includes(":");
-  const source = option?.profile?.source || customFieldSource(field.field, code) || customFieldTemplate(field.field, kind);
+  const source =
+    option?.profile?.source ||
+    customFieldSource(field.field, code) ||
+    customFieldTemplate(field.field, kind, scaffolds);
+  // A switch action takes its value as given; nothing to normalize.
+  const normalizable = option?.normalizable !== false;
+  // Fixed for the modal's lifetime, so renaming the class does not swap the
+  // editor's model out from under the cursor.
+  const [editorPath] = useState(() => `custom_field_${field.field}.py`);
+  const rename = (name: string) => {
+    const renamed = renameCustomField(field.field, name, code, kind, scaffolds);
+    if (!renamed) return false;
+    onCodeChange(renamed.code);
+    onFieldChange({ ...field, field: renamed.ref });
+    return true;
+  };
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="modal field-config-modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -320,20 +343,7 @@ function FieldConfigModal({
 
         <div className="modal-grid">
           <div className="modal-pane">
-            {custom && (
-              <label className="numfield inline">
-                <span>name</span>
-                <input
-                  value={field.field.split(":")[1] ?? ""}
-                  onChange={(e) => {
-                    const renamed = renameCustomField(field.field, e.target.value, code, kind);
-                    if (!renamed) return;
-                    onCodeChange(renamed.code);
-                    onFieldChange({ ...field, field: renamed.ref });
-                  }}
-                />
-              </label>
-            )}
+            {custom && <CustomNameInput name={field.field.split(":")[1] ?? ""} onRename={rename} />}
             {relativeEligible && (
               <label className="radio modal-check rel-toggle">
                 <input
@@ -412,6 +422,7 @@ function FieldConfigModal({
               </>
             )}
 
+            {normalizable && (<>
             <div className="sub-label normalizer-label">normalization</div>
             <label className="numfield inline">
               <span>strategy</span>
@@ -435,6 +446,7 @@ function FieldConfigModal({
                 onChange={(value) => setNormalizer(value)}
               />
             )}
+            </>)}
           </div>
 
           <div className="modal-pane">
@@ -444,13 +456,21 @@ function FieldConfigModal({
               <div className="custom-code-editor">
                 <Editor
                   height="100%"
-                  path={`custom_field_${field.field}.py`}
+                  path={editorPath}
                   language="python"
                   value={source}
                   beforeMount={registerModalCompletions}
                   onChange={(value) => {
                     const nextSource = value ?? "";
-                    onCodeChange(updateCustomFieldSource(field.field, code, nextSource, kind));
+                    // Renaming the class here renames the field, as the name
+                    // box does; otherwise the ref would point at a class that
+                    // is gone.
+                    const typed = nextSource.match(/^class\s+([A-Za-z_]\w*)\s*[(:]/m)?.[1];
+                    const [moduleName, current] = field.field.split(":", 2);
+                    onCodeChange(updateCustomFieldSource(field.field, code, nextSource, kind, scaffolds));
+                    if (typed && typed !== current && !classDefined(code, field.field, typed)) {
+                      onFieldChange({ ...field, field: `${moduleName}:${typed}` });
+                    }
                   }}
                   theme="vs-dark"
                   options={{
@@ -474,6 +494,37 @@ function FieldConfigModal({
         </div>
       </div>
     </div>
+  );
+}
+
+// The custom field's class name. Edits apply as they are typed while the name
+// is a valid, unused class name; anything else is kept as a draft and flagged.
+function CustomNameInput({ name, onRename }: { name: string; onRename: (name: string) => boolean }) {
+  const [draft, setDraft] = useState(name);
+  useEffect(() => setDraft(name), [name]);
+  const problem =
+    draft === name
+      ? ""
+      : !/^[A-Za-z_]\w*$/.test(draft)
+        ? "not a valid class name"
+        : "already defined in this module";
+  return (
+    <>
+      <label className="numfield inline">
+        <span>name</span>
+        <input
+          value={draft}
+          aria-invalid={problem !== ""}
+          onChange={(e) => {
+            const next = e.target.value;
+            setDraft(next);
+            onRename(next);
+          }}
+          onBlur={() => setDraft(name)}
+        />
+      </label>
+      {problem && <div className="muted small field-doc">{problem}; still named {name}</div>}
+    </>
   );
 }
 
@@ -784,92 +835,41 @@ function replaceClassName(source: string, oldName: string, newName: string): str
     .replace(new RegExp(`"${oldSnake}"`), `"${newSnake}"`);
 }
 
+// Whether the module behind `ref` already defines a class `name`.
+function classDefined(code: Record<string, string>, ref: string, name: string): boolean {
+  const moduleName = ref.split(":", 2)[0];
+  return findClassBlock(code[`${moduleName}.py`] ?? "", name) !== null;
+}
+
 function renameCustomField(
   ref: string,
-  newNameRaw: string,
+  newName: string,
   code: Record<string, string>,
   kind: "obs" | "action",
+  scaffolds?: Scaffolds,
 ): { ref: string; code: Record<string, string> } | null {
-  if (!ref?.includes(":")) return null;
-  const newName = newNameRaw.replace(/[^0-9a-zA-Z_]/g, "");
-  if (!newName || /^[0-9]/.test(newName)) return null;
+  if (!ref?.includes(":") || !/^[A-Za-z_]\w*$/.test(newName)) return null;
   const [moduleName, oldName] = ref.split(":", 2);
   if (newName === oldName) return { ref, code };
-  const oldSource = customFieldSource(ref, code) || customFieldTemplate(ref, kind);
+  if (classDefined(code, ref, newName)) return null;
+  const oldSource = customFieldSource(ref, code) || customFieldTemplate(ref, kind, scaffolds);
   const newRef = `${moduleName}:${newName}`;
   const newSource = replaceClassName(oldSource, oldName, newName);
   return {
     ref: newRef,
-    code: updateCustomFieldSource(ref, code, newSource, kind),
+    code: updateCustomFieldSource(ref, code, newSource, kind, scaffolds),
   };
 }
-
-const CUSTOM_MODULE_HEADER = `"""Custom observation/action fields for this design.
-
-Classes in this module are referenced as import strings, e.g.
-\`custom_fields:MyField\`. Use the designer's field configuration modal to set
-constructor bounds and normalizers for each referenced class.
-"""
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-
-import bluesky as bs
-
-from bluesky_sandbox.fields.base import (
-    ActionField, ActionMeta, ActionMode, ControlAxis,
-    ObsField, ObsMeta, ObsQuantity, Unit,
-)
-`;
 
 function snakeCase(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/[^0-9a-zA-Z_]+/g, "_").toLowerCase();
 }
 
-function customFieldTemplate(ref: string, kind: "obs" | "action"): string {
+// A new class for a custom ref, from the catalog's template.
+function customFieldTemplate(ref: string, kind: "obs" | "action", scaffolds?: Scaffolds): string {
+  if (!scaffolds) return "";
   const className = ref?.includes(":") ? ref.split(":", 2)[1] : "CustomField";
-  const snake = snakeCase(className);
-  if (kind === "action") {
-    return `@dataclass(frozen=True)
-class ${className}(ActionField):
-    """Custom action: maps one agent action scalar to a BlueSky command."""
-
-    meta = ActionMeta(
-        "${snake}",
-        Unit.UNITLESS,
-        control_axis=ControlAxis.HEADING,
-        mode=ActionMode.ABSOLUTE,
-    )
-    low: float = 0.0
-    high: float = 1.0
-
-    def set(self, idx: int, value: float) -> None:
-        value = min(max(float(value), self.low), self.high)
-        bs.stack.stack(f"HDG {bs.traf.id[idx]} {value:.6f}")
-
-    def bounds(self, idx: int):
-        return self._configured_bounds()
-`;
-  }
-  return `@dataclass(frozen=True)
-class ${className}(ObsField):
-    """Custom observation: one scalar value per aircraft."""
-
-    meta = ObsMeta(
-        "${snake}",
-        Unit.UNITLESS,
-        ObsQuantity.DISTANCE,
-    )
-    low: float = -1.0
-    high: float = 1.0
-
-    def get(self, idx: int):
-        return 0.0
-
-    def bounds(self, idx: int):
-        return self._configured_bounds()
-`;
+  return scaffoldClass(scaffolds, kind, className).trim() + "\n";
 }
 
 function updateCustomFieldSource(
@@ -877,12 +877,13 @@ function updateCustomFieldSource(
   code: Record<string, string>,
   classSource: string,
   kind: "obs" | "action",
+  scaffolds?: Scaffolds,
 ): Record<string, string> {
   if (!ref?.includes(":")) return code;
   const [moduleName, className] = ref.split(":", 2);
   const fileName = `${moduleName}.py`;
-  const existing = code[fileName] ?? CUSTOM_MODULE_HEADER;
-  const replacement = classSource.trimEnd() || customFieldTemplate(ref, kind).trimEnd();
+  const existing = code[fileName] ?? scaffolds?.module_header ?? "";
+  const replacement = classSource.trimEnd() || customFieldTemplate(ref, kind, scaffolds).trimEnd();
   const block = findClassBlock(existing, className);
   if (!block) {
     return { ...code, [fileName]: `${existing.trimEnd()}\n\n${replacement}\n` };

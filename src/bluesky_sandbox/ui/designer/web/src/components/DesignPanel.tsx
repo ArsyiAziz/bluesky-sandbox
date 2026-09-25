@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type SpecDict } from "../api";
-import { clone, gcOrphanBounds, stripClass } from "../specHelpers";
+import { clone, gcOrphanBounds, scaffoldClass, stripClass } from "../specHelpers";
 import type { EditTarget } from "../map/types";
 import { Section } from "./panel/Section";
 import { FieldList } from "./panel/FieldList";
@@ -61,12 +61,18 @@ export default function DesignPanel({
     api.catalogOnce().then(setCatalog).catch(() => setCatalog(null));
   }, []);
 
+  // Edits build on the latest spec, not this render's: one gesture can make
+  // several (a rename changes custom_fields.py and the field's ref), and each
+  // must see the one before it.
+  const latest = useRef(spec);
+  latest.current = spec;
   const edit = (mut: (s: SpecDict) => void) => {
-    const next = clone(spec);
+    const next = clone(latest.current);
     mut(next);
     // Bounds are only created via elements; sweep any left unreferenced after
     // a delete or reassignment so orphans never accumulate.
     gcOrphanBounds(next);
+    latest.current = next;
     onChange(next);
   };
 
@@ -82,10 +88,8 @@ export default function DesignPanel({
       const base = kind === "obs" ? "CustomObs" : "CustomAct";
       let n = 1;
       while (src.includes(`class ${base}${n}(`)) n++;
+      src += scaffoldClass(scaffolds, kind, `${base}${n}`);
       const name = `${base}${n}`;
-      const snake = name.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase();
-      const tmpl = kind === "obs" ? scaffolds.obs_field : scaffolds.action_field;
-      src += tmpl.split("{name}").join(name).split("{snake}").join(snake);
       code["custom_fields.py"] = src;
       s.code = code;
       const ref = { field: `custom_fields:${name}` };
@@ -155,6 +159,7 @@ export default function DesignPanel({
           onCodeChange={(code) => edit((s) => (s.code = code))}
           onChange={(fl) => edit((s) => (s.env.obs_fields = fl))}
           onRemove={(i) => removeField("obs_fields", i)}
+          scaffolds={scaffolds}
           onAddScaffold={() => addScaffold("obs", "obs_fields")}
         />
         <div className="intruder-block">
@@ -178,6 +183,7 @@ export default function DesignPanel({
               onCodeChange={(code) => edit((s) => (s.code = code))}
               onChange={(fl) => edit((s) => (s.env.intruder_obs_fields = fl))}
               onRemove={(i) => removeField("intruder_obs_fields", i)}
+              scaffolds={scaffolds}
               onAddScaffold={() => addScaffold("obs", "intruder_obs_fields")}
               allowRelative
             />
@@ -243,6 +249,7 @@ export default function DesignPanel({
               onCodeChange={(code) => edit((s) => (s.code = code))}
               onChange={(fl) => edit((s) => (s.env.critic_obs_fields = fl))}
               onRemove={(i) => removeField("critic_obs_fields", i)}
+              scaffolds={scaffolds}
               onAddScaffold={() => addScaffold("obs", "critic_obs_fields")}
             />
           )}
@@ -268,6 +275,7 @@ export default function DesignPanel({
               onCodeChange={(code) => edit((s) => (s.code = code))}
               onChange={(fl) => edit((s) => (s.env.critic_intruder_obs_fields = fl))}
               onRemove={(i) => removeField("critic_intruder_obs_fields", i)}
+              scaffolds={scaffolds}
               onAddScaffold={() => addScaffold("obs", "critic_intruder_obs_fields")}
               allowRelative
             />
@@ -288,6 +296,7 @@ export default function DesignPanel({
           onCodeChange={(code) => edit((s) => (s.code = code))}
           onChange={(fl) => edit((s) => (s.env.action_fields = fl))}
           onRemove={(i) => removeField("action_fields", i)}
+          scaffolds={scaffolds}
           onAddScaffold={() => addScaffold("action", "action_fields")}
         />
         <p className="strategy-note muted small">{actionStrategy(env, catalog)}</p>

@@ -211,7 +211,7 @@ def _field_params(cls) -> list[dict[str, Any]]:
             _append(name, init_hints.get(name, p.annotation), default)
         return out
     for f in fields:
-        if f.name in _SKIP_FIELD_PARAMS or f.name.startswith("_"):
+        if not f.init or f.name in _SKIP_FIELD_PARAMS or f.name.startswith("_"):
             continue
         if f.default is not dataclasses.MISSING:
             default = f.default
@@ -274,6 +274,26 @@ def _queryable_spec(cls) -> dict[str, Any] | None:
     }
 
 
+def _wraps_a_field(cls: type) -> bool:
+    """Whether the constructor takes another field (``Difference``'s ``left``,
+    ``LaggedObs``'s ``inner``): built by a transform on the field it wraps -
+    ``relative_to_own``, ``stacked`` - not picked on its own."""
+    hints = get_type_hints(cls)
+    for f in dataclasses.fields(cls):
+        hint = hints.get(f.name)
+        options = get_args(hint) if get_origin(hint) in (Union, types.UnionType) else (hint,)
+        if f.init and any(
+            inspect.isclass(t) and issubclass(t, (ObsField, PairObsField)) for t in options
+        ):
+            return True
+    return False
+
+
+def _takes_normalizer(cls: type) -> bool:
+    """Whether the constructor accepts a ``normalizer`` - a switch does not."""
+    return any(f.name == "normalizer" and f.init for f in dataclasses.fields(cls))
+
+
 def _category(cls: type) -> dict[str, str]:
     """The module a field is defined in, which the picker groups it under.
 
@@ -293,11 +313,14 @@ def obs_fields() -> list[dict[str, Any]]:
     """Observation fields available to ``obs_fields`` / ``intruder_obs_fields``."""
     out = []
     for cls in _concrete_subclasses(_observations, (ObsField, PairObsField)):
+        if _wraps_a_field(cls):
+            continue
         out.append(
             {
                 "name": cls.__name__,
                 "doc": _doc(cls),
                 **_category(cls),
+                "normalizable": _takes_normalizer(cls),
                 "pair_only": issubclass(cls, PairObsField),
                 "params": _field_params(cls),
                 "profile": _profile(cls),
@@ -314,6 +337,7 @@ def action_fields() -> list[dict[str, Any]]:
             "name": cls.__name__,
             "doc": _doc(cls),
             **_category(cls),
+            "normalizable": _takes_normalizer(cls),
             "params": _field_params(cls),
             "profile": _profile(cls),
         }

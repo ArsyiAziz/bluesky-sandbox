@@ -525,6 +525,16 @@ export const normalizeToRegions = (spec: SpecDict): SpecDict => {
   return next;
 };
 
+// The catalog's code templates for custom fields (catalog.scaffolds()).
+export type Scaffolds = { module_header: string; obs_field: string; action_field: string };
+
+// A custom field class named `name`, from the catalog's template for `kind`.
+export const scaffoldClass = (scaffolds: Scaffolds, kind: "obs" | "action", name: string): string => {
+  const snake = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  const template = kind === "obs" ? scaffolds.obs_field : scaffolds.action_field;
+  return template.split("{name}").join(name).split("{snake}").join(snake);
+};
+
 // Remove a top-level `class Name(...)` block (and a preceding decorator line)
 // from Python source, up to the next top-level class/def/decorator or EOF.
 export const stripClass = (source: string, className: string): string => {
