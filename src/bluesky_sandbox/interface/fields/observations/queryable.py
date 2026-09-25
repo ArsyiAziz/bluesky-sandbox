@@ -1,4 +1,9 @@
-"""Observation fields projected from configured queryable results."""
+"""Fields read from a queryable the scenario configures: distance to a named
+waypoint, whether an aircraft is inside a region, and so on.
+
+Each declares the queryable it needs (``queryable_spec``), so the designer can
+add it to the scenario.
+"""
 
 from __future__ import annotations
 

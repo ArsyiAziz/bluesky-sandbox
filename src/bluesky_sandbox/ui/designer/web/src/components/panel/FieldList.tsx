@@ -11,6 +11,9 @@ import { Picker } from "./Picker";
 export interface FieldOption {
   name: string;
   doc?: string;
+  // The module the field is defined in, and that module's description.
+  category?: string;
+  category_doc?: string;
   pair_only?: boolean;
   params?: { name: string; type: string; default: any }[];
   queryable_spec?: QueryableFieldSpec | null;

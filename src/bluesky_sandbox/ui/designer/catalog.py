@@ -14,6 +14,7 @@ import inspect
 import math
 import pathlib
 import re
+import sys
 import textwrap
 import types
 from typing import Any, Union, get_args, get_origin, get_type_hints
@@ -273,6 +274,21 @@ def _queryable_spec(cls) -> dict[str, Any] | None:
     }
 
 
+def _category(cls: type) -> dict[str, str]:
+    """The module a field is defined in, which the picker groups it under.
+
+    Read from the package layout - ``observations/kinematics.py`` files its
+    fields under "kinematics" - with the module docstring's first paragraph as
+    the category's description, so a new module is a new category.
+    """
+    module = sys.modules[cls.__module__]
+    doc = inspect.getdoc(module) or ""
+    return {
+        "category": cls.__module__.rpartition(".")[2],
+        "category_doc": " ".join(doc.split("\n\n", 1)[0].split()),
+    }
+
+
 def obs_fields() -> list[dict[str, Any]]:
     """Observation fields available to ``obs_fields`` / ``intruder_obs_fields``."""
     out = []
@@ -281,6 +297,7 @@ def obs_fields() -> list[dict[str, Any]]:
             {
                 "name": cls.__name__,
                 "doc": _doc(cls),
+                **_category(cls),
                 "pair_only": issubclass(cls, PairObsField),
                 "params": _field_params(cls),
                 "profile": _profile(cls),
@@ -293,7 +310,13 @@ def obs_fields() -> list[dict[str, Any]]:
 def action_fields() -> list[dict[str, Any]]:
     """Action fields available to ``action_fields``."""
     out = [
-        {"name": cls.__name__, "doc": _doc(cls), "params": _field_params(cls), "profile": _profile(cls)}
+        {
+            "name": cls.__name__,
+            "doc": _doc(cls),
+            **_category(cls),
+            "params": _field_params(cls),
+            "profile": _profile(cls),
+        }
         for cls in _concrete_subclasses(_actions, ActionField)
     ]
     return sorted(out, key=lambda d: d["name"])

@@ -1,6 +1,7 @@
 // Searchable, category-grouped picker for observation/action fields. Replaces
-// the flat native <select>: filters by name/doc, groups by quantity (obs) or
-// control axis (action), and shows each field's docstring inline.
+// the flat native <select>: filters by name/doc, groups by the module each field
+// is defined in (the catalog's `category`), and shows each field's docstring
+// inline, tagged with its quantity (obs) or control axis (action).
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FieldOption } from "./FieldList";
 
@@ -10,13 +11,16 @@ function metaLabel(value: any): string {
   return String(value);
 }
 
-// The category an option is filed under: pair observations group together, the
-// rest by their physical quantity (obs) or control axis (action).
-function categoryOf(option: FieldOption, kind: "obs" | "action"): string {
+// What an option measures or commands: its quantity (obs) or control axis
+// (action). Searchable, and shown as a tag unless its group already says it.
+function tagOf(option: FieldOption, kind: "obs" | "action"): string {
   const meta = option.profile?.meta ?? {};
-  if (kind === "action") return metaLabel(meta.control_axis) || "other";
-  if (option.pair_only) return "pairwise";
-  return metaLabel(meta.quantity) || "other";
+  return metaLabel(kind === "action" ? meta.control_axis : meta.quantity);
+}
+
+function shownTag(option: FieldOption, kind: "obs" | "action"): string {
+  const tag = tagOf(option, kind);
+  return tag === option.category ? "" : tag;
 }
 
 export function FieldPicker({
@@ -38,14 +42,21 @@ export function FieldPicker({
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const byCat = new Map<string, FieldOption[]>();
+    const docs = new Map<string, string>();
     for (const o of options) {
-      if (q && !o.name.toLowerCase().includes(q) && !(o.doc ?? "").toLowerCase().includes(q)) continue;
-      const cat = categoryOf(o, kind);
+      const cat = o.category || "other";
+      const haystack = [o.name, o.doc, cat, tagOf(o, kind)].join(" ").toLowerCase();
+      if (q && !haystack.includes(q)) continue;
       (byCat.get(cat) ?? byCat.set(cat, []).get(cat)!).push(o);
+      if (o.category_doc) docs.set(cat, o.category_doc);
     }
     return [...byCat.entries()]
-      .sort(([a], [b]) => (a === "other" ? 1 : b === "other" ? -1 : a.localeCompare(b)))
-      .map(([cat, opts]) => ({ cat, opts: opts.sort((x, y) => x.name.localeCompare(y.name)) }));
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([cat, opts]) => ({
+        cat,
+        doc: docs.get(cat) ?? "",
+        opts: opts.sort((x, y) => x.name.localeCompare(y.name)),
+      }));
   }, [options, query, kind]);
 
   // Flat order matches what's rendered, so arrow-key navigation lines up.
@@ -105,7 +116,9 @@ export function FieldPicker({
           ) : (
             groups.map((g) => (
               <div className="field-picker-group" key={g.cat}>
-                <div className="field-picker-group-label">{g.cat}</div>
+                <div className="field-picker-group-label" title={g.doc}>
+                  {g.cat}
+                </div>
                 {g.opts.map((o) => {
                   const idx = flat.indexOf(o);
                   return (
@@ -122,6 +135,9 @@ export function FieldPicker({
                       <span className="field-picker-opt-name">
                         {o.name}
                         {o.pair_only ? " (pair)" : ""}
+                        {shownTag(o, kind) && (
+                          <span className="field-picker-opt-tag">{shownTag(o, kind)}</span>
+                        )}
                       </span>
                       {o.doc && <span className="field-picker-opt-doc muted small">{o.doc}</span>}
                     </button>

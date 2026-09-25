@@ -1,4 +1,4 @@
-"""The ownship's own episode: time in the environment and its previous action."""
+"""An aircraft's episode: its time in the environment and its previous action."""
 
 from __future__ import annotations
 

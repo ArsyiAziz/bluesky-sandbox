@@ -2064,6 +2064,20 @@ button:disabled {
   font-size: 12px;
 }
 
+.field-picker-opt-tag {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.field-picker-opt.active .field-picker-opt-tag {
+  border-color: #e5edff;
+  color: #e5edff;
+}
+
 .field-picker-opt-doc {
   white-space: nowrap;
   overflow: hidden;
