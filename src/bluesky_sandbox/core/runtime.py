@@ -190,8 +190,24 @@ class BlueSkyRuntime:
         # episode. Detection (CDMETHOD) always runs; resolution (RESO) defaults
         # off so the agent resolves conflicts itself.
         config = self._config()
-        bs.stack.stack(f"CDMETHOD {config.cd_method}")
-        bs.stack.stack(f"RESO {config.reso_method or 'OFF'}")
+        # Called rather than stacked: the stack drops a command's result, so an
+        # unknown method - a typo, or CSTATEBASED without its compiled module -
+        # would leave detection or resolution silently off. Imported here
+        # because importing BlueSky's traffic package before bs.init() breaks
+        # its performance-model selection.
+        from bluesky.traffic.asas import (  # noqa: PLC0415
+            ConflictDetection,
+            ConflictResolution,
+        )
+
+        for field, name, setmethod in (
+            ("cd_method", config.cd_method, ConflictDetection.setmethod),
+            ("reso_method", config.reso_method or "OFF", ConflictResolution.setmethod),
+        ):
+            # Upper-cased as the stack would have done.
+            ok, message = setmethod(str(name).upper())
+            if not ok:
+                raise ValueError(f"EnvConfig.{field}: {message}")
         if config.pz_radius_nm is not None:
             bs.stack.stack(f"ZONER {config.pz_radius_nm}")
         if config.pz_height_ft is not None:
