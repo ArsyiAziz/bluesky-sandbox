@@ -26,6 +26,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -464,12 +466,14 @@ def sample_design(
 
 
 # One-shot script: run the seeded episode, every agent held still, until its
-# scheduled spawns are all up (or ``until_s``), and dump the spawn log - each
-# aircraft as created, with the label the pygame view gives it.
+# scheduled spawns are all up (or ``until_s``), printing each aircraft as it is
+# created - with the label the pygame view gives it and its route's resolved
+# targets - so a caller can show them as they come.
 _SPAWNS_TEMPLATE = '''\
 """Auto-generated spawn log of one seeded episode of a designed env."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 
@@ -485,8 +489,34 @@ MAX_STEPS = {max_steps!r}
 MARKER = {marker!r}
 
 
-def _finite(value):
-    return value if isinstance(value, float) and math.isfinite(value) else None
+def _plain(value):
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    return value
+
+
+def _row(record, queryables):
+    row = {{k: _plain(v) for k, v in record._asdict().items() if k != "targets"}}
+    row["route"] = list(record.route) if record.route else None
+    row["label"] = aircraft_label_lines(
+        record.callsign, record.actype, alt_ft=record.alt_ft, gs_kts=record.gs_kts,
+        cas_kts=record.cas_kts, mach=record.mach,
+    )
+    # A per-aircraft sampled target carries no name; its route step does.
+    names = list(record.route or ())
+    row["targets"] = []
+    for i, t in enumerate(record.targets):
+        name = t.waypoint or (names[i] if i < len(names) else None)
+        row["targets"].append({{
+            **{{k: _plain(v) for k, v in dataclasses.asdict(t).items()}},
+            "waypoint": name,
+            "color": getattr(queryables.get(name), "color", None),
+        }})
+    return row
+
+
+def _emit(kind, payload):
+    print(MARKER + json.dumps({{kind: payload}}), flush=True)
 
 
 def main() -> None:
@@ -494,31 +524,27 @@ def main() -> None:
     try:
         env.reset(seed=SEED)
         base = env.unwrapped
+        queryables = dict(getattr(base.episode_spec, "queryables", {{}}) or {{}})
+        sent = 0
         steps = 0
-        while steps < MAX_STEPS and bs.sim.simt < UNTIL_S and not base.episode_done:
+        while True:
+            log = base.spawn_log
+            for record in log[sent:]:
+                _emit("aircraft", _row(record, queryables))
+            sent = len(log)
             progress = base.episode_spawn_progress
-            if progress.scheduled and progress.spawned >= progress.scheduled:
+            done = progress.scheduled and progress.spawned >= progress.scheduled
+            if done or base.episode_done or steps >= MAX_STEPS or bs.sim.simt >= UNTIL_S:
                 break
             env.step({{a: zero_action(env.action_space(a)) for a in env.agents}})
             steps += 1
         progress = base.episode_spawn_progress
-        aircraft = []
-        for r in base.spawn_log:
-            row = {{k: (_finite(v) if isinstance(v, float) else v) for k, v in r._asdict().items()}}
-            row["route"] = list(r.route) if r.route else None
-            row["label"] = aircraft_label_lines(
-                r.callsign, r.actype, alt_ft=r.alt_ft, gs_kts=r.gs_kts,
-                cas_kts=r.cas_kts, mach=r.mach,
-            )
-            aircraft.append(row)
-        out = {{
+        _emit("done", {{
             "seed": SEED,
             "sim_time_s": float(bs.sim.simt),
             "complete": progress.spawned >= progress.scheduled,
             "scheduled": progress.scheduled,
-            "aircraft": aircraft,
-        }}
-        print(MARKER + json.dumps(out))
+        }})
     finally:
         env.close()
 
@@ -528,28 +554,88 @@ if __name__ == "__main__":
 '''
 
 
-def episode_spawns(
+def iter_episode_spawns(
     spec: DesignSpec,
     *,
     seed: int = 0,
     until_s: float = 3600.0,
     max_steps: int = 2000,
     timeout_s: float = 180.0,
-) -> dict[str, Any]:
+) -> Iterator[dict[str, Any]]:
     """Run the seeded episode in a subprocess, every agent held still, until
-    its scheduled aircraft are all up (or ``until_s``), and return each
-    aircraft as it was created: callsign, type, time, position, heading and
-    speeds, and its label in the pygame view."""
+    its scheduled aircraft are all up (or ``until_s``), yielding each aircraft
+    as it is created - ``{"aircraft": {...}}``: callsign, type, time, position,
+    heading, speeds, its pygame label and its route's resolved targets - and
+    last ``{"done": {...}}``. Closing the iterator stops the run."""
     build_design_config(spec)
     pkg = "designed_spawns"
-    source = _SPAWNS_TEMPLATE.format(
-        pkg=pkg,
-        seed=seed,
-        until_s=float(until_s),
-        max_steps=int(max_steps),
-        marker=_SAMPLE_MARKER,
-    )
-    return _run_script(spec, pkg, source, timeout_s)
+    files = codegen.generate_task(spec, pkg)
+    workdir = Path(tempfile.mkdtemp(prefix="bsd_spawns_"))
+    proc = None
+    try:
+        for rel, text in files.items():
+            path = workdir / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        script = workdir / "_episode_spawns.py"
+        script.write_text(
+            _SPAWNS_TEMPLATE.format(
+                pkg=pkg,
+                seed=seed,
+                until_s=float(until_s),
+                max_steps=int(max_steps),
+                marker=_SAMPLE_MARKER,
+            )
+        )
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            p for p in (str(workdir), str(_REPO_ROOT), env.get("PYTHONPATH", "")) if p
+        )
+        proc = subprocess.Popen(
+            [sys.executable, str(script)],
+            cwd=str(workdir),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + timeout_s
+        finished = False
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            if time.monotonic() > deadline:
+                break
+            if line.startswith(_SAMPLE_MARKER):
+                item = json.loads(line[len(_SAMPLE_MARKER):])
+                yield item
+                if "done" in item:
+                    finished = True
+                    break
+        if not finished:
+            proc.wait(timeout=5)
+            err = proc.stderr.read().strip() if proc.stderr else ""
+            raise BuildError(
+                "the episode run stopped early; "
+                + (err.splitlines()[-1] if err else "see logs")
+            )
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def episode_spawns(spec: DesignSpec, **kwargs: Any) -> dict[str, Any]:
+    """:func:`iter_episode_spawns`, collected: the ``done`` summary with the
+    aircraft under ``aircraft``."""
+    aircraft: list[dict[str, Any]] = []
+    out: dict[str, Any] = {}
+    for item in iter_episode_spawns(spec, **kwargs):
+        if "aircraft" in item:
+            aircraft.append(item["aircraft"])
+        else:
+            out = item["done"]
+    return {**out, "aircraft": aircraft}
 
 
 def run_status() -> dict[str, Any]:

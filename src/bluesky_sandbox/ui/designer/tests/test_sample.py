@@ -57,5 +57,7 @@ def test_the_episode_lists_each_aircraft_as_created():
     assert {"callsign", "actype", "time_s", "lat_deg", "lon_deg", "alt_ft", "hdg_deg", "cas_kts", "gs_kts"} <= set(first)
     assert first["label"][0].startswith(first["callsign"])
     assert first["label"][1].startswith(f"FL{round(first['alt_ft'] / 100):03d}")
+    targets = [t for a in spawns["aircraft"] for t in a["targets"]]
+    assert all(t["waypoint"] and "reach_radius_nm" in t for t in targets)
     # The same seed, the same episode.
     assert episode_spawns(_example_design_spec(), seed=0)["aircraft"] == spawns["aircraft"]

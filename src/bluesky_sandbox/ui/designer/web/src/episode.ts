@@ -2,7 +2,7 @@
 // with, and the aircraft picked in it. The map, the Sampling panel and the
 // Spaces tab all read one episode, so what one shows the others agree with.
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, type EpisodeSpawns, type SampleResult, type SpecDict } from "./api";
+import { api, type EpisodeRunDone, type SampleResult, type SpawnedAircraft, type SpecDict } from "./api";
 import { useRefresh } from "./refresh";
 
 // A picked aircraft: when it spawns, and its callsign once the episode run
@@ -65,46 +65,85 @@ export function useEpisodeSample(spec: SpecDict | null, enabled = true) {
   return state;
 }
 
-// The episode's aircraft as the environment creates them - run once per
-// design and seed, and shared: it runs the whole episode, which takes seconds.
-const spawnRuns = new Map<string, Promise<EpisodeSpawns>>();
-const spawnResults = new Map<string, EpisodeSpawns>();
+// The episode's aircraft as the environment creates them - one run per design
+// and seed, shared by whoever shows them, streamed as they are created. A run
+// nobody watches any more is stopped; the last few finished ones are kept.
+export type EpisodeSpawns = { aircraft: SpawnedAircraft[]; done: EpisodeRunDone | null };
+
+type Run = {
+  aircraft: SpawnedAircraft[];
+  done: EpisodeRunDone | null;
+  error: string;
+  watchers: Set<() => void>;
+  stop: AbortController;
+};
+
+const spawnRuns = new Map<string, Run>();
+const KEEP_FINISHED = 6;
+
+function startRun(key: string, spec: SpecDict, seed: number): Run {
+  const run: Run = { aircraft: [], done: null, error: "", watchers: new Set(), stop: new AbortController() };
+  spawnRuns.set(key, run);
+  const tell = () => run.watchers.forEach((w) => w());
+  api
+    .episode(
+      spec,
+      seed,
+      (a) => {
+        run.aircraft = [...run.aircraft, a];
+        tell();
+      },
+      run.stop.signal,
+    )
+    .then((done) => {
+      run.done = done;
+      tell();
+      const finished = [...spawnRuns].filter(([, r]) => r.done);
+      for (const [k] of finished.slice(0, Math.max(0, finished.length - KEEP_FINISHED))) spawnRuns.delete(k);
+    })
+    .catch((e) => {
+      spawnRuns.delete(key);
+      if (run.stop.signal.aborted) return;
+      run.error = String(e?.message ?? e);
+      tell();
+    });
+  return run;
+}
 
 export function useEpisodeSpawns(spec: SpecDict | null, enabled = true) {
   const { seed } = useEpisode();
   const refreshKey = useRefresh();
   const key = JSON.stringify([spec, seed, refreshKey]);
-  const [state, setState] = useState<{ spawns: EpisodeSpawns | null; loading: boolean; error: string }>(() => ({
-    spawns: spawnResults.get(key) ?? null,
-    loading: false,
-    error: "",
-  }));
+  const snapshot = (run: Run | undefined) => ({
+    spawns: run && run.aircraft.length ? { aircraft: run.aircraft, done: run.done } : null,
+    loading: Boolean(run && !run.done && !run.error),
+    error: run?.error ?? "",
+  });
+  const [state, setState] = useState(() => snapshot(spawnRuns.get(key)));
   useEffect(() => {
     if (!spec || !enabled) return;
-    let canceled = false;
-    // A run already in: no wait, no request.
-    const done = spawnResults.get(key);
-    if (done) {
-      setState({ spawns: done, loading: false, error: "" });
-      return;
-    }
-    // Keep the last run on screen while the next one comes.
-    setState((s) => ({ ...s, loading: true, error: "" }));
-    const handle = setTimeout(() => {
-      let run = spawnRuns.get(key);
-      if (!run) {
-        run = api.episode(spec, seed);
-        spawnRuns.set(key, run);
-        run.then((r) => spawnResults.set(key, r)).catch(() => spawnRuns.delete(key));
-      }
-      run
-        .then((spawns) => !canceled && setState({ spawns, loading: false, error: "" }))
-        .catch((e) => !canceled && setState({ spawns: null, loading: false, error: String(e?.message ?? e) }));
-    }, 800);
+    let run: Run | undefined;
+    const watch = () => setState(snapshot(run));
+    const handle = setTimeout(
+      () => {
+        run = spawnRuns.get(key) ?? startRun(key, spec, seed);
+        run.watchers.add(watch);
+        watch();
+      },
+      spawnRuns.has(key) ? 0 : 250,
+    );
+    setState((s) => ({ ...snapshot(spawnRuns.get(key)), loading: true, error: s.error && "" }));
     return () => {
-      canceled = true;
       clearTimeout(handle);
+      if (!run) return;
+      run.watchers.delete(watch);
+      // Nobody is watching an unfinished run: stop it, and forget it.
+      if (!run.watchers.size && !run.done) {
+        run.stop.abort();
+        spawnRuns.delete(key);
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled]);
   return state;
 }

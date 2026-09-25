@@ -26,6 +26,7 @@ import dataclasses
 import importlib
 import inspect
 import io
+import json
 import zipfile
 from functools import lru_cache
 from pathlib import Path
@@ -34,7 +35,7 @@ from typing import Any
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import catalog as _catalog
@@ -341,18 +342,38 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
     @app.post("/api/spec/episode")
-    def episode(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        """Each aircraft of the seeded episode as created - see
-        :func:`runner.episode_spawns`."""
+    def episode(body: dict[str, Any] = Body(...)) -> StreamingResponse:
+        """Each aircraft of the seeded episode as it is created, one JSON line
+        each as the run goes, then a ``done`` line - see
+        :func:`runner.iter_episode_spawns`. A broken design is refused before
+        the stream starts; a run that fails midway ends with an ``error`` line."""
         spec = _parse_spec(body.get("spec", body))
         try:
-            return _runner.episode_spawns(
-                spec,
-                seed=int(body.get("seed", 0)),
-                until_s=float(body.get("until_s", 3600.0)),
-            )
+            build_design_config(spec)
         except (BuildError, ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
+        run = _runner.iter_episode_spawns(
+            spec,
+            seed=int(body.get("seed", 0)),
+            until_s=float(body.get("until_s", 3600.0)),
+        )
+
+        def lines():
+            try:
+                for item in run:
+                    yield json.dumps(item) + "\n"
+            except (BuildError, ValueError, TypeError) as e:
+                yield json.dumps({"error": str(e)}) + "\n"
+            finally:
+                run.close()
+
+        # Declared unencoded, so the gzip middleware passes each line through
+        # as it comes instead of holding the stream to compress it.
+        return StreamingResponse(
+            lines(),
+            media_type="application/x-ndjson",
+            headers={"Content-Encoding": "identity", "Cache-Control": "no-store"},
+        )
 
     @app.post("/api/spec/generate/zip")
     def generate_zip(body: dict[str, Any] = Body(...)) -> Response:

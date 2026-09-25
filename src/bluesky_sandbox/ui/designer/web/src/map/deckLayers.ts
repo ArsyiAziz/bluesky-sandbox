@@ -3,7 +3,7 @@
 // context. Category visibility + per-element hide are applied here so the spec
 // is never mutated by view toggles.
 import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck.gl/layers";
-import type { NavFeatures, PreviewResult, SpawnedAircraft, SpecDict } from "../api";
+import type { NavFeatures, PreviewResult, SpawnedAircraft, SpawnTarget, SpecDict } from "../api";
 import type {
   CategoryVisibility,
   Edge,
@@ -57,12 +57,41 @@ const ROUTE_ARROW_ICON =
 // Tooltip for any hovered deck object (nav fixes/airports, selected waypoints,
 // aircraft, routes). Unified here because deck owns pointer events for rendered
 // task overlays, so all hover info must come through deck.
-// An aircraft's tag on the map, and how it is drawn - shared with the map's
-// declutter, which sizes tags to find the ones that fit.
+// Tags on the map, and how they are drawn - shared with the map's declutter,
+// which sizes them to find the ones that fit.
 export const TAG_SIZE_PX = 12;
 export const TAG_OFFSET_PX = 9;
-export const aircraftTag = (a: SpawnedAircraft) =>
-  `${a.callsign}  FL${String(Math.round(a.alt_ft / 100)).padStart(3, "0")}`;
+export const TAG_LINE_HEIGHT = 1.2;
+
+const three = (n: number) => String(Math.round(n)).padStart(3, "0");
+const fl = (ft: number) => `FL${three(ft / 100)}`;
+
+// An aircraft's tag: its pygame label, and its heading.
+export const aircraftTag = (a: SpawnedAircraft) => [...a.label, `HDG${three(a.hdg_deg % 360)}`].join("\n");
+
+// A target's tag: its name, then the window an aircraft must be in to reach
+// it - altitude, speed, reach radius - for what the target constrains.
+export function targetTag(t: SpawnTarget): string {
+  const window = (at: number, tol: number | null, show: (v: number) => string, unit = "") =>
+    tol ? `${show(at - tol)}–${show(at + tol)}${unit}` : `${show(at)}${unit}`;
+  const parts: string[] = [];
+  if (t.alt_ft != null) parts.push(window(t.alt_ft, t.alt_tolerance_ft, fl));
+  if (t.speed_kts != null) {
+    parts.push(window(t.speed_kts, t.speed_tolerance_kts, (v) => String(Math.round(v)), " kt"));
+    if (t.speed_tolerance_mach) parts.push(`M±${t.speed_tolerance_mach}`.replace("0.", "."));
+  }
+  if (t.reach_radius_nm) parts.push(`r ${t.reach_radius_nm} nm`);
+  return [t.waypoint ?? "target", parts.join(" · ")].filter(Boolean).join("\n");
+}
+
+export const spawnTargetKey = (t: SpawnTarget) => `target:${t.waypoint}:${t.lat.toFixed(5)}:${t.lon.toFixed(5)}:${t.alt_ft}`;
+
+// The targets of every aircraft, each once.
+export function uniqueTargets(flown: SpawnedAircraft[]): SpawnTarget[] {
+  const seen = new Map<string, SpawnTarget>();
+  for (const a of flown) for (const t of a.targets) seen.set(spawnTargetKey(t), t);
+  return [...seen.values()];
+}
 
 export function getTooltip({ object }: any) {
   if (!object) return null;
@@ -77,6 +106,7 @@ export function getTooltip({ object }: any) {
         ...object.label,
         `HDG${String(Math.round(object.hdg_deg) % 360).padStart(3, "0")}  spawned t+${Math.round(object.time_s)} s`,
         object.controlled ? "controlled" : "background traffic",
+        ...(object.targets ?? []).map((t: SpawnTarget) => `→ ${targetTag(t).replace("\n", "  ")}`),
       ].join("\n"),
     };
   if (object.actype) return { text: `${object.actype}  ${Math.round(object.alt_ft)} ft` };
@@ -597,7 +627,9 @@ export function deckLayers(
   if (visibility.aircraft) {
     // Per-aircraft goal: a faint line to each aircraft's sampled target plus a
     // hollow ring at it, so reseeding shows the per-aircraft destination spread.
-    const targeted = preview.sampled_aircraft.filter((a: any) => a.target);
+    // Once the episode run is in, its aircraft's own resolved targets are
+    // drawn below instead of the preview's draw of them.
+    const targeted = flown ? [] : preview.sampled_aircraft.filter((a: any) => a.target);
     const targetZ = (a: any) => zMeters(a.target.alt_ft ?? a.alt_ft);
     // Episode positions of the shared (per-episode sampled) waypoints, for
     // threading each aircraft's goal line through its intermediate fixes.
@@ -725,30 +757,111 @@ export function deckLayers(
           parameters: { depthTest: false },
         }),
       );
-      // A short tag at each aircraft's altitude, beside its dot - callsign and
-      // flight level - for those the map found room for; hovering an aircraft
-      // shows its full pygame block.
+      // Each aircraft's route as resolved for it: a line through its targets,
+      // and at each target its constraint window - the reach disc, the
+      // altitude band as a cylinder - drawn once however many share it.
+      const shapes = { edges: [] as WaypointEdge[], faces: [] as WaypointFace[] };
+      for (const t of uniqueTargets(flown)) {
+        waypointToleranceGeometry(
+          {
+            name: t.waypoint ?? "target",
+            lat: t.lat,
+            lon: t.lon,
+            alt_ft: t.alt_ft,
+            speed_kts: t.speed_kts,
+            reach_radius_nm: t.reach_radius_nm,
+            alt_tolerance_ft: t.alt_tolerance_ft,
+            speed_tolerance_kts: t.speed_tolerance_kts,
+            color: t.color ?? "orange",
+          },
+          shapes.faces,
+          shapes.edges,
+        );
+      }
+      layers.push(
+        new PathLayer({
+          id: "aircraft-routes",
+          data: flown.filter((a) => a.targets.length),
+          getPath: (a: SpawnedAircraft) => {
+            let alt = a.alt_ft;
+            return [
+              [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)],
+              ...a.targets.map((t) => {
+                alt = t.alt_ft ?? alt;
+                return [t.lon, t.lat, zMeters(alt)] as [number, number, number];
+              }),
+            ];
+          },
+          getColor: (a: SpawnedAircraft) => (a.controlled ? [239, 68, 68, 110] : [160, 160, 160, 110]),
+          getWidth: lw(1),
+          widthUnits: "pixels",
+          widthMinPixels: lw(1),
+          parameters: { depthTest: false },
+        }),
+        new SolidPolygonLayer({
+          id: "aircraft-target-tolerance-faces",
+          data: shapes.faces,
+          getPolygon: (d: any) => d.polygon,
+          getFillColor: (d: any) => d.color,
+          pickable: false,
+          parameters: { depthTest: false },
+        }),
+        new LineLayer({
+          id: "aircraft-target-tolerance-edges",
+          data: shapes.edges,
+          getSourcePosition: (d: any) => d.src,
+          getTargetPosition: (d: any) => d.tgt,
+          getColor: (d: any) => d.color,
+          getWidth: lw(1.5),
+          widthUnits: "pixels",
+          widthMinPixels: lw(1),
+          pickable: false,
+          parameters: { depthTest: false },
+        }),
+      );
+      // Tags: each aircraft's pygame label, and each target's constraints,
+      // for those the map found room for; hovering an aircraft gives its label
+      // even where its tag had no room.
       if (visibility.labels) {
-        layers.push(
+        const tagLayer = (id: string, data: any[], getPosition: any, getText: any, getColor: any, getBackgroundColor: any) =>
           new TextLayer({
-            id: "aircraft-labels",
-            data: tagged ? flown.filter((a) => tagged.has(a.callsign)) : flown,
-            getPosition: (a: SpawnedAircraft) => [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)],
-            getText: aircraftTag,
-            getColor: (a: SpawnedAircraft) => (a.controlled ? [255, 214, 214, 255] : [225, 225, 225, 255]),
+            id,
+            data,
+            getPosition,
+            getText,
+            getColor,
             getSize: TAG_SIZE_PX,
             getTextAnchor: "start",
             getAlignmentBaseline: "center",
             getPixelOffset: [TAG_OFFSET_PX, 0],
             fontFamily: "Helvetica, Arial, sans-serif",
             fontWeight: 600,
+            lineHeight: TAG_LINE_HEIGHT,
             characterSet: "auto",
             background: true,
-            getBackgroundColor: [20, 20, 22, 215],
-            backgroundPadding: [4, 2, 4, 2],
+            getBackgroundColor,
+            backgroundPadding: [4, 3, 4, 3],
             billboard: true,
             parameters: { depthTest: false },
-          }),
+          });
+        const targets = uniqueTargets(flown).filter((t) => targetTag(t).includes("\n"));
+        layers.push(
+          tagLayer(
+            "aircraft-target-labels",
+            tagged ? targets.filter((t) => tagged.has(spawnTargetKey(t))) : targets,
+            (t: SpawnTarget) => [t.lon, t.lat, zMeters(t.alt_ft ?? 0)],
+            targetTag,
+            [253, 230, 138, 255],
+            [40, 32, 10, 215],
+          ),
+          tagLayer(
+            "aircraft-labels",
+            tagged ? flown.filter((a) => tagged.has(a.callsign)) : flown,
+            (a: SpawnedAircraft) => [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)],
+            aircraftTag,
+            (a: SpawnedAircraft) => (a.controlled ? [255, 214, 214, 255] : [225, 225, 225, 255]),
+            [20, 20, 22, 215],
+          ),
         );
       }
     } else {

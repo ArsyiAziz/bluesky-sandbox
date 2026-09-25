@@ -18,7 +18,9 @@ export function SamplingReadout({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { pick, setPick } = useEpisode();
-  const { spawns, loading: running, error: spawnError } = useEpisodeSpawns(spec);
+  const { spawns: flowing, loading: running, error: spawnError } = useEpisodeSpawns(spec);
+  // The list names aircraft once the run has them all; until then, the preview.
+  const spawns = flowing?.done ? flowing : null;
 
   const refreshKey = useRefresh();
   useEffect(() => {

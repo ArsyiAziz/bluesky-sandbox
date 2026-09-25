@@ -12,9 +12,13 @@ import {
   LABEL_FONT,
   MOVE_HANDLE_ICON,
   ROTATION_HANDLE_ICON,
+  TAG_LINE_HEIGHT,
   TAG_OFFSET_PX,
   TAG_SIZE_PX,
   aircraftTag,
+  spawnTargetKey,
+  targetTag,
+  uniqueTargets,
   deckLayers,
   getTooltip,
 } from "../map/deckLayers";
@@ -371,18 +375,35 @@ export default function MapTab({
       pitch: map.getPitch(),
       bearing: map.getBearing(),
     });
-    const charW = TAG_SIZE_PX * 0.62;
+    // Each tag's box beside its point, as the text layer lays it out.
+    const charW = TAG_SIZE_PX * 0.6;
+    const lineH = TAG_SIZE_PX * TAG_LINE_HEIGHT;
+    const box = (x: number, y: number, text: string): [number, number, number, number] => {
+      const lines = text.split("\n");
+      const w = Math.max(...lines.map((l) => l.length)) * charW + 8;
+      const h = lines.length * lineH + 6;
+      const x0 = x + TAG_OFFSET_PX - 4;
+      return [x0, y - h / 2, x0 + w, y + h / 2];
+    };
+    // Controlled aircraft first, then background traffic, then targets.
+    const candidates: { id: string; at: [number, number, number]; text: string }[] = [
+      ...[...flown]
+        .sort((a, b) => Number(b.controlled) - Number(a.controlled))
+        .map((a) => ({ id: a.callsign, at: [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)] as [number, number, number], text: aircraftTag(a) })),
+      ...uniqueTargets(flown).map((t) => ({
+        id: spawnTargetKey(t),
+        at: [t.lon, t.lat, zMeters(t.alt_ft ?? 0)] as [number, number, number],
+        text: targetTag(t),
+      })),
+    ];
     const kept: [number, number, number, number][] = [];
     const tagged = new Set<string>();
-    const order = [...flown].sort((a, b) => Number(b.controlled) - Number(a.controlled));
-    for (const a of order) {
-      const [x, y] = viewport.project([a.lon_deg, a.lat_deg, zMeters(a.alt_ft)]);
-      const x0 = x + TAG_OFFSET_PX - 4;
-      const box: [number, number, number, number] = [x0, y - 10, x0 + aircraftTag(a).length * charW + 8, y + 10];
-      const clash = kept.some((k) => box[0] < k[2] && k[0] < box[2] && box[1] < k[3] && k[1] < box[3]);
-      if (!clash) {
-        kept.push(box);
-        tagged.add(a.callsign);
+    for (const c of candidates) {
+      const [x, y] = viewport.project(c.at);
+      const b = box(x, y, c.text);
+      if (!kept.some((k) => b[0] < k[2] && k[0] < b[2] && b[1] < k[3] && k[1] < b[3])) {
+        kept.push(b);
+        tagged.add(c.id);
       }
     }
     taggedRef.current = tagged;
@@ -798,9 +819,9 @@ export default function MapTab({
           {visibility.aircraft && (
             <div className="map-info muted small">
               {flying
-                ? "running the episode for the aircraft as flown…"
+                ? `running the episode… ${spawns ? `${spawns.aircraft.length} aircraft so far` : "starting the simulator"}`
                 : spawns
-                  ? `aircraft as flown: ${spawns.aircraft.length}, up by t+${Math.round(spawns.sim_time_s)} s`
+                  ? `aircraft as flown: ${spawns.aircraft.length}${spawns.done ? `, up by t+${Math.round(spawns.done.sim_time_s)} s` : ""}`
                   : ""}
             </div>
           )}

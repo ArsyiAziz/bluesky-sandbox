@@ -145,14 +145,29 @@ export interface SpawnedAircraft {
   region_index: number;
   route: string[] | null;
   label: string[];
+  // The route's waypoints as resolved for this aircraft, with their constraints.
+  targets: SpawnTarget[];
 }
 
-export interface EpisodeSpawns {
+export interface SpawnTarget {
+  waypoint: string | null;
+  lat: number;
+  lon: number;
+  alt_ft: number | null;
+  speed_kts: number | null;
+  reach_radius_nm: number | null;
+  alt_tolerance_ft: number | null;
+  speed_tolerance_kts: number | null;
+  speed_tolerance_mach: number | null;
+  color: string | null;
+}
+
+// The run's summary, once it is over.
+export interface EpisodeRunDone {
   seed: number;
   sim_time_s: number;
   complete: boolean;
   scheduled: number;
-  aircraft: SpawnedAircraft[];
 }
 
 export interface RunResult {
@@ -263,13 +278,41 @@ export const api = {
       }),
     }).then((r) => jsonOrThrow<RunResult>(r)),
 
-  // The seeded episode run until its aircraft are all up: each as created.
-  episode: (spec: SpecDict, seed = 0, untilS = 3600) =>
-    fetch("/api/spec/episode", {
+  // The seeded episode run until its aircraft are all up, streamed: each
+  // aircraft is handed over as the simulation creates it, then the summary.
+  episode: async (
+    spec: SpecDict,
+    seed: number,
+    onAircraft: (a: SpawnedAircraft) => void,
+    signal: AbortSignal,
+    untilS = 3600,
+  ): Promise<EpisodeRunDone> => {
+    const r = await fetch("/api/spec/episode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec, seed, until_s: untilS }),
-    }).then((r) => jsonOrThrow<EpisodeSpawns>(r)),
+      signal,
+    });
+    if (!r.ok || !r.body) await jsonOrThrow(r);
+    const reader = r.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line) continue;
+        const item = JSON.parse(line);
+        if (item.aircraft) onAircraft(item.aircraft);
+        else if (item.done) return item.done as EpisodeRunDone;
+        else if (item.error) throw new Error(item.error);
+      }
+    }
+    throw new Error("the episode run ended early");
+  },
 
   sample: (spec: SpecDict, seed = 0, atS = 0, acid: string | null = null, maxAgents = 3, maxIntruders = 25) =>
     fetch("/api/spec/sample", {
