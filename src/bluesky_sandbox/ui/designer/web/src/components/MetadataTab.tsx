@@ -1,4 +1,5 @@
 import type { SpecDict } from "../api";
+import { FormCard, FormRow, Page } from "./form";
 
 /**
  * The design's metadata: what it is, which version, and why.
@@ -17,41 +18,44 @@ export default function MetadataTab({
   spec: SpecDict | null;
   onChange: (next: SpecDict) => void;
 }) {
-  if (!spec) return <div className="metadata-tab muted">Spec has a JSON error; fix it in the Code tab.</div>;
+  if (!spec) return <div className="form-page muted">Spec has a JSON error; fix it in the Code tab.</div>;
 
   const metadata = (spec.metadata ?? {}) as Record<string, unknown>;
   const edit = (patch: Record<string, unknown>) =>
     onChange({ ...spec, metadata: { ...metadata, ...patch } });
 
   return (
-    <div className="metadata-tab">
-      <label className="metadata-field">
-        <span className="metadata-label">version</span>
-        <input
-          className="name-input"
-          value={String(metadata.version ?? "")}
-          placeholder="e.g. 61.2"
-          onChange={(e) => edit({ version: e.target.value })}
-        />
-        <span className="muted small">
-          Written to the package's <code>__version__</code> and its README. Bump it when the
-          design changes so a checkpoint can be traced to what produced it.
-        </span>
-      </label>
-
-      <label className="metadata-field metadata-notes">
-        <span className="metadata-label">notes</span>
+    <Page title="Metadata" intro="What the design is and why. Both go into the generated package.">
+      <FormCard title="Version">
+        <FormRow
+          label="version"
+          help={
+            <>
+              Written to the package's <code>__version__</code> and README. Bump it when the design changes, so a
+              checkpoint can be traced to what produced it.
+            </>
+          }
+        >
+          <input
+            className="form-input"
+            value={String(metadata.version ?? "")}
+            placeholder="e.g. 61.2"
+            onChange={(e) => edit({ version: e.target.value })}
+          />
+        </FormRow>
+        <FormRow label="project" help="Set in the toolbar; the saved design's name and the package's.">
+          <span className="form-value">{String(metadata.name ?? "untitled")}</span>
+        </FormRow>
+      </FormCard>
+      <FormCard title="Notes" help="Goes into the generated README." wide className="notes-card">
         <textarea
           className="metadata-note"
           value={String(metadata.note ?? "")}
-          placeholder={
-            "What this design changes and why.\n\n" +
-            "Goes into the generated README."
-          }
+          placeholder={"What this design changes and why."}
           spellCheck={false}
           onChange={(e) => edit({ note: e.target.value })}
         />
-      </label>
-    </div>
+      </FormCard>
+    </Page>
   );
 }

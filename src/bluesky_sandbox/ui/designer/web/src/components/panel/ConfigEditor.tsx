@@ -2,45 +2,10 @@
 // model, the reward/termination/truncation code references, and the per-episode
 // airspace rotation editor.
 import type { SpecDict } from "../../api";
-import { NumField } from "../BoundsEditor";
 import { Picker } from "./Picker";
+import { FormCard, FormRow, NumberInput } from "../form";
 import { ValueField } from "./ValueField";
 import { designBounds, newGroupId } from "../../specHelpers";
-
-// An optional numeric override: empty leaves BlueSky's default (sends null), a
-// typed value overrides it. The placeholder shows the default — no checkbox.
-function DefaultedNumField({
-  label,
-  value,
-  placeholder,
-  step,
-  onChange,
-  stacked = false,
-  title,
-}: {
-  label: string;
-  value: number | null | undefined;
-  placeholder: string;
-  step?: number;
-  onChange: (v: number | null) => void;
-  // Label above the input, to sit in a grid row beside plain NumFields.
-  stacked?: boolean;
-  title?: string;
-}) {
-  return (
-    <label className={stacked ? "numfield" : "numfield inline"} title={title}>
-      <span>{label}</span>
-      <input
-        type="number"
-        step={step}
-        min={0}
-        placeholder={placeholder}
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
-      />
-    </label>
-  );
-}
 
 // Per-episode rotation groups. Each group rotates a chosen set of **bounds**
 // (named regions) by a sampled angle — rotating a bounds rotates every element
@@ -201,126 +166,119 @@ export function ConfigEditor({
   const availError: string | null = avail && !Array.isArray(avail) ? avail.error : null;
   const available: string[] = Array.isArray(avail) ? avail : [];
   const allSelected = available.length > 0 && available.every((a) => aircraftSet.has(a.toUpperCase()));
+  const bs = catalog?.bluesky_defaults ?? {};
   return (
-    <div className="config-editor">
-      <div className="sub-label">allowed aircraft</div>
-      {availError ? (
-        <div className="error-text small">{model}: {availError}</div>
-      ) : (
-        <>
-          <label className="radio" title="sample uniformly across every aircraft type in the model">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              disabled={available.length === 0}
-              onChange={(e) => set({ allowed_aircraft: e.target.checked ? [...available] : [] })}
-            />
-            use all available ({available.length} {model})
-          </label>
-          {!allSelected && (
-            <>
-              <div className="chips">
-                {aircraft.map((ac, i) => (
-                  <span className="chip" key={`${ac}-${i}`}>
-                    {ac}
-                    <button className="chip-x" onClick={() => set({ allowed_aircraft: aircraft.filter((_, j) => j !== i) })}>
-                      ✕
-                    </button>
-                  </span>
-                ))}
-                {aircraft.length === 0 && <span className="muted">none</span>}
-              </div>
-              <Picker
-                placeholder="+ add aircraft…"
-                onChange={(v) => set({ allowed_aircraft: [...aircraft, v] })}
-                options={available
-                  .filter((a) => !aircraftSet.has(a.toUpperCase()))
-                  .map((a) => ({ value: a }))}
+    <>
+      <FormCard title="Simulation" help="The step is how long one environment step lasts; the simulator advances in sim steps within it.">
+        <FormRow label="step (dt)" help="per environment step">
+          <NumberInput unit="s" step={0.1} min={0} value={env.dt} onChange={(v) => set({ dt: v })} />
+        </FormRow>
+        <FormRow label="sim step" help="per BlueSky update">
+          <NumberInput unit="s" step={0.01} min={0} placeholder={`${bs.simdt ?? "BlueSky"} (default)`}
+            value={env.simdt} onChange={(v) => set({ simdt: v })} />
+        </FormRow>
+        <FormRow label="conflict check" help="between detections; divides dt, a multiple of the sim step">
+          <NumberInput unit="s" step={env.simdt ?? bs.simdt} min={0} placeholder={`${bs.asas_dt ?? "BlueSky"} (default)`}
+            value={env.asas_dt} onChange={(v) => set({ asas_dt: v })} />
+        </FormRow>
+        <FormRow label="performance">
+          <Picker
+            searchable={false}
+            placeholder="openap"
+            value={env.performance_model ?? "openap"}
+            onChange={(v) => set({ performance_model: v })}
+            options={[{ value: "openap" }, { value: "bada" }]}
+          />
+        </FormRow>
+      </FormCard>
+
+      <FormCard title="Aircraft" help="Each spawned aircraft's type is drawn from these.">
+        {availError ? (
+          <div className="error-text small">{model}: {availError}</div>
+        ) : (
+          <>
+            <label className="form-check" title="sample uniformly across every aircraft type in the model">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                disabled={available.length === 0}
+                onChange={(e) => set({ allowed_aircraft: e.target.checked ? [...available] : [] })}
               />
-            </>
-          )}
-        </>
-      )}
+              every type in {model} ({available.length})
+            </label>
+            {!allSelected && (
+              <>
+                <div className="chips">
+                  {aircraft.map((ac, i) => (
+                    <span className="chip" key={`${ac}-${i}`}>
+                      {ac}
+                      <button className="chip-x" onClick={() => set({ allowed_aircraft: aircraft.filter((_, j) => j !== i) })}>
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                  {aircraft.length === 0 && <span className="muted">none yet</span>}
+                </div>
+                <Picker
+                  placeholder="+ add aircraft…"
+                  onChange={(v) => set({ allowed_aircraft: [...aircraft, v] })}
+                  options={available
+                    .filter((a) => !aircraftSet.has(a.toUpperCase()))
+                    .map((a) => ({ value: a }))}
+                />
+              </>
+            )}
+          </>
+        )}
+      </FormCard>
 
-      <div className="grid3">
-        <NumField label="dt (s)" step={0.1} value={env.dt} onChange={(v) => set({ dt: v })} />
-        <DefaultedNumField stacked label="simdt (s)" step={0.01}
-          placeholder={`${catalog?.bluesky_defaults?.simdt ?? "BlueSky"} (default)`}
-          value={env.simdt} onChange={(v) => set({ simdt: v })} />
-        <DefaultedNumField stacked label="asas dt (s)"
-          step={env.simdt ?? catalog?.bluesky_defaults?.simdt}
-          placeholder={`${catalog?.bluesky_defaults?.asas_dt ?? "BlueSky"} (default)`}
-          title="How often conflicts are detected. Must divide dt and be a multiple of simdt."
-          value={env.asas_dt} onChange={(v) => set({ asas_dt: v })} />
-      </div>
-      <label className="numfield inline">
-        <span>perf model</span>
-        <Picker
-          searchable={false}
-          placeholder="openap"
-          value={env.performance_model ?? "openap"}
-          onChange={(v) => set({ performance_model: v })}
-          options={[{ value: "openap" }, { value: "bada" }]}
-        />
-      </label>
+      <FormCard title="Conflict detection" help="Detection always runs, for observations; resolution is off by default so the agent resolves. Unset values use BlueSky's. Applied at each reset.">
+        <FormRow label="method">
+          <Picker
+            searchable={false}
+            placeholder="CSTATEBASED"
+            value={env.cd_method ?? "CSTATEBASED"}
+            onChange={(v) => set({ cd_method: v })}
+            options={(catalog?.conflict?.cd_methods ?? ["CSTATEBASED", "STATEBASED"]).map((m: string) => ({ value: m }))}
+          />
+        </FormRow>
+        <FormRow label="resolution">
+          <Picker
+            searchable={false}
+            placeholder="off"
+            value={env.reso_method ?? "OFF"}
+            onChange={(v) => set({ reso_method: v === "OFF" ? null : v })}
+            options={(catalog?.conflict?.reso_methods ?? ["OFF", "MVP"]).map((m: string) => ({
+              value: m,
+              label: m === "OFF" ? "off (agent resolves)" : m,
+            }))}
+          />
+        </FormRow>
+        <FormRow label="zone radius">
+          <NumberInput unit="nm" step={0.5} min={0} placeholder="5 (default)" value={env.pz_radius_nm} onChange={(v) => set({ pz_radius_nm: v })} />
+        </FormRow>
+        <FormRow label="zone height">
+          <NumberInput unit="ft" step={100} min={0} placeholder="1000 (default)" value={env.pz_height_ft} onChange={(v) => set({ pz_height_ft: v })} />
+        </FormRow>
+        <FormRow label="lookahead">
+          <NumberInput unit="s" step={30} min={0} placeholder="300 (default)" value={env.lookahead_s} onChange={(v) => set({ lookahead_s: v })} />
+        </FormRow>
+      </FormCard>
 
-      <div className="sub-label">conflict detection</div>
-      <label className="numfield inline">
-        <span>cd method</span>
-        <Picker
-          searchable={false}
-          placeholder="CSTATEBASED"
-          value={env.cd_method ?? "CSTATEBASED"}
-          onChange={(v) => set({ cd_method: v })}
-          options={(catalog?.conflict?.cd_methods ?? ["CSTATEBASED", "STATEBASED"]).map((m: string) => ({ value: m }))}
-        />
-      </label>
-      <label className="numfield inline">
-        <span>resolution</span>
-        <Picker
-          searchable={false}
-          placeholder="off"
-          value={env.reso_method ?? "OFF"}
-          onChange={(v) => set({ reso_method: v === "OFF" ? null : v })}
-          options={(catalog?.conflict?.reso_methods ?? ["OFF", "MVP"]).map((m: string) => ({
-            value: m,
-            label: m === "OFF" ? "off (agent resolves)" : m,
-          }))}
-        />
-      </label>
-      <DefaultedNumField label="PZ radius (nm)" step={0.5} placeholder="5 (default)"
-        value={env.pz_radius_nm} onChange={(v) => set({ pz_radius_nm: v })} />
-      <DefaultedNumField label="PZ height (ft)" step={100} placeholder="1000 (default)"
-        value={env.pz_height_ft} onChange={(v) => set({ pz_height_ft: v })} />
-      <DefaultedNumField label="lookahead (s)" step={30} placeholder="300 (default)"
-        value={env.lookahead_s} onChange={(v) => set({ lookahead_s: v })} />
-      <div className="muted small">
-        Detection runs always (for observations); resolution defaults off so the agent resolves
-        conflicts. PZ / lookahead left unset use BlueSky's defaults. Re-applied each reset.
-      </div>
-
-      <div className="sub-label">wind</div>
-      <div className="grid2">
-        <NumField label="direction (° from)" step={5}
-          value={env.wind_dir_deg ?? 270} onChange={(v) => set({ wind_dir_deg: v ?? 270 })} />
-        <NumField label="speed (kt)" step={5}
-          value={env.wind_kts ?? 0} onChange={(v) => set({ wind_kts: v ?? 0 })} />
-      </div>
-      <div className="grid2">
-        <NumField label="turbulence (kt RMS)" step={1}
-          value={env.turbulence_kts ?? 0} onChange={(v) => set({ turbulence_kts: v ?? 0 })} />
-        <NumField label="gust τ (s)" step={5}
-          value={env.gust_tau_s ?? 30} onChange={(v) => set({ gust_tau_s: v ?? 30 })} />
-      </div>
-      <div className="muted small">
-        Uniform wind, aviation-standard: direction is where it blows <em>from</em> (270 = westerly,
-        pushing aircraft east). Speed 0 = no wind. Turbulence adds a time-correlated gust (RMS kt)
-        decorrelating over gust τ. Re-applied each reset.
-      </div>
-
-      <div className="muted small">
-        Reward / termination / truncation are env hooks — edit them in the Code tab's “env hooks” panel.
-      </div>
-    </div>
+      <FormCard title="Wind" help={<>Uniform, aviation-standard: the direction is where it blows <em>from</em> (270 is westerly, pushing aircraft east). Turbulence adds a gust with that RMS, decorrelating over τ. Applied at each reset.</>}>
+        <FormRow label="direction" help="where it blows from">
+          <NumberInput unit="°" step={5} value={env.wind_dir_deg ?? 270} onChange={(v) => set({ wind_dir_deg: v ?? 270 })} />
+        </FormRow>
+        <FormRow label="speed" help="0 is calm">
+          <NumberInput unit="kt" step={5} min={0} value={env.wind_kts ?? 0} onChange={(v) => set({ wind_kts: v ?? 0 })} />
+        </FormRow>
+        <FormRow label="turbulence" help="RMS">
+          <NumberInput unit="kt" step={1} min={0} value={env.turbulence_kts ?? 0} onChange={(v) => set({ turbulence_kts: v ?? 0 })} />
+        </FormRow>
+        <FormRow label="gust τ" help="how long a gust holds">
+          <NumberInput unit="s" step={5} min={0} value={env.gust_tau_s ?? 30} onChange={(v) => set({ gust_tau_s: v ?? 30 })} />
+        </FormRow>
+      </FormCard>
+    </>
   );
 }
