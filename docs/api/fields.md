@@ -80,6 +80,16 @@ BlueSky's conflict detection and the shared conflict geometry, per intruder.
    :show-inheritance:
 ```
 
+### `observations.comm`
+
+What each intruder broadcast last step.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.interface.fields.observations.comm
+   :members:
+   :show-inheritance:
+```
+
 ### `observations.episode`
 
 Time in the environment and the previous action.
@@ -122,32 +132,12 @@ The built-in action fields, one module per kind of command. Every action is impo
 from bluesky_sandbox import actions
 ```
 
-### `actions.heading`
+### `actions.kinematics`
 
-An absolute heading, or a turn from the current heading or track.
-
-```{eval-rst}
-.. automodule:: bluesky_sandbox.interface.fields.actions.heading
-   :members:
-   :show-inheritance:
-```
-
-### `actions.speed`
-
-A calibrated airspeed target, absolute or a delta from the current CAS.
+A heading, speed or altitude target on the aircraft's own state, absolute or a delta from the current value.
 
 ```{eval-rst}
-.. automodule:: bluesky_sandbox.interface.fields.actions.speed
-   :members:
-   :show-inheritance:
-```
-
-### `actions.altitude`
-
-An altitude target, absolute or a delta from the current altitude.
-
-```{eval-rst}
-.. automodule:: bluesky_sandbox.interface.fields.actions.altitude
+.. automodule:: bluesky_sandbox.interface.fields.actions.kinematics
    :members:
    :show-inheritance:
 ```
@@ -164,7 +154,7 @@ A deviation from the active route waypoint's guidance, so a zero action flies th
 
 ### `actions.autopilot`
 
-LNAV and VNAV mode switches.
+The autopilot's selected heading, speed and altitude, relative to the current value, and its LNAV and VNAV modes.
 
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.interface.fields.actions.autopilot

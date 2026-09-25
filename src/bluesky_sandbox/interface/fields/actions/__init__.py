@@ -14,15 +14,12 @@ from ..base import (
     SwitchActionMixin,
     Unit,
 )
-from .altitude import (
-    AltDeltaFt,
-    AltDeltaM,
-    AltFt,
-    AltM,
+from .autopilot import (
     ApAltDeltaFt,
     ApAltDeltaM,
-)
-from .autopilot import (
+    ApHdgDeltaDeg,
+    ApSpdDeltaCrossover,
+    ApSpdDeltaKts,
     AutopilotLnav,
     AutopilotLnavVnav,
     AutopilotVnav,
@@ -30,24 +27,23 @@ from .autopilot import (
 from .comm import (
     CommBroadcast,
 )
-from .heading import (
-    ApHdgDeltaDeg,
+from .kinematics import (
+    AltDeltaFt,
+    AltDeltaM,
+    AltFt,
+    AltM,
     HdgDeg,
     HdgDeltaDeg,
+    SpdDeltaKts,
+    SpdDeltaMs,
+    SpdKts,
+    SpdMs,
 )
 from .route import (
     ActiveRouteWaypointAltDeltaFt,
     ActiveRouteWaypointHdgDeltaDeg,
     ActiveRouteWaypointSpdDeltaCrossover,
     ActiveRouteWaypointSpdDeltaKts,
-)
-from .speed import (
-    ApSpdDeltaCrossover,
-    ApSpdDeltaKts,
-    SpdDeltaKts,
-    SpdDeltaMs,
-    SpdKts,
-    SpdMs,
 )
 
 __all__ = [

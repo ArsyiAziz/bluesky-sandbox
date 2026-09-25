@@ -1,12 +1,15 @@
-"""Autopilot mode switches: LNAV, VNAV, or both, turned on with 1 and off with 0."""
+"""The autopilot: its selected heading, speed and altitude, set relative to the
+current value, and its LNAV / VNAV modes, turned on with 1 and off with 0.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 import bluesky as bs
 
+from .._common import _InKnots
 from ..base import (
     ActionField,
     ActionMeta,
@@ -15,6 +18,12 @@ from ..base import (
     SwitchActionMixin,
     Unit,
 )
+from ._targets import (
+    _FMT,
+    _CrossoverSpeedAxis,
+    _DeltaTarget,
+)
+from .kinematics import AltDeltaFt, AltDeltaM, SpdDeltaKts
 
 
 def _switch(enabled: bool) -> str:
@@ -122,3 +131,110 @@ class AutopilotLnavVnav(_AutopilotSwitch):
     def capture_off_reference(self, idx: int) -> None:
         self.capture_lnav_reference(idx)
         self.capture_vnav_reference(idx)
+
+
+@dataclass(frozen=True)
+class ApHdgDeltaDeg(ActionField):
+    """Set autopilot selected heading relative to current track."""
+
+    meta = ActionMeta(
+        "ap_hdg_delta_deg",
+        Unit.DEG,
+        control_axis=ControlAxis.HEADING,
+        mode=ActionMode.DELTA,
+        dynamic_bounds=True,
+    )
+    low: Annotated[
+        float | None,
+        "autopilot heading offset degrees; None = full turn range",
+    ] = None
+    high: Annotated[
+        float | None,
+        "autopilot heading offset degrees; None = full turn range",
+    ] = None
+
+    def set(self, idx: int, value: float) -> None:
+        target = (bs.traf.trk[idx] + value) % 360.0
+        bs.stack.stack(f"HDG {bs.traf.id[idx]} {target:{_FMT}}")
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return self._dynamic_or_configured_bounds(lambda: (-180.0, 180.0))
+
+
+@dataclass(frozen=True)
+class ApSpdDeltaKts(SpdDeltaKts):
+    """Set autopilot selected calibrated airspeed relative to current CAS.
+
+    The same action as :class:`SpdDeltaKts` - BlueSky's ``SPD`` sets the
+    autopilot selection either way - under the name existing configs use.
+    """
+
+    meta = ActionMeta(
+        "ap_spd_delta_kts",
+        Unit.KTS,
+        control_axis=ControlAxis.SPEED,
+        mode=ActionMode.DELTA,
+        dynamic_bounds=True,
+    )
+
+
+@dataclass(frozen=True)
+class ApSpdDeltaCrossover(_InKnots, _CrossoverSpeedAxis, _DeltaTarget):
+    """Autopilot speed relative to *current* CAS, regime-aware (CAS/Mach crossover).
+
+    The autopilot counterpart of :class:`ActiveRouteWaypointSpdDeltaCrossover`:
+    the nominal is the aircraft's current CAS (not a waypoint constraint), so the
+    action nudges speed from where it is. The CAS target is capped at the
+    altitude's Mach limit and issued as **Mach** above the crossover altitude /
+    **CAS** below - so it never commands a Mach-exceeding CAS at cruise.
+    """
+
+    meta = ActionMeta(
+        "ap_spd_delta_crossover",
+        Unit.KTS,
+        control_axis=ControlAxis.SPEED,
+        mode=ActionMode.DELTA,
+        dynamic_bounds=True,
+    )
+    low: Annotated[
+        float | None,
+        "autopilot CAS offset knots; None = runtime speed envelope",
+    ] = None
+    high: Annotated[
+        float | None,
+        "autopilot CAS offset knots; None = runtime speed envelope",
+    ] = None
+
+
+@dataclass(frozen=True)
+class ApAltDeltaFt(AltDeltaFt):
+    """Set autopilot selected altitude relative to current altitude.
+
+    The same action as :class:`AltDeltaFt` - BlueSky's ``ALT`` sets the
+    autopilot selection either way - under the name existing configs use.
+    """
+
+    meta = ActionMeta(
+        "ap_alt_delta_ft",
+        Unit.FT,
+        control_axis=ControlAxis.ALTITUDE,
+        mode=ActionMode.DELTA,
+        dynamic_bounds=True,
+    )
+
+
+@dataclass(frozen=True)
+class ApAltDeltaM(AltDeltaM):
+    """Set autopilot selected altitude relative to current altitude.
+
+    The same action as :class:`AltDeltaM` - BlueSky's ``ALT`` sets the
+    autopilot selection either way - under the name existing configs use.
+    """
+
+    meta = ActionMeta(
+        "ap_alt_delta_m",
+        Unit.M,
+        control_axis=ControlAxis.ALTITUDE,
+        mode=ActionMode.DELTA,
+        dynamic_bounds=True,
+    )

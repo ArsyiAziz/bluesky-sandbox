@@ -6,6 +6,7 @@
 - :mod:`.route` - the aircraft's own route fixes
 - :mod:`.relative` - another aircraft relative to the ownship
 - :mod:`.conflict` - conflict detection and geometry, per intruder
+- :mod:`.comm` - what each intruder broadcast
 - :mod:`.episode` - time in the environment and the previous action
 - :mod:`.transforms` - fields built from other fields
 - :mod:`.queryable` - fields read from a queryable the scenario configures
@@ -30,6 +31,9 @@ from .autopilot import (
     ApHdgDeg,
     ApHdgErrorDeg,
     ApLnavVnavOn,
+)
+from .comm import (
+    IntruderCommMessage,
 )
 from .conflict import (
     ConflictHorizontalDistAtCpaNm,
@@ -110,7 +114,6 @@ from .relative import (
     ClosingRateKts,
     DistToOwnNm,
     HorizontalDistAtCpaNm,
-    IntruderCommMessage,
     IntruderFixApproachDistNm,
     IntruderFixArrivalDeltaS,
     IntruderFixVerticalSepFt,

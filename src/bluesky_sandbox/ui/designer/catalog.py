@@ -77,6 +77,9 @@ def _type_name(t: Any) -> str:
 
 
 def _concrete_subclasses(module, base) -> list[type]:
+    """The usable subclasses of ``base`` in ``module``: concrete, and - for a
+    field - one that says what it is. A base class a family of fields shares
+    (``QueryableObsField``) defines no ``meta``; every field does."""
     out = []
     for name, obj in vars(module).items():
         if name.startswith("_"):
@@ -84,6 +87,9 @@ def _concrete_subclasses(module, base) -> list[type]:
         if not (inspect.isclass(obj) and issubclass(obj, base) and obj is not base):
             continue
         if inspect.isabstract(obj):
+            continue
+        is_field = issubclass(obj, (ObsField, PairObsField, ActionField))
+        if is_field and not any("meta" in vars(cls) for cls in obj.__mro__):
             continue
         out.append(obj)
     return out
