@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from collections.abc import Sequence as SequenceABC
 
 import bluesky as bs
@@ -658,7 +658,7 @@ class QueryStateMonitor:
                     )
                 except (TypeError, ValueError):
                     active_route_idx[acidx] = -1
-            swlnav = np.asarray(bs.traf.swlnav, dtype=bool)[:n]
+            swlnav = np.asarray(bs.traf.swlnav, dtype=np.bool_)[:n]
             just_reached_idx = np.where(swlnav, active_route_idx - 1, active_route_idx)
 
         min_distance = table["min_distance_nm"]
@@ -951,8 +951,8 @@ class TrafficMonitor:
         self._conflict_step_partners: list[set[str] | None] = []
         self._los_step_partners: list[set[str] | None] = []
         self.substep_count = 0
-        self._current_conflict_partners: list[tuple[str, ...]] | None = None
-        self._current_los_partners: list[tuple[str, ...]] | None = None
+        self._current_conflict_partners: tuple[tuple[str, ...], ...] | None = None
+        self._current_los_partners: tuple[tuple[str, ...], ...] | None = None
         # The detector output and aircraft ids the cached increments below were
         # built from; ``None`` forces a rebuild on the next substep.
         self._cd_seen: tuple[object, ...] | None = None
@@ -1020,7 +1020,7 @@ class TrafficMonitor:
         )
 
         n = len(self._table)
-        inconf = np.asarray(bs.traf.cd.inconf, dtype=bool)[:n]
+        inconf = np.asarray(bs.traf.cd.inconf, dtype=np.bool_)[:n]
         if inconf.size < n:
             inconf = np.pad(inconf, (0, n - inconf.size), constant_values=False)
         self._inc_conf = inconf.astype(np.int32)
@@ -1182,6 +1182,7 @@ class AgentInfoBuilder:
         airspace = self.env.episode_airspace_bounds
         traf = bs.traf
         sim_time = bs.sim.simt
+        indexed_agent_ids: Iterable[tuple[int, str]]
         if agent_ids is None:
             indexed_agent_ids = enumerate(traf.id)
         else:
