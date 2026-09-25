@@ -42,6 +42,11 @@ from ._common import (
     _MS_TO_KTS,
     _BroadcastObs,
     _indices_array,
+    _InFeet,
+    _InFeetPerMinute,
+    _InKnots,
+    _InMeters,
+    _InMetersPerSecond,
     _signed_angle_delta_deg,
     _traf_array,
 )
@@ -760,36 +765,6 @@ class _UnitField(_BroadcastObs, ObsField):
 
     def _expected(self, idx: int) -> Any:
         return self._convert(self._si_expected(idx))
-
-
-class _InMeters:
-    """Reported in meters: the SI value as is."""
-
-    _scale: ClassVar[float] = 1.0
-
-
-class _InFeet:
-    """Reported in feet: SI meters x _M_TO_FT (1 / 0.3048)."""
-
-    _scale: ClassVar[float] = _M_TO_FT
-
-
-class _InMetersPerSecond:
-    """Reported in m/s: the SI value as is."""
-
-    _scale: ClassVar[float] = 1.0
-
-
-class _InKnots:
-    """Reported in knots: SI m/s x _MS_TO_KTS (3600 / 1852)."""
-
-    _scale: ClassVar[float] = _MS_TO_KTS
-
-
-class _InFeetPerMinute:
-    """Reported in ft/min: SI m/s x _MS_TO_FTMIN (60 / 0.3048)."""
-
-    _scale: ClassVar[float] = _MS_TO_FTMIN
 
 
 class _AltitudeEnvelopeBounds:

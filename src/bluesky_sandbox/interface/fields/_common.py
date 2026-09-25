@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 import bluesky as bs
 import numpy as np
@@ -67,3 +67,36 @@ class _BroadcastObs:
 
     def get_many(self, indices: Any) -> Any:
         return self._values(_indices_array(indices))
+
+
+# Units a field reports (or an action takes) its quantity in. Each sets
+# ``_scale``, the factor from SI to that unit; the field computes in SI and
+# converts through it. Shared by observation and action fields.
+class _InMeters:
+    """Reported in meters: the SI value as is."""
+
+    _scale: ClassVar[float] = 1.0
+
+
+class _InFeet:
+    """Reported in feet: SI meters x _M_TO_FT (1 / 0.3048)."""
+
+    _scale: ClassVar[float] = _M_TO_FT
+
+
+class _InMetersPerSecond:
+    """Reported in m/s: the SI value as is."""
+
+    _scale: ClassVar[float] = 1.0
+
+
+class _InKnots:
+    """Reported in knots: SI m/s x _MS_TO_KTS (3600 / 1852)."""
+
+    _scale: ClassVar[float] = _MS_TO_KTS
+
+
+class _InFeetPerMinute:
+    """Reported in ft/min: SI m/s x _MS_TO_FTMIN (60 / 0.3048)."""
+
+    _scale: ClassVar[float] = _MS_TO_FTMIN

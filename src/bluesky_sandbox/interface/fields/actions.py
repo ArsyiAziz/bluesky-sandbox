@@ -4,13 +4,21 @@ from dataclasses import dataclass
 from typing import Annotated, ClassVar
 
 import bluesky as bs
-from bluesky.tools.aero import kts
+from bluesky.tools.aero import ft, kts
 from bluesky.tools.geo import kwikqdrdist
 
 from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms as _cas_ceiling_ms
 from bluesky_sandbox.sim.performance.speeds import crossover_speed_state
 
-from ._common import _M_TO_FT, _MIN_DYNAMIC_SPAN, _MS_TO_KTS
+from ._common import (
+    _M_TO_FT,
+    _MIN_DYNAMIC_SPAN,
+    _MS_TO_KTS,
+    _InFeet,
+    _InKnots,
+    _InMeters,
+    _InMetersPerSecond,
+)
 from ._route import _active_route_waypoint
 from ._state import record_comm_message
 from .base import (
@@ -82,7 +90,181 @@ class HdgDeg(ActionField):
 
 
 @dataclass(frozen=True)
-class SpdKts(ActionField):
+class _TargetAction(ActionField):
+    """An action that commands a target on a linear axis: a speed or an altitude.
+
+    Built like the unit observation fields: the axis (:class:`_SpeedAxis`,
+    :class:`_AltitudeAxis`, ...) works in SI, a unit mixin (``_InKnots``,
+    ``_InFeet``, ...) sets ``_scale``, and the action takes its values - and its
+    bounds, floor and ceiling - in that unit. ``_command`` converts the target
+    to the unit BlueSky's command expects.
+
+    ``command_floor`` / ``command_ceiling`` bound the TARGET sent to BlueSky,
+    not the action value: "never command below 1,000 ft" holds whether the
+    action is absolute or a delta. Where they leave nothing reachable - an
+    aircraft already below the floor - the floor wins, so the command is never
+    below it.
+    """
+
+    _scale: ClassVar[float] = 1.0
+
+    command_floor: Annotated[
+        float | None, "lowest target ever commanded, in this action's unit; None = none"
+    ] = None
+    command_ceiling: Annotated[
+        float | None,
+        "highest target ever commanded, in this action's unit; None = none",
+    ] = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        for name in ("command_floor", "command_ceiling"):
+            value = getattr(self, name)
+            if value is not None and value < 0.0:
+                raise ValueError(
+                    f"{type(self).__name__} {name} must be >= 0.0 or None, got {value}"
+                )
+        if (
+            self.command_floor is not None
+            and self.command_ceiling is not None
+            and self.command_floor > self.command_ceiling
+        ):
+            raise ValueError(
+                f"{type(self).__name__} command_floor ({self.command_floor}) must "
+                f"not exceed command_ceiling ({self.command_ceiling})"
+            )
+
+    # --- the axis: SI, provided by _SpeedAxis / _AltitudeAxis ---------------
+    def _envelope_si(self, idx: int) -> tuple[float, float]:
+        raise NotImplementedError
+
+    def _current_si(self, idx: int) -> float:
+        raise NotImplementedError
+
+    def _command(self, idx: int, target: float) -> None:
+        raise NotImplementedError
+
+    # --- in this action's unit ------------------------------------------------
+    def _convert(self, si: float) -> float:
+        return si * self._scale
+
+    def _limit(self, low: float, high: float) -> tuple[float, float]:
+        """``(low, high)`` narrowed to the command floor and ceiling; where
+        nothing is left, the floor wins."""
+        if self.command_floor is not None:
+            low = max(low, float(self.command_floor))
+        if self.command_ceiling is not None:
+            high = min(high, float(self.command_ceiling))
+        if high <= low:
+            high = low + _MIN_DYNAMIC_SPAN
+        return low, high
+
+    def _commandable(self, idx: int) -> tuple[float, float]:
+        """The targets this aircraft may be commanded: its envelope, limited."""
+        low, high = self._envelope_si(idx)
+        return self._limit(self._convert(low), self._convert(high))
+
+    def _nominal(self, idx: int) -> float:
+        """What a zero delta means: the current value, unless overridden."""
+        return self._convert(self._current_si(idx))
+
+
+@dataclass(frozen=True)
+class _AbsoluteTarget(_TargetAction):
+    """The action value IS the target."""
+
+    def set(self, idx: int, value: float) -> None:
+        low, high = self.bounds(idx)
+        self._command(idx, _clip(value, low, high))
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        low, high = self._dynamic_or_configured_bounds(
+            lambda: tuple(self._convert(v) for v in self._envelope_si(idx))
+        )
+        return self._limit(low, high)
+
+
+@dataclass(frozen=True)
+class _DeltaTarget(_TargetAction):
+    """The action value is added to a nominal (``_nominal``) to make the target."""
+
+    def set(self, idx: int, value: float) -> None:
+        low, high = self._commandable(idx)
+        target = self._nominal(idx) + value
+        self._command(idx, min(max(target, low), high))
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        def resolve() -> tuple[float, float]:
+            # Symmetric about the nominal (see _reachable_delta), within what may
+            # be commanded - so a floor narrows it on both sides, keeping 0 the
+            # nominal. A nominal outside that - an aircraft above its ceiling or
+            # below the floor - anchors at the nearest limit, and every value
+            # commands that limit.
+            nominal = self._nominal(idx)
+            low, high = self._commandable(idx)
+            anchor = min(max(nominal, low), high)
+            delta_low, delta_high = _reachable_delta(low, high, anchor)
+            shift = anchor - nominal
+            return delta_low + shift, delta_high + shift
+
+        return self._dynamic_or_configured_bounds(resolve)
+
+
+class _SpeedAxis:
+    """Calibrated airspeed: the performance envelope, commanded with ``SPD`` (kts)."""
+
+    _route_constraint: ClassVar[int] = 3  # waypoint speed, m/s
+
+    def _envelope_si(self, idx: int) -> tuple[float, float]:
+        return float(bs.traf.perf.vmin[idx]), float(bs.traf.perf.vmax[idx])
+
+    def _current_si(self, idx: int) -> float:
+        return float(bs.traf.cas[idx])
+
+    def _command(self, idx: int, target: float) -> None:
+        target_kts = target * (_MS_TO_KTS / self._scale)
+        bs.stack.stack(f"SPD {bs.traf.id[idx]} {target_kts:{_FMT}}")
+
+
+class _CrossoverSpeedAxis(_SpeedAxis):
+    """CAS capped at the Mach limit, commanded as Mach above the crossover."""
+
+    def _envelope_si(self, idx: int) -> tuple[float, float]:
+        return float(bs.traf.perf.vmin[idx]), float(_cas_ceiling_ms(idx))
+
+    def _command(self, idx: int, target: float) -> None:
+        _issue_crossover_speed(idx, target * (_MS_TO_KTS / self._scale))
+
+
+class _AltitudeAxis:
+    """Altitude: 0 to the performance ceiling, commanded with ``ALT`` (ft)."""
+
+    _route_constraint: ClassVar[int] = 2  # waypoint altitude, m
+
+    def _envelope_si(self, idx: int) -> tuple[float, float]:
+        return 0.0, float(bs.traf.perf.hmax[idx])
+
+    def _current_si(self, idx: int) -> float:
+        return float(bs.traf.alt[idx])
+
+    def _command(self, idx: int, target: float) -> None:
+        target_ft = target * (_M_TO_FT / self._scale)
+        bs.stack.stack(f"ALT {bs.traf.id[idx]} {target_ft:{_FMT}}")
+
+
+class _FromRouteWaypoint:
+    """A delta from the active route waypoint's constraint - or, where it has
+    none, from the current value."""
+
+    def _nominal(self, idx: int) -> float:
+        wp = _active_route_waypoint(idx)
+        constraint = None if wp is None else wp[self._route_constraint]
+        si = self._current_si(idx) if constraint is None else constraint
+        return self._convert(si)
+
+
+@dataclass(frozen=True)
+class SpdKts(_InKnots, _SpeedAxis, _AbsoluteTarget):
     """Set target calibrated airspeed in knots.
 
     Metadata:
@@ -111,44 +293,10 @@ class SpdKts(ActionField):
         float | None,
         "target CAS knots upper bound; None = BlueSky perf.vmax at runtime",
     ] = None
-    command_floor_kts: Annotated[
-        float | None,
-        "minimum CAS knots command sent through BlueSky SPD",
-    ] = None
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.command_floor_kts is not None and self.command_floor_kts < 0.0:
-            raise ValueError(
-                f"SpdKts command_floor_kts must be >= 0.0 or None, "
-                f"got {self.command_floor_kts}"
-            )
-
-    def set(self, idx: int, value: float) -> None:
-        lo, hi = self.bounds(idx)
-        target = _clip(value, lo, hi)
-        bs.stack.stack(f"SPD {bs.traf.id[idx]} {target:{_FMT}}")
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        low, high = self._dynamic_or_configured_bounds(
-            lambda: (
-                bs.traf.perf.vmin[idx] * _MS_TO_KTS,
-                bs.traf.perf.vmax[idx] * _MS_TO_KTS,
-            )
-        )
-        if self.command_floor_kts is None:
-            return low, high
-        floor = float(self.command_floor_kts)
-        if floor > high:
-            raise ValueError(
-                "SpdKts command_floor_kts must not exceed the resolved upper "
-                f"speed bound ({high:.3f} kt), got {floor:.3f} kt"
-            )
-        return max(low, floor), high
 
 
 @dataclass(frozen=True)
-class SpdMs(ActionField):
+class SpdMs(_InMetersPerSecond, _SpeedAxis, _AbsoluteTarget):
     """Set target calibrated airspeed in m/s.
 
     Metadata:
@@ -178,76 +326,9 @@ class SpdMs(ActionField):
         "target CAS m/s upper bound; None = BlueSky perf.vmax at runtime",
     ] = None
 
-    def set(self, idx: int, value: float) -> None:
-        lo, hi = self.bounds(idx)
-        target = _clip(value, lo, hi)
-        bs.stack.stack(f"SPD {bs.traf.id[idx]} {target * _MS_TO_KTS:{_FMT}}")
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(
-            lambda: (bs.traf.perf.vmin[idx], bs.traf.perf.vmax[idx])
-        )
-
 
 @dataclass(frozen=True)
-class _AltitudeAction(ActionField):
-    """Shared helpers for altitude action fields."""
-
-    @staticmethod
-    def altitude_ceiling_m(idx: int) -> float:
-        return bs.traf.perf.hmax[idx]
-
-    @classmethod
-    def altitude_ceiling_ft(cls, idx: int) -> float:
-        return cls.altitude_ceiling_m(idx) * _M_TO_FT
-
-    @staticmethod
-    def command_altitude_ft(idx: int, altitude_ft: float) -> None:
-        bs.stack.stack(f"ALT {bs.traf.id[idx]} {altitude_ft:{_FMT}}")
-
-    # Instance methods (not classmethods): the floor comes from the field's own
-    # ``min_altitude_ft``, which is per-instance configuration.
-    def clip_altitude_m(self, idx: int, altitude_m: float) -> float:
-        return min(
-            max(altitude_m, self.altitude_floor_m()), self.altitude_ceiling_m(idx)
-        )
-
-    def clip_altitude_ft(self, idx: int, altitude_ft: float) -> float:
-        return min(
-            max(altitude_ft, self.altitude_floor_m() * _M_TO_FT),
-            self.altitude_ceiling_ft(idx),
-        )
-
-    def altitude_floor_m(self) -> float:
-        """Lowest commandable altitude, in meters.
-
-        MUST match whatever floor the task enforces on ``bs.traf.selalt`` (tasks
-        typically clamp a minimum-safe-altitude in ``on_sim_step``). If this is
-        lower than the task's clamp, every command in the gap produces the SAME
-        flown altitude, so that slice of the action range is a dead zone the
-        policy gets no gradient in - and with envelope-relative bounds that slice
-        can be large (~1/6 of the altitude channel at a 25000 ft rung with a
-        1000 ft clamp). Set ``min_altitude_ft`` on the field to close the gap.
-        """
-        return float(getattr(self, "min_altitude_ft", 0.0) or 0.0) / _M_TO_FT
-
-    def altitude_delta_bounds_ft(self, idx: int) -> tuple[float, float]:
-        current_ft = bs.traf.alt[idx] * _M_TO_FT
-        return _reachable_delta(
-            self.altitude_floor_m() * _M_TO_FT,
-            self.altitude_ceiling_ft(idx),
-            current_ft,
-        )
-
-    def altitude_delta_bounds_m(self, idx: int) -> tuple[float, float]:
-        current_m = bs.traf.alt[idx]
-        return _reachable_delta(
-            self.altitude_floor_m(), self.altitude_ceiling_m(idx), current_m
-        )
-
-
-@dataclass(frozen=True)
-class AltFt(_AltitudeAction):
+class AltFt(_InFeet, _AltitudeAxis, _AbsoluteTarget):
     """Set target altitude in feet.
 
     Metadata:
@@ -277,18 +358,9 @@ class AltFt(_AltitudeAction):
         "target altitude feet upper bound; None = BlueSky perf ceiling at runtime",
     ] = None
 
-    def set(self, idx: int, value: float) -> None:
-        lo, hi = self.bounds(idx)
-        self.command_altitude_ft(idx, _clip(value, lo, hi))
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(
-            lambda: (self.altitude_floor_m() * _M_TO_FT, self.altitude_ceiling_ft(idx))
-        )
-
 
 @dataclass(frozen=True)
-class AltM(_AltitudeAction):
+class AltM(_InMeters, _AltitudeAxis, _AbsoluteTarget):
     """Set target altitude in meters.
 
     Metadata:
@@ -317,15 +389,6 @@ class AltM(_AltitudeAction):
         float | None,
         "target altitude meters upper bound; None = BlueSky perf ceiling at runtime",
     ] = None
-
-    def set(self, idx: int, value: float) -> None:
-        lo, hi = self.bounds(idx)
-        self.command_altitude_ft(idx, _clip(value, lo, hi) * _M_TO_FT)
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(
-            lambda: (self.altitude_floor_m(), self.altitude_ceiling_m(idx))
-        )
 
 
 @dataclass(frozen=True)
@@ -394,7 +457,7 @@ class ApHdgDeltaDeg(ActionField):
 
 
 @dataclass(frozen=True)
-class AltDeltaFt(_AltitudeAction):
+class AltDeltaFt(_InFeet, _AltitudeAxis, _DeltaTarget):
     """Adjust target altitude by a delta in feet.
 
     Metadata:
@@ -413,15 +476,9 @@ class AltDeltaFt(_AltitudeAction):
     low: Annotated[float, "altitude delta feet"] = -1000.0
     high: Annotated[float, "altitude delta feet"] = 1000.0
 
-    def set(self, idx: int, value: float) -> None:
-        self.command_altitude_ft(idx, max(0.0, bs.traf.alt[idx] * _M_TO_FT + value))
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._configured_bounds()
-
 
 @dataclass(frozen=True)
-class ApAltDeltaFt(_AltitudeAction):
+class ApAltDeltaFt(_InFeet, _AltitudeAxis, _DeltaTarget):
     """Set autopilot selected altitude relative to current altitude.
 
     Metadata:
@@ -447,40 +504,10 @@ class ApAltDeltaFt(_AltitudeAction):
         float | None,
         "autopilot altitude offset feet; None = runtime altitude envelope",
     ] = None
-    command_floor_ft: Annotated[
-        float | None,
-        "minimum selected altitude feet; None = no command floor",
-    ] = None
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.command_floor_ft is not None and self.command_floor_ft < 0.0:
-            raise ValueError(
-                f"ApAltDeltaFt command_floor_ft must be >= 0.0 or None, "
-                f"got {self.command_floor_ft}"
-            )
-
-    def set(self, idx: int, value: float) -> None:
-        target = bs.traf.alt[idx] * _M_TO_FT + value
-        if self.command_floor_ft is not None:
-            target = max(float(self.command_floor_ft), target)
-        self.command_altitude_ft(idx, self.clip_altitude_ft(idx, target))
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(
-            lambda: self._altitude_delta_bounds_with_floor_ft(idx)
-        )
-
-    def _altitude_delta_bounds_with_floor_ft(self, idx: int) -> tuple[float, float]:
-        low, high = self.altitude_delta_bounds_ft(idx)
-        if self.command_floor_ft is None:
-            return low, high
-        current_ft = bs.traf.alt[idx] * _M_TO_FT
-        return max(low, float(self.command_floor_ft) - current_ft), high
 
 
 @dataclass(frozen=True)
-class AltDeltaM(_AltitudeAction):
+class AltDeltaM(_InMeters, _AltitudeAxis, _DeltaTarget):
     """Adjust target altitude by a delta in meters.
 
     Metadata:
@@ -496,18 +523,12 @@ class AltDeltaM(_AltitudeAction):
         control_axis=ControlAxis.ALTITUDE,
         mode=ActionMode.DELTA,
     )
-    low: Annotated[float, "altitude delta meters"] = -152.4
-    high: Annotated[float, "altitude delta meters"] = 152.4
-
-    def set(self, idx: int, value: float) -> None:
-        self.command_altitude_ft(idx, max(0.0, bs.traf.alt[idx] + value) * _M_TO_FT)
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._configured_bounds()
+    low: Annotated[float, "altitude delta meters"] = -1000.0 * ft
+    high: Annotated[float, "altitude delta meters"] = 1000.0 * ft
 
 
 @dataclass(frozen=True)
-class ApAltDeltaM(_AltitudeAction):
+class ApAltDeltaM(_InMeters, _AltitudeAxis, _DeltaTarget):
     """Set autopilot selected altitude relative to current altitude."""
 
     meta = ActionMeta(
@@ -526,18 +547,9 @@ class ApAltDeltaM(_AltitudeAction):
         "autopilot altitude offset meters; None = runtime altitude envelope",
     ] = None
 
-    def set(self, idx: int, value: float) -> None:
-        target = bs.traf.alt[idx] + value
-        self.command_altitude_ft(idx, self.clip_altitude_m(idx, target) * _M_TO_FT)
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(
-            lambda: self.altitude_delta_bounds_m(idx)
-        )
-
 
 @dataclass(frozen=True)
-class SpdDeltaKts(ActionField):
+class SpdDeltaKts(_InKnots, _SpeedAxis, _DeltaTarget):
     """Adjust target calibrated airspeed by a delta in knots.
 
     Metadata:
@@ -556,18 +568,9 @@ class SpdDeltaKts(ActionField):
     low: Annotated[float, "CAS delta knots"] = -100.0
     high: Annotated[float, "CAS delta knots"] = 100.0
 
-    def set(self, idx: int, value: float) -> None:
-        target = bs.traf.cas[idx] * _MS_TO_KTS + value
-        lo = bs.traf.perf.vmin[idx] * _MS_TO_KTS
-        hi = bs.traf.perf.vmax[idx] * _MS_TO_KTS
-        bs.stack.stack(f"SPD {bs.traf.id[idx]} {min(max(target, lo), hi):{_FMT}}")
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._configured_bounds()
-
 
 @dataclass(frozen=True)
-class ApSpdDeltaKts(ActionField):
+class ApSpdDeltaKts(_InKnots, _SpeedAxis, _DeltaTarget):
     """Set autopilot selected calibrated airspeed relative to current CAS.
 
     Metadata:
@@ -593,48 +596,10 @@ class ApSpdDeltaKts(ActionField):
         float | None,
         "autopilot CAS offset knots; None = runtime speed envelope",
     ] = None
-    command_floor_kts: Annotated[
-        float | None,
-        "minimum CAS knots command sent through BlueSky SPD",
-    ] = None
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.command_floor_kts is not None and self.command_floor_kts < 0.0:
-            raise ValueError(
-                f"ApSpdDeltaKts command_floor_kts must be >= 0.0 or None, "
-                f"got {self.command_floor_kts}"
-            )
-
-    def set(self, idx: int, value: float) -> None:
-        target = bs.traf.cas[idx] * _MS_TO_KTS + value
-        lo, hi = self._target_bounds_kts(idx)
-        bs.stack.stack(f"SPD {bs.traf.id[idx]} {min(max(target, lo), hi):{_FMT}}")
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            current = bs.traf.cas[idx] * _MS_TO_KTS
-            lo, hi = self._target_bounds_kts(idx)
-            return _reachable_delta(lo, hi, current)
-
-        return self._dynamic_or_configured_bounds(resolve)
-
-    def _target_bounds_kts(self, idx: int) -> tuple[float, float]:
-        lo = bs.traf.perf.vmin[idx] * _MS_TO_KTS
-        hi = bs.traf.perf.vmax[idx] * _MS_TO_KTS
-        if self.command_floor_kts is None:
-            return lo, hi
-        floor = float(self.command_floor_kts)
-        if floor > hi:
-            raise ValueError(
-                "ApSpdDeltaKts command_floor_kts must not exceed the resolved "
-                f"upper speed bound ({hi:.3f} kt), got {floor:.3f} kt"
-            )
-        return max(lo, floor), hi
 
 
 @dataclass(frozen=True)
-class SpdDeltaMs(ActionField):
+class SpdDeltaMs(_InMetersPerSecond, _SpeedAxis, _DeltaTarget):
     """Adjust target calibrated airspeed by a delta in m/s.
 
     Metadata:
@@ -650,17 +615,8 @@ class SpdDeltaMs(ActionField):
         control_axis=ControlAxis.SPEED,
         mode=ActionMode.DELTA,
     )
-    low: Annotated[float, "CAS delta m/s"] = -5.144444
-    high: Annotated[float, "CAS delta m/s"] = 5.144444
-
-    def set(self, idx: int, value: float) -> None:
-        target = (bs.traf.cas[idx] + value) * _MS_TO_KTS
-        lo = bs.traf.perf.vmin[idx] * _MS_TO_KTS
-        hi = bs.traf.perf.vmax[idx] * _MS_TO_KTS
-        bs.stack.stack(f"SPD {bs.traf.id[idx]} {min(max(target, lo), hi):{_FMT}}")
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        return self._configured_bounds()
+    low: Annotated[float, "CAS delta m/s"] = -100.0 * kts
+    high: Annotated[float, "CAS delta m/s"] = 100.0 * kts
 
 
 # --------------------------------------------------------------------------- #
@@ -709,7 +665,9 @@ class ActiveRouteWaypointHdgDeltaDeg(ActionField):
 
 
 @dataclass(frozen=True)
-class ActiveRouteWaypointAltDeltaFt(_AltitudeAction):
+class ActiveRouteWaypointAltDeltaFt(
+    _InFeet, _FromRouteWaypoint, _AltitudeAxis, _DeltaTarget
+):
     """Command altitude relative to the active route waypoint's altitude.
 
     Commands ``waypoint_altitude + value`` (feet); ``value == 0`` targets the
@@ -743,34 +701,12 @@ class ActiveRouteWaypointAltDeltaFt(_AltitudeAction):
         float | None,
         "altitude delta feet from waypoint altitude; None = runtime envelope",
     ] = None
-    min_altitude_ft: Annotated[
-        float, "lowest commandable altitude, ft; match the task's selalt clamp"
-    ] = 0.0
-
-    def _nominal_ft(self, idx: int) -> float:
-        wp = _active_route_waypoint(idx)
-        if wp is not None and wp[2] is not None:
-            return wp[2] * _M_TO_FT
-        return bs.traf.alt[idx] * _M_TO_FT
-
-    def set(self, idx: int, value: float) -> None:
-        target_ft = self._nominal_ft(idx) + value
-        self.command_altitude_ft(idx, self.clip_altitude_ft(idx, target_ft))
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            nominal_ft = self._nominal_ft(idx)
-            return _reachable_delta(
-                self.altitude_floor_m() * _M_TO_FT,
-                self.altitude_ceiling_ft(idx),
-                nominal_ft,
-            )
-
-        return self._dynamic_or_configured_bounds(resolve)
 
 
 @dataclass(frozen=True)
-class ActiveRouteWaypointSpdDeltaKts(ActionField):
+class ActiveRouteWaypointSpdDeltaKts(
+    _InKnots, _FromRouteWaypoint, _SpeedAxis, _DeltaTarget
+):
     """Command CAS relative to the active route waypoint's speed constraint.
 
     Commands ``waypoint_speed + value`` (knots); ``value == 0`` targets the
@@ -806,27 +742,6 @@ class ActiveRouteWaypointSpdDeltaKts(ActionField):
         "CAS delta knots from waypoint speed; None = runtime speed envelope",
     ] = None
 
-    def _nominal_kts(self, idx: int) -> float:
-        wp = _active_route_waypoint(idx)
-        if wp is not None and wp[3] is not None:
-            return wp[3] * _MS_TO_KTS
-        return bs.traf.cas[idx] * _MS_TO_KTS
-
-    def set(self, idx: int, value: float) -> None:
-        target = self._nominal_kts(idx) + value
-        lo = bs.traf.perf.vmin[idx] * _MS_TO_KTS
-        hi = bs.traf.perf.vmax[idx] * _MS_TO_KTS
-        bs.stack.stack(f"SPD {bs.traf.id[idx]} {min(max(target, lo), hi):{_FMT}}")
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            nominal = self._nominal_kts(idx)
-            lo = bs.traf.perf.vmin[idx] * _MS_TO_KTS
-            hi = bs.traf.perf.vmax[idx] * _MS_TO_KTS
-            return _reachable_delta(lo, hi, nominal)
-
-        return self._dynamic_or_configured_bounds(resolve)
-
 
 def _issue_crossover_speed(idx: int, target_cas_kts: float) -> None:
     """Command a CAS target regime-aware: clamp to the feasible envelope, then
@@ -843,7 +758,9 @@ def _issue_crossover_speed(idx: int, target_cas_kts: float) -> None:
 
 
 @dataclass(frozen=True)
-class ActiveRouteWaypointSpdDeltaCrossover(ActionField):
+class ActiveRouteWaypointSpdDeltaCrossover(
+    _InKnots, _FromRouteWaypoint, _CrossoverSpeedAxis, _DeltaTarget
+):
     """Regime-aware speed command relative to the waypoint's speed constraint.
 
     Like :class:`ActiveRouteWaypointSpdDeltaKts`, but honors the CAS/Mach
@@ -883,27 +800,9 @@ class ActiveRouteWaypointSpdDeltaCrossover(ActionField):
         "CAS delta knots from waypoint speed; None = runtime speed envelope",
     ] = None
 
-    def _nominal_kts(self, idx: int) -> float:
-        wp = _active_route_waypoint(idx)
-        if wp is not None and wp[3] is not None:
-            return wp[3] * _MS_TO_KTS
-        return bs.traf.cas[idx] * _MS_TO_KTS
-
-    def set(self, idx: int, value: float) -> None:
-        _issue_crossover_speed(idx, self._nominal_kts(idx) + value)
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            nominal = self._nominal_kts(idx)
-            lo = bs.traf.perf.vmin[idx] * _MS_TO_KTS
-            hi = _cas_ceiling_ms(idx) * _MS_TO_KTS
-            return _reachable_delta(lo, hi, nominal)
-
-        return self._dynamic_or_configured_bounds(resolve)
-
 
 @dataclass(frozen=True)
-class ApSpdDeltaCrossover(ActionField):
+class ApSpdDeltaCrossover(_InKnots, _CrossoverSpeedAxis, _DeltaTarget):
     """Autopilot speed relative to *current* CAS, regime-aware (CAS/Mach crossover).
 
     The autopilot counterpart of :class:`ActiveRouteWaypointSpdDeltaCrossover`:
@@ -935,18 +834,6 @@ class ApSpdDeltaCrossover(ActionField):
         float | None,
         "autopilot CAS offset knots; None = runtime speed envelope",
     ] = None
-
-    def set(self, idx: int, value: float) -> None:
-        _issue_crossover_speed(idx, bs.traf.cas[idx] * _MS_TO_KTS + value)
-
-    def bounds(self, idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            current = bs.traf.cas[idx] * _MS_TO_KTS
-            lo = bs.traf.perf.vmin[idx] * _MS_TO_KTS
-            hi = _cas_ceiling_ms(idx) * _MS_TO_KTS
-            return _reachable_delta(lo, hi, current)
-
-        return self._dynamic_or_configured_bounds(resolve)
 
 
 @dataclass(frozen=True)
