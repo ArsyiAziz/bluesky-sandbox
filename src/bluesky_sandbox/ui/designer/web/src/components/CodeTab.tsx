@@ -114,12 +114,14 @@ export default function CodeTab({
   onSpecChange,
   onSpecTextChange,
   validation,
+  onShowSpaces,
 }: {
   spec: SpecDict | null;
   specText: string;
   onSpecChange: (next: SpecDict) => void;
   onSpecTextChange: (text: string) => void;
   validation: ValidateResult | null;
+  onShowSpaces: () => void;
 }) {
   const [generated, setGenerated] = useState<Record<string, string>>({});
   const [pkg, setPkg] = useState<string>("");
@@ -713,14 +715,19 @@ export default function CodeTab({
           <dl className="summary">
             <dt>max aircraft</dt>
             <dd>{validation.summary.max_aircraft}</dd>
-            <dt>obs</dt>
-            <dd>{validation.summary.obs_fields.join(", ")}</dd>
-            <dt>intruder</dt>
-            <dd>{validation.summary.intruder_obs_fields?.join(", ") ?? "none"}</dd>
-            <dt>actions</dt>
-            <dd>{validation.summary.action_fields.join(", ")}</dd>
+            <dt>fields</dt>
+            <dd>
+              {validation.summary.obs_fields.length} ownship
+              {validation.summary.intruder_obs_fields ? ` · ${validation.summary.intruder_obs_fields.length} intruder` : ""}
+              {` · ${validation.summary.action_fields.length} action`}{" "}
+              <button className="link" onClick={onShowSpaces}>
+                see spaces
+              </button>
+            </dd>
             <dt>aircraft</dt>
-            <dd>{validation.summary.allowed_aircraft.join(", ")}</dd>
+            <dd title={validation.summary.allowed_aircraft.join(", ")}>
+              {validation.summary.allowed_aircraft.length} types
+            </dd>
             <dt>queryables</dt>
             <dd>{validation.summary.queryables.join(", ") || "none"}</dd>
           </dl>

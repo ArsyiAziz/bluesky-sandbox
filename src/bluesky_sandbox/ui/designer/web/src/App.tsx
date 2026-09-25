@@ -442,6 +442,7 @@ export default function App() {
             onSpecChange={updateSpec}
             onSpecTextChange={setSpecText}
             validation={validation}
+            onShowSpaces={() => setTab("spaces")}
           />
         )}
       </main>
