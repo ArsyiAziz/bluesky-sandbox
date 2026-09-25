@@ -39,7 +39,7 @@ export default function MetadataTab({
         </span>
       </label>
 
-      <label className="metadata-field">
+      <label className="metadata-field metadata-notes">
         <span className="metadata-label">notes</span>
         <textarea
           className="metadata-note"
