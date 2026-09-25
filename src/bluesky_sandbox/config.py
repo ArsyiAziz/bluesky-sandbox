@@ -27,6 +27,8 @@ DEFAULT_SIMDT = None
 DEFAULT_ASAS_DT = None
 DEFAULT_CD_METHOD = "CSTATEBASED"
 DEFAULT_RESO_METHOD = None
+DEFAULT_INTRUDER_OBS_BOUNDS = "ownship"
+INTRUDER_OBS_BOUNDS = ("ownship", "intruder")
 DEFAULT_PZ_RADIUS_NM = None
 DEFAULT_PZ_HEIGHT_FT = None
 DEFAULT_LOOKAHEAD_S = None
@@ -175,6 +177,19 @@ class EnvConfig:
         validity flag. ``max_intruders`` derives from
         :meth:`SpawnConfig.max_aircraft` minus one (ownship). Set this
         field to ``None`` to disable intruder observations entirely.
+    intruder_obs_bounds:
+        Whose bounds normalize a non-pair field in an intruder row, for fields
+        whose bounds differ per aircraft (an envelope such as ``CasKts`` or
+        ``AltFt``). ``"ownship"`` (default) scales every intruder by the
+        observing aircraft's envelope: one shared scale per row block, read as
+        "that speed on my scale", but a faster type can fall outside it (and
+        saturate under a ``clipped`` normalizer). ``"intruder"`` scales each by
+        its own envelope, so a row matches that aircraft's own ownship values;
+        the same normalized value then means a different physical value per
+        intruder, which only aircraft type in the observation disambiguates.
+        No effect on pair fields, fields with fixed bounds (set ``low``/``high``
+        for one absolute scale), or fields without a normalizer. Applies to
+        ``critic_intruder_obs_fields`` too.
     action_fields:
         Ordered action field objects that form each agent's action vector.
     allowed_aircraft:
@@ -230,6 +245,7 @@ class EnvConfig:
     # Both default to ``None`` (symmetric: critic and actor see the same obs).
     critic_obs_fields: list[ObsField] | None = None
     critic_intruder_obs_fields: list[ObsField | PairObsField] | None = None
+    intruder_obs_bounds: str = DEFAULT_INTRUDER_OBS_BOUNDS
     action_fields: list[ActionField] = field(
         default_factory=lambda: [actions.HdgDeg(), actions.SpdKts(), actions.AltFt()]
     )
@@ -296,6 +312,11 @@ class EnvConfig:
             isinstance(self.dt, (int, float)) and self.dt > 0 and np.isfinite(self.dt)
         ):
             raise ValueError(f"dt must be a positive finite number, got {self.dt!r}.")
+        if self.intruder_obs_bounds not in INTRUDER_OBS_BOUNDS:
+            raise ValueError(
+                f"intruder_obs_bounds must be one of {INTRUDER_OBS_BOUNDS}, "
+                f"got {self.intruder_obs_bounds!r}."
+            )
         if self.simdt is None:
             self.simdt = bluesky_simdt_s()
         if not (

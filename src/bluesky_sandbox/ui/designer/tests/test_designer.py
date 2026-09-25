@@ -1157,6 +1157,30 @@ def test_asas_dt_reaches_the_config_and_the_generated_code():
     assert "asas_dt=0.5," in config_py
 
 
+
+def test_intruder_obs_bounds_reaches_the_config_and_the_generated_code():
+    spec = _example_design_spec()
+    assert spec.env.intruder_obs_bounds == "ownship"
+    assert build_design_config(spec).intruder_obs_bounds == "ownship"
+
+    def config_py():
+        return next(
+            text for path, text in codegen.generate_task(spec, "scale").items()
+            if path.endswith("/config.py")
+        )
+
+    # The default stays out of generated code, like the critic field lists.
+    assert "intruder_obs_bounds" not in config_py()
+
+    spec.env.intruder_obs_bounds = "intruder"
+    assert S.DesignSpec.from_json(spec.to_json()).env.intruder_obs_bounds == "intruder"
+    assert build_design_config(spec).intruder_obs_bounds == "intruder"
+    assert "intruder_obs_bounds='intruder'," in config_py()
+    # A spec saved before the option existed loads with the default.
+    d = spec.to_dict()
+    del d["env"]["intruder_obs_bounds"]
+    assert S.DesignSpec.from_dict(d).env.intruder_obs_bounds == "ownship"
+
 def test_the_catalog_shows_blueskys_timing_not_a_written_in_default():
     shown = catalog.catalog()["bluesky_defaults"]
     assert shown["asas_dt"] == float(bs.settings.asas_dt)

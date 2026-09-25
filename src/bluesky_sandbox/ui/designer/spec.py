@@ -920,6 +920,7 @@ class EnvSpec:
     asas_dt: float | None = None
     cd_method: str = "CSTATEBASED"
     reso_method: str | None = None
+    intruder_obs_bounds: str = "ownship"
     pz_radius_nm: float | None = None
     pz_height_ft: float | None = None
     lookahead_s: float | None = None
@@ -963,6 +964,7 @@ class EnvSpec:
             "asas_dt": self.asas_dt,
             "cd_method": self.cd_method,
             "reso_method": self.reso_method,
+            "intruder_obs_bounds": self.intruder_obs_bounds,
             "pz_radius_nm": self.pz_radius_nm,
             "pz_height_ft": self.pz_height_ft,
             "lookahead_s": self.lookahead_s,
@@ -1005,6 +1007,7 @@ class EnvSpec:
             asas_dt=d.get("asas_dt"),
             cd_method=d.get("cd_method", "CSTATEBASED"),
             reso_method=d.get("reso_method"),
+            intruder_obs_bounds=d.get("intruder_obs_bounds", "ownship"),
             pz_radius_nm=d.get("pz_radius_nm"),
             pz_height_ft=d.get("pz_height_ft"),
             lookahead_s=d.get("lookahead_s"),

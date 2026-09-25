@@ -501,6 +501,7 @@ from bluesky_sandbox.interface.fields import queryables as qobs
         "asas_dt": repr(env.asas_dt),
         "cd_method": repr(env.cd_method),
         "reso_method": repr(env.reso_method),
+        "intruder_obs_bounds": repr(env.intruder_obs_bounds),
         "pz_radius_nm": repr(env.pz_radius_nm),
         "pz_height_ft": repr(env.pz_height_ft),
         "lookahead_s": repr(env.lookahead_s),

@@ -4,6 +4,7 @@ import { clone, gcOrphanBounds, stripClass } from "../specHelpers";
 import type { EditTarget } from "../map/types";
 import { Section } from "./panel/Section";
 import { FieldList } from "./panel/FieldList";
+import { Picker } from "./panel/Picker";
 import { ConfigEditor } from "./panel/ConfigEditor";
 import { SamplingReadout } from "./panel/SamplingReadout";
 import { ObsSample } from "./panel/ObsSample";
@@ -180,6 +181,28 @@ export default function DesignPanel({
               onAddScaffold={() => addScaffold("obs", "intruder_obs_fields")}
               allowRelative
             />
+          )}
+          {env.intruder_obs_fields != null && (
+            <label
+              className="numfield inline"
+              title={
+                "Whose envelope normalizes a non-pair field with per-aircraft bounds " +
+                "(e.g. CAS, altitude) in an intruder row. Only differs with mixed " +
+                "aircraft types; fixed low/high bounds make it irrelevant."
+              }
+            >
+              <span>intruder scale</span>
+              <Picker
+                searchable={false}
+                placeholder="ownship's envelope"
+                value={env.intruder_obs_bounds ?? "ownship"}
+                onChange={(v) => edit((s) => (s.env.intruder_obs_bounds = v))}
+                options={[
+                  { value: "ownship", label: "ownship's envelope" },
+                  { value: "intruder", label: "intruder's own envelope" },
+                ]}
+              />
+            </label>
           )}
         </div>
         <p className="strategy-note muted small">{observationStrategy(env)}</p>

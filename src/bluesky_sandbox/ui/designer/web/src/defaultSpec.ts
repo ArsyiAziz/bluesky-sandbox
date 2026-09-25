@@ -37,6 +37,7 @@ export const DEFAULT_SPEC: SpecDict = {
     dt: 1.0,
     simdt: null,
     cd_method: "CSTATEBASED",
+    intruder_obs_bounds: "ownship",
     performance_model: "openap",
     wind_dir_deg: 270.0,
     wind_kts: 0.0,

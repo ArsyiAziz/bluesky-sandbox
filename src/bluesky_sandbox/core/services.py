@@ -299,20 +299,37 @@ class ObservationAssembler:
             raw = [f.get_many(all_indices) for f, _size in specs]
             return specs, dim, raw
 
+        # With per-intruder bounds, an intruder's value no longer depends on who
+        # observes it: normalize each aircraft once, at its own index, and
+        # share the rows across every ownship's block.
+        own_bounds = config.intruder_obs_bounds == "intruder"
+
         def _intruder_pack(fields):
-            specs = tuple(
-                (f, _field_output_size(f), isinstance(f, PairObsField)) for f in fields
-            )
-            dim = sum(size for _f, size, _p in specs)
-            # Coerce to an ndarray: intruder batches are fancy-indexed by
-            # ``other_arr`` below, which fails on the plain list returned by the
-            # default ``ObsField.get_many`` (fields only ever used as ownship
-            # observations never hit that path).
-            raw = [
-                None if is_pair else np.asarray(f.get_many(all_indices))
-                for f, _size, is_pair in specs
-            ]
-            return specs, dim, raw
+            specs = []
+            raw = []
+            for f in fields:
+                size = _field_output_size(f)
+                is_pair = isinstance(f, PairObsField)
+                prenormalized = (
+                    own_bounds and not is_pair and _field_normalizer(f) is not None
+                )
+                specs.append((f, size, is_pair, prenormalized))
+                if is_pair:
+                    raw.append(None)
+                    continue
+                # Coerce to an ndarray: intruder batches are fancy-indexed by
+                # ``other_arr`` below, which fails on the plain list returned
+                # by the default ``ObsField.get_many`` (fields only ever used as
+                # ownship observations never hit that path).
+                values = np.asarray(f.get_many(all_indices))
+                if prenormalized:
+                    values = np.array(
+                        [_normalize_field_value(f, values[i], i) for i in all_indices],
+                        dtype=np.float32,
+                    ).reshape(ntraf, size)
+                raw.append(values)
+            dim = sum(size for _f, size, _p, _n in specs)
+            return tuple(specs), dim, raw
 
         obs_specs, ownship_dim, ownship_raw = _ownship_pack(config.obs_fields)
         intr_fields = config.intruder_obs_fields or []
@@ -339,7 +356,11 @@ class ObservationAssembler:
         def _fill_intruders(specs, raw, dim, other_indices, other_arr, acidx):
             block = np.empty((len(other_indices), dim), dtype=np.float32)
             cursor = 0
-            for spec_idx, (field, size, is_pair) in enumerate(specs):
+            for spec_idx, (field, size, is_pair, prenormalized) in enumerate(specs):
+                if prenormalized:
+                    block[:, cursor : cursor + size] = raw[spec_idx][other_arr]
+                    cursor += size
+                    continue
                 if is_pair:
                     raw_batch = field.get_pairs(acidx, other_indices)
                 else:

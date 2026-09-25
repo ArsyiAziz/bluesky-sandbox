@@ -383,6 +383,10 @@ def _config_py(env_sources: dict[str, str]) -> str:
         src = env_sources.get(key, "None")
         if src and src != "None":
             critic_lines += f"    {key}=list({src}),\n"
+    # Likewise only when changed from the default ("ownship").
+    intruder_bounds = env_sources.get("intruder_obs_bounds", "'ownship'")
+    if intruder_bounds != "'ownship'":
+        critic_lines += f"    intruder_obs_bounds={intruder_bounds},\n"
 
     return f'''"""Static environment config for this generated task."""
 

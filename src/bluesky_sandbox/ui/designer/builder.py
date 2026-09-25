@@ -931,6 +931,7 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
             asas_dt=env.asas_dt,
             cd_method=env.cd_method,
             reso_method=env.reso_method,
+            intruder_obs_bounds=env.intruder_obs_bounds,
             pz_radius_nm=env.pz_radius_nm,
             pz_height_ft=env.pz_height_ft,
             lookahead_s=env.lookahead_s,
