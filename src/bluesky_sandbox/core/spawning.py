@@ -28,8 +28,9 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
+import bluesky as bs
 import numpy as np
-from bluesky.tools.aero import ft, nm
+from bluesky.tools.aero import ft, kts, nm
 
 from bluesky_sandbox.sim.geometry.clearance import (
     inside_separation_zone,
@@ -51,6 +52,7 @@ from .state import (
     ResolvedRoute,
     SpawnPosition,
     SpawnQueueItem,
+    SpawnRecord,
 )
 
 
@@ -66,6 +68,8 @@ class SpawnGenerator:
         self._maintain_target: dict[int, int] = {}
         self._scheduled_count: int = 0
         self._callsigns = _CallsignIssuer()
+        #: Every aircraft created this episode, as created, in creation order.
+        self.log: list[SpawnRecord] = []
 
     def bind_env(self, env) -> None:
         self.env = env
@@ -85,6 +89,7 @@ class SpawnGenerator:
         """
         self._queue.clear()
         self._maintain_failures.clear()
+        self.log.clear()
         self._callsigns.start_episode(rng, self.env._runtime.created_callsigns)
         self._sample_maintain_targets(rng)
 
@@ -559,7 +564,36 @@ class SpawnGenerator:
         # presence - not the gap between schedule and the draining step.
         self.env._aircraft_spawn_time[callsign] = self.env._runtime.sim_time
         self.env._aircraft_region[callsign] = item.region_index
-        return state is AircraftControlState.CONTROLLED
+        controlled = state is AircraftControlState.CONTROLLED
+        self._record(callsign, item.region_index, controlled, route_names)
+        return controlled
+
+    def _record(
+        self,
+        callsign: Callsign,
+        region_index: int,
+        controlled: bool,
+        route: list[str] | None,
+    ) -> None:
+        idx = self.env._runtime.index(callsign)
+        traf = bs.traf
+        self.log.append(
+            SpawnRecord(
+                callsign=callsign,
+                actype=str(traf.type[idx]),
+                time_s=float(self.env._runtime.sim_time),
+                lat_deg=float(traf.lat[idx]),
+                lon_deg=float(traf.lon[idx]),
+                alt_ft=float(traf.alt[idx] / ft),
+                hdg_deg=float(traf.hdg[idx]),
+                cas_kts=float(traf.cas[idx] / kts),
+                gs_kts=float(traf.gs[idx] / kts),
+                mach=float(traf.M[idx]),
+                controlled=controlled,
+                region_index=region_index,
+                route=tuple(route) if route else None,
+            )
+        )
 
     # Naming convention in this section:
     # - "agent" means a controlled PettingZoo participant.

@@ -11,13 +11,38 @@ from bluesky_sandbox.interface.task import AircraftReadoutItem, WaypointReadoutI
 from bluesky_sandbox.sim.performance.speeds import crossover_display
 
 
+#: Above this altitude a label gives Mach, the speed flown there; below, CAS.
+MACH_LABEL_ALT_FT = 29000.0
+
+
+def aircraft_label_lines(
+    acid: str,
+    actype: str,
+    *,
+    alt_ft: float,
+    gs_kts: float,
+    cas_kts: float,
+    mach: float,
+) -> list[str]:
+    """An aircraft's marker label: callsign and type, then flight level, ground
+    speed and the air-mass speed it is controlled in at that altitude - Mach
+    above the crossover threshold, CAS below."""
+    fl = int(round(alt_ft / 100.0))
+    speed = f"GS{int(round(gs_kts))}"
+    if alt_ft >= MACH_LABEL_ALT_FT:
+        speed += f"  M{mach:.2f}".replace("M0.", "M.")
+    else:
+        speed += f"  CAS{int(round(cas_kts))}"
+    return [f"{acid}  {actype}" if actype else acid, f"FL{fl:03d}  {speed}"]
+
+
 class AircraftReadoutMixin:
     """Formatting and route helpers shared by pygame and Panda3D drivers."""
 
     _INFO_LABEL_WIDTH = 4
     # Above this altitude the marker blob appends Mach (the meaningful/limiting
     # speed near the CAS/Mach crossover); below it, ground speed alone suffices.
-    _MACH_LABEL_ALT_FT = 29000.0
+    _MACH_LABEL_ALT_FT = MACH_LABEL_ALT_FT
 
     def format_status_line(self) -> str:
         """Return the common two-line runtime status badge."""
@@ -175,26 +200,18 @@ class AircraftReadoutMixin:
         """Return compact live-marker label lines for human GUI views."""
         if not (0 <= idx < bs.traf.ntraf):
             return []
-        acid = bs.traf.id[idx]
         try:
             actype = str(bs.traf.type[idx] or "")
         except (AttributeError, IndexError):
             actype = ""
-        alt_ft = bs.traf.alt[idx] / ft
-        fl = int(round(alt_ft / 100.0))
-        gs = int(round(bs.traf.gs[idx] / kts))
-        speed = f"GS{gs}"
-        # Append the air-mass speed the aircraft is controlled in at this altitude:
-        # Mach above the crossover threshold (where it's the limiting speed), CAS
-        # below - alongside ground speed (map-relevant) either way.
-        if alt_ft >= self._MACH_LABEL_ALT_FT:
-            speed += f"  M{float(bs.traf.M[idx]):.2f}".replace("M0.", "M.")
-        else:
-            speed += f"  CAS{int(round(bs.traf.cas[idx] / kts))}"
-        return [
-            f"{acid}  {actype}" if actype else acid,
-            f"FL{fl:03d}  {speed}",
-        ]
+        return aircraft_label_lines(
+            bs.traf.id[idx],
+            actype,
+            alt_ft=bs.traf.alt[idx] / ft,
+            gs_kts=bs.traf.gs[idx] / kts,
+            cas_kts=bs.traf.cas[idx] / kts,
+            mach=float(bs.traf.M[idx]),
+        )
 
     def format_aircraft_marker_label(self, idx: int) -> str:
         """Return compact live-marker label text joined for multiline renderers."""

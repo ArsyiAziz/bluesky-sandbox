@@ -76,6 +76,7 @@ from .state import (
     ResolvedRoute,
     SpawnPosition,
     SpawnProgress,
+    SpawnRecord,
     SpawnQueueItem,
 )
 
@@ -91,6 +92,7 @@ __all__ = [
     "ResolvedRoute",
     "SpawnPosition",
     "SpawnProgress",
+    "SpawnRecord",
     "SpawnQueueItem",
     "ViewSpec",
     "overridable",
@@ -376,6 +378,12 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 for state in self._aircraft_control_state.values()
             )
         )
+
+    @property
+    def spawn_log(self) -> tuple[SpawnRecord, ...]:
+        """Every aircraft created this episode, in creation order, with its
+        state as created: callsign, type, time, position, heading, speeds."""
+        return tuple(self._spawn_generator.log)
 
     @property
     def episode_spawn_progress(self) -> SpawnProgress:

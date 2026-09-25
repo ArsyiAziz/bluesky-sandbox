@@ -67,4 +67,22 @@ class SpawnProgress(NamedTuple):
     scheduled: int
 
 
+class SpawnRecord(NamedTuple):
+    """One aircraft as it was created: who, when, where, and how it flew off."""
+
+    callsign: Callsign
+    actype: str
+    time_s: float
+    lat_deg: float
+    lon_deg: float
+    alt_ft: float
+    hdg_deg: float
+    cas_kts: float
+    gs_kts: float
+    mach: float
+    controlled: bool
+    region_index: int
+    route: tuple[str, ...] | None
+
+
 AircraftControlStates: TypeAlias = dict[Callsign, AircraftControlState]
