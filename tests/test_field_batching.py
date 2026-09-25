@@ -282,3 +282,24 @@ def test_the_intruder_block_matches_per_ownship_assembly():
                 _assert_same(agent_obs["intruders"], np.hstack(columns), acid)
     finally:
         env.close()
+
+
+def test_comm_noise_is_drawn_in_the_same_order_either_way(fields, monkeypatch):
+    """Receiver noise comes from one seeded stream: the matrix must consume it
+    exactly as one get_pairs call per ownship would, or seeded runs change."""
+    from bluesky_sandbox.interface.fields import _state  # noqa: PLC0415
+
+    field = observations.IntruderCommMessage(noise_std=0.3)
+    for i, acid in enumerate(bs.traf.id):
+        _state.record_comm_message(acid, 0, 0.1 * (i % 7) - 0.3)
+    owns = np.array(_all_indices()[::2])
+
+    monkeypatch.setattr(_state, "_COMM_NOISE_RNG", np.random.default_rng(5))
+    matrix = field.get_pair_matrix(owns)
+    monkeypatch.setattr(_state, "_COMM_NOISE_RNG", np.random.default_rng(5))
+    for row, own in enumerate(owns):
+        others = np.array(_others(int(own)))
+        np.testing.assert_array_equal(
+            matrix[row][others], field.get_pairs(int(own), others)
+        )
+    assert np.ptp(matrix[~np.isnan(matrix)]) > 0.1, "the noise really was on"

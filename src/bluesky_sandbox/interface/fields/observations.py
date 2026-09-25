@@ -202,7 +202,7 @@ class TrkDeg(_BroadcastObs, ObsField):
 
 
 @dataclass(frozen=True)
-class _ActiveRouteWaypointField(ObsField):
+class _ActiveRouteWaypointField(_BroadcastObs, ObsField):
     """Reads a route fix relative to the aircraft's active BlueSky leg.
 
     Unlike the ``Waypoint``/``ActiveWaypoint`` queryable fields, this needs no
@@ -228,6 +228,32 @@ class _ActiveRouteWaypointField(ObsField):
     ) -> tuple[float, float, float | None, float | None] | None:
         return _active_route_waypoint(idx, self.route_offset)
 
+    def _waypoints(
+        self, indices: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """``(found, lat, lon, alt_m, spd_ms)`` of each aircraft's route fix.
+
+        The lookup walks BlueSky's per-aircraft ``Route`` objects, so it is a
+        loop; everything computed from it is not. A fix-less aircraft has
+        ``found`` False and its own position as a placeholder fix; a missing
+        constraint is NaN.
+        """
+        fixes = [self._active_wp(int(i)) for i in indices]
+        found = np.array([fix is not None for fix in fixes], dtype=bool)
+
+        def column(k: int, fallback: np.ndarray) -> np.ndarray:
+            return np.array(
+                [
+                    fallback[n] if fix is None or fix[k] is None else float(fix[k])
+                    for n, fix in enumerate(fixes)
+                ],
+                dtype=np.float64,
+            )
+
+        lat, lon = _traf_array("lat")[indices], _traf_array("lon")[indices]
+        missing = np.full(len(fixes), np.nan)
+        return found, column(0, lat), column(1, lon), column(2, missing), column(3, missing)
+
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
@@ -240,12 +266,11 @@ class ActiveRouteWaypointDistanceNm(_ActiveRouteWaypointField):
     low: float = 0.0
     high: float = 200.0
 
-    def get(self, idx: Any) -> Any:
-        wp = self._active_wp(int(idx))
-        if wp is None:
-            return 0.0
-        _qdr, dist = kwikqdrdist(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wp[0], wp[1])
-        return float(dist)
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        found, wp_lat, wp_lon, _alt, _spd = self._waypoints(indices)
+        lat, lon = _traf_array("lat")[indices], _traf_array("lon")[indices]
+        _qdr, dist = kwikqdrdist(lat, lon, wp_lat, wp_lon)
+        return np.where(found, dist, 0.0)
 
 
 @dataclass(frozen=True)
@@ -256,12 +281,11 @@ class ActiveRouteWaypointBearingDeg(_ActiveRouteWaypointField):
     low: float = 0.0
     high: float = 360.0
 
-    def get(self, idx: Any) -> Any:
-        wp = self._active_wp(int(idx))
-        if wp is None:
-            return 0.0
-        qdr, _dist = kwikqdrdist(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wp[0], wp[1])
-        return float(qdr) % 360.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        found, wp_lat, wp_lon, _alt, _spd = self._waypoints(indices)
+        lat, lon = _traf_array("lat")[indices], _traf_array("lon")[indices]
+        qdr, _dist = kwikqdrdist(lat, lon, wp_lat, wp_lon)
+        return np.where(found, np.asarray(qdr, dtype=np.float64) % 360.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -272,12 +296,14 @@ class ActiveRouteWaypointTrackErrorDeg(_ActiveRouteWaypointField):
     low: float = -180.0
     high: float = 180.0
 
-    def get(self, idx: Any) -> Any:
-        wp = self._active_wp(int(idx))
-        if wp is None:
-            return 0.0
-        qdr, _dist = kwikqdrdist(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wp[0], wp[1])
-        return _signed_angle_delta_deg(float(qdr), float(bs.traf.trk[idx]))
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        found, wp_lat, wp_lon, _alt, _spd = self._waypoints(indices)
+        lat, lon = _traf_array("lat")[indices], _traf_array("lon")[indices]
+        qdr, _dist = kwikqdrdist(lat, lon, wp_lat, wp_lon)
+        error = _signed_angle_delta_deg(
+            np.asarray(qdr, dtype=np.float64), _traf_array("trk")[indices]
+        )
+        return np.where(found, error, 0.0)
 
 
 @dataclass(frozen=True)
@@ -300,8 +326,9 @@ class ActiveRouteWaypointValid(_ActiveRouteWaypointField):
     low: float = 0.0
     high: float = 1.0
 
-    def get(self, idx: Any) -> Any:
-        return 1.0 if self._active_wp(int(idx)) is not None else 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        found, *_rest = self._waypoints(indices)
+        return found.astype(np.float64)
 
 
 @dataclass(frozen=True)
@@ -324,9 +351,9 @@ class ActiveRouteWaypointHasAltConstraint(_ActiveRouteWaypointField):
     low: float = 0.0
     high: float = 1.0
 
-    def get(self, idx: Any) -> Any:
-        wp = self._active_wp(int(idx))
-        return 1.0 if wp is not None and wp[2] is not None else 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        _found, _lat, _lon, alt_m, _spd = self._waypoints(indices)
+        return (~np.isnan(alt_m)).astype(np.float64)
 
 
 @dataclass(frozen=True)
@@ -345,9 +372,9 @@ class ActiveRouteWaypointHasSpdConstraint(_ActiveRouteWaypointField):
     low: float = 0.0
     high: float = 1.0
 
-    def get(self, idx: Any) -> Any:
-        wp = self._active_wp(int(idx))
-        return 1.0 if wp is not None and wp[3] is not None else 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        _found, _lat, _lon, _alt, spd_ms = self._waypoints(indices)
+        return (~np.isnan(spd_ms)).astype(np.float64)
 
 
 @dataclass(frozen=True)
@@ -368,11 +395,10 @@ class ActiveRouteWaypointAltDiffFt(_ActiveRouteWaypointField):
         dynamic_bounds=True,
     )
 
-    def get(self, idx: Any) -> Any:
-        wp = self._active_wp(int(idx))
-        if wp is None or wp[2] is None:
-            return 0.0
-        return float(bs.traf.alt[idx] * _M_TO_FT - wp[2] * _M_TO_FT)
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        _found, _lat, _lon, alt_m, _spd = self._waypoints(indices)
+        diff_ft = _traf_array("alt")[indices] * _M_TO_FT - alt_m * _M_TO_FT
+        return np.where(np.isnan(alt_m), 0.0, diff_ft)
 
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
@@ -414,11 +440,10 @@ class ActiveRouteWaypointSpdDiffKts(_ActiveRouteWaypointField):
         dynamic_bounds=True,
     )
 
-    def get(self, idx: Any) -> Any:
-        wp = self._active_wp(int(idx))
-        if wp is None or wp[3] is None:
-            return 0.0
-        return float((bs.traf.cas[idx] - wp[3]) * _MS_TO_KTS)
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        _found, _lat, _lon, _alt, spd_ms = self._waypoints(indices)
+        diff_kts = (_traf_array("cas")[indices] - spd_ms) * _MS_TO_KTS
+        return np.where(np.isnan(spd_ms), 0.0, diff_kts)
 
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
@@ -456,11 +481,13 @@ class ActiveRouteWaypointSpdErrorCrossover(_ActiveRouteWaypointField):
     low: float = -1.0
     high: float = 1.0
 
-    def get(self, idx: Any) -> Any:
-        wp = self._active_wp(int(idx))
-        if wp is None or wp[3] is None:
-            return 0.0
-        return float(crossover_speed_state(int(idx), wp[3]).normalized_error)
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        _found, _lat, _lon, _alt, spd_ms = self._waypoints(indices)
+        out = np.zeros(len(indices), dtype=np.float64)
+        for k in np.flatnonzero(~np.isnan(spd_ms)):
+            state = crossover_speed_state(int(indices[k]), float(spd_ms[k]))
+            out[k] = float(state.normalized_error)
+        return out
 
 
 @dataclass(frozen=True)
@@ -509,12 +536,13 @@ class ActiveRouteWaypointEteS(_ActiveRouteWaypointField):
         float, "ETE upper bound, s; match the task time budget to share TimeInEnvS's scale"
     ] = 3600.0
 
-    def get(self, idx: Any) -> Any:
-        idx = int(idx)
-        dist_nm = _route_along_distance_nm(idx, self.route_offset)
-        if dist_nm is None:
-            return 0.0
-        return float(dist_nm * nm / max(float(bs.traf.gs[idx]), _MIN_GS_MS))
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        along = [_route_along_distance_nm(int(i), self.route_offset) for i in indices]
+        dist_nm = np.array(
+            [np.nan if d is None else d for d in along], dtype=np.float64
+        )
+        gs = np.maximum(_traf_array("gs")[indices], _MIN_GS_MS)
+        return np.where(np.isnan(dist_nm), 0.0, dist_nm * nm / gs)
 
 
 @dataclass(frozen=True)
@@ -593,25 +621,23 @@ class ActiveRouteWaypointVerticalEteS(_ActiveRouteWaypointField):
                 f"{self.vs_mode!r}."
             )
 
-    def get(self, idx: Any) -> Any:
-        idx = int(idx)
-        wp = self._active_wp(idx)
-        if wp is None or wp[2] is None:
-            return 0.0
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        _found, _lat, _lon, alt_m, _spd = self._waypoints(indices)
         # Positive => still has to climb to the gate, negative => descend.
-        error_m = float(wp[2]) - float(bs.traf.alt[idx])
-        if error_m == 0.0:
-            return 0.0
+        error_m = alt_m - _traf_array("alt")[indices]
         if self.vs_mode == "current":
-            rate_ms = float(bs.traf.vs[idx])
-        elif error_m > 0.0:
-            rate_ms = abs(float(bs.traf.perf.vsmax[idx]))
+            rate_ms = _traf_array("vs")[indices]
         else:
-            rate_ms = -abs(float(bs.traf.perf.vsmin[idx]))
+            climb = np.abs(np.asarray(bs.traf.perf.vsmax, dtype=np.float64)[indices])
+            descend = -np.abs(np.asarray(bs.traf.perf.vsmin, dtype=np.float64)[indices])
+            rate_ms = np.where(error_m > 0.0, climb, descend)
+        high = float(self.high)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ete = np.minimum(error_m / rate_ms, high)
         # Level, or closing the wrong way: the level-off never happens.
-        if rate_ms * error_m <= 0.0:
-            return float(self.high)
-        return float(min(error_m / rate_ms, float(self.high)))
+        ete = np.where(rate_ms * error_m <= 0.0, high, ete)
+        # No altitude constraint, or already at it.
+        return np.where(np.isnan(error_m) | (error_m == 0.0), 0.0, ete)
 
 
 class _AltitudeEnvelopeBounds:
@@ -3061,14 +3087,37 @@ class IntruderCommMessage(_CommBacked, PairObsField):
         return float(self.get_pairs(own_idx, [other_idx])[0])
 
     def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
-        del own_idx
+        others = _indices_array(other_indices).ravel()
+        return self._received(np.array([int(own_idx)]), others[None, :])[0]
+
+    def get_pair_matrix(self, own_indices: Any) -> np.ndarray:
+        owns = _indices_array(own_indices).ravel()
+        n = int(bs.traf.ntraf)
+        # Every other aircraft, in order, for each ownship: exactly the pairs
+        # get_pairs would be asked for, so the noise draws come in the same order.
+        heard = np.arange(n)[None, :] != owns[:, None]
+        matrix = np.full((owns.size, n), np.nan)
+        cols = np.broadcast_to(np.arange(n), heard.shape)[heard].reshape(owns.size, -1)
+        matrix[heard] = self._received(owns, cols).ravel()
+        return matrix
+
+    def _received(self, owns: np.ndarray, cols: np.ndarray) -> np.ndarray:
+        """Each ownship's received messages from aircraft ``cols[row]``.
+
+        The message does not depend on the listener; the receiver noise does,
+        drawn row by row so a matrix consumes the noise stream exactly as one
+        ``get_pairs`` call per ownship would.
+        """
+        del owns
         ids = bs.traf.id
-        values = np.array(
-            [get_comm_message(ids[int(j)], self.channel) for j in other_indices],
-            dtype=np.float64,
+        sent = np.array(
+            [get_comm_message(acid, self.channel) for acid in ids], dtype=np.float64
         )
+        values = sent[cols]
         if self.noise_std > 0.0 and values.size:
-            values += _state._COMM_NOISE_RNG.normal(0.0, self.noise_std, size=values.shape)
+            values = values + _state._COMM_NOISE_RNG.normal(
+                0.0, self.noise_std, size=values.shape
+            )
             np.clip(values, self.low, self.high, out=values)
         return values
 
