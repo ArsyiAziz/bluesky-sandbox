@@ -44,7 +44,7 @@ class TimeControlMixin:
             return
         for acid in bs.traf.id:
             env.mark_aircraft_for_deletion(acid)
-        env._spawn_queue.clear()
+        env._spawn_generator.clear_queue()
         self._paused = False
 
     def _advance_sim(self) -> None:

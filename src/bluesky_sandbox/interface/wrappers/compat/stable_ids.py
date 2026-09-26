@@ -217,7 +217,7 @@ class StableIDsParallelWrapper(ParallelEnv):
         # queue would never drain and SuperSuit would auto-reset. Visual eval
         # can also continue stepping after per-agent termination so background
         # aircraft finish landing before env-wide reset.
-        has_pending_spawns = bool(getattr(base, "_spawn_queue", []))
+        has_pending_spawns = bool(base.has_future_agents)
         needs_sim_step = (
             self.hold_background_until_episode_done
             and not bool(getattr(base, "episode_done", False))
@@ -254,7 +254,7 @@ class StableIDsParallelWrapper(ParallelEnv):
         # Snapshot after the inner step so padded slots can either preserve
         # black-death training semantics or hold visual background traffic.
         episode_done = bool(getattr(base, "episode_done", False))
-        spawns_remaining = bool(getattr(base, "_spawn_queue", []))
+        spawns_remaining = bool(base.has_future_agents)
         for stable in self.possible_agents:
             real = self._stable_to_real.get(stable)
             if real is None:

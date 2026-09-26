@@ -133,6 +133,10 @@ class SpawnGenerator:
         """Aircraft still queued to spawn."""
         return len(self._queue)
 
+    def clear_queue(self) -> None:
+        """Drop the spawns still queued this episode."""
+        self._queue.clear()
+
     @property
     def has_maintain(self) -> bool:
         """True when any region replenishes itself, so the queue never empties."""

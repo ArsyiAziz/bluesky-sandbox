@@ -128,3 +128,41 @@ def test_a_padded_critic_intruder_block_widens_each_row():
     assert widened["intruders"].shape == (4, 3)
     batch = {k: np.stack([s.sample() for _ in range(6)]) for k, s in space.spaces.items()}
     assert critic_obs(batch)["intruders"].shape == (6, 4, 3)
+
+
+class _LateScenario(_Scenario):
+    """Its aircraft spawn a minute in: no agents at all before then."""
+
+    def support(self):
+        spec = super().support()
+        (region,) = spec.spawn.regions
+        late = type(region)(**{**region.__dict__, "spawn_time": 60.0})
+        spawn = type(spec.spawn)(regions=[late], aircraft_type="B744", conflict_free_spawn=False)
+        return type(spec)(**{**spec.__dict__, "spawn": spawn})
+
+
+def make_late_env(render_mode=None):
+    env = BlueskyEnv(
+        scenario=_LateScenario(),
+        render_mode=render_mode,
+        config=EnvConfig(dt=5.0, obs_fields=[obs.AltFt()], action_fields=[act.HdgDeltaDeg()]),
+    )
+    return wrap_parallel_env(env, max_agents=3)
+
+
+def test_an_episode_whose_traffic_spawns_later_is_not_reset_before_it():
+    import bluesky as bs  # noqa: PLC0415
+
+    v = vec_env(make_late_env)
+    try:
+        v.reset(seed=0)
+        for _ in range(20):  # 100 s: past the spawn at 60 s
+            _, _, terms, truncs, infos = v.step(
+                np.stack([v.action_space.sample() for _ in range(v.num_envs)])
+            )
+        # Had every empty slot counted as done, the env would reset each step
+        # and the clock never pass zero.
+        assert bs.sim.simt >= 60.0
+        assert sum(not i.get("_padded", False) for i in infos) == 3
+    finally:
+        v.close()
