@@ -4,6 +4,7 @@ from . import actions as _actions
 from . import observations as _observations
 from .compat import StableIDsParallelWrapper
 from .lifecycle import TimeLimitWrapper
+from .record import Clip, Clips, Recording, RecordVideo
 from .observations import (
     CircularNormalizer,
     IntruderPaddingWrapper,
@@ -20,11 +21,15 @@ _sys.modules.setdefault(__name__ + ".obs", _observations)
 
 __all__ = [
     "CircularNormalizer",
+    "Clip",
+    "Clips",
     "IntruderPaddingWrapper",
     "IntrudersKeepWrapper",
     "MinMaxNormalizer",
     "Normalizer",
     "PowerNormalizer",
+    "RecordVideo",
+    "Recording",
     "SignedPowerNormalizer",
     "StableIDsParallelWrapper",
     "SymmetricNormalizer",

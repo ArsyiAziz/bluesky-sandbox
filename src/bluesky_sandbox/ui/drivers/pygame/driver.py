@@ -158,6 +158,7 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         window_size: tuple[int, int] = (1100, 1280),
         fps: int = 60,
         show_callsigns: bool = True,
+        offscreen: bool = False,
     ) -> None:
         super().__init__(realtime=realtime)
         self.window_size = window_size
@@ -213,7 +214,12 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         self._record_path: str | None = os.environ.get("BLUESKY_RECORD_VIDEO") or None
         self._record_fps: int = int(os.environ.get("BLUESKY_RECORD_FPS", "30"))
         self._record_quality: int = int(os.environ.get("BLUESKY_RECORD_QUALITY", "8"))
-        if self._record_path:
+        # Offscreen, the driver opens no window and draws nothing between
+        # frames: each frame is drawn when asked for (:meth:`frame`, or the
+        # recording's one per ``render()``). An aircraft is tracked, so a
+        # frame shows a route and a readout.
+        self.offscreen = offscreen or bool(self._record_path)
+        if self.offscreen:
             self.auto_track = True
         record_size = os.environ.get("BLUESKY_RECORD_SIZE")
         if self._record_path and record_size:
@@ -244,10 +250,10 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
     def start(self) -> None:
         super().start()
-        # Headless SDL when recording - no on-screen window, but the
-        # canvas Surface is still rendered and readable via surfarray.
+        # Headless SDL offscreen - no on-screen window, but the canvas
+        # Surface is still rendered and readable via surfarray.
         # Must happen before pygame.display.init().
-        if self._record_path:
+        if self.offscreen:
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
         pygame.init()
         pygame.display.init()
@@ -302,11 +308,11 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             self._header_font = None
 
     def _display_flags(self) -> int:
-        # DOUBLEBUF gives a cheaper full-screen present, but recording reads the
-        # framebuffer back via surfarray, which would see the swapped-out buffer
-        # after a flip - so keep a single buffer when recording.
+        # DOUBLEBUF gives a cheaper full-screen present, but a frame is read
+        # back from the framebuffer via surfarray, which would see the
+        # swapped-out buffer after a flip - so keep a single buffer offscreen.
         flags = pygame.RESIZABLE
-        if self._video_writer is None and not self._record_path:
+        if not self.offscreen:
             flags |= pygame.DOUBLEBUF
         return flags
 
@@ -361,8 +367,8 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if self._window is None:
             return
         self._pump_events()
-        # Don't capture idle frames into a recording (mirrors _render_throttled).
-        if self._video_writer is not None:
+        # Offscreen, a frame is drawn only when asked for (mirrors _render_throttled).
+        if self.offscreen:
             return
         if self._render_due():
             self._render_frame()
@@ -375,7 +381,7 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         # times - capturing a frame each time would yield 200x the
         # intended frame count. The explicit ``vec_env.render()`` call
         # per env-step (from the eval loop) is the single capture point.
-        if self._video_writer is not None:
+        if self.offscreen:
             return
         # Shared wall-clock cadence gate (see HumanSimDriver._render_due) so the
         # frame draw is decoupled from the substep loop during fast-forward.
@@ -837,6 +843,15 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             # surfarray.array3d returns (W, H, 3); imageio wants (H, W, 3).
             frame = pygame.surfarray.array3d(self._window).swapaxes(0, 1)
             self._video_writer.append_data(np.ascontiguousarray(frame))
+
+    def frame(self) -> np.ndarray:
+        """Draw the current state and return it, ``(height, width, 3)`` RGB."""
+        if not self._started:
+            self.start()
+        self._pump_events()
+        self._render_frame()
+        # surfarray.array3d returns (W, H, 3); a frame is (H, W, 3).
+        return np.ascontiguousarray(pygame.surfarray.array3d(self._window).swapaxes(0, 1))
 
     def _render_selection(self, canvas: pygame.Surface) -> None:
         tracked = self.tracked_acid()

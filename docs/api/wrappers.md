@@ -34,6 +34,13 @@ Applies per-field transformations, enabling continuous linear scaling for metric
    :show-inheritance:
 ```
 
+## Recording
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.interface.wrappers.record
+   :members: Recording, RecordVideo, Clips, Clip
+```
+
 ## Compatibility
 
 Many learners assume a fixed, stable agent set. Aircraft spawn and land, so agent IDs churn;

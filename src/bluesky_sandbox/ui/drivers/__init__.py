@@ -12,16 +12,21 @@ from .sim_driver import SimDriver
 
 # NOTE: ``None`` stays INSIDE the Literal. ``base_environment`` derives its
 # ``metadata["render_modes"]`` from ``get_args(RenderMode)``, which yields the
-# four members here but ``(Literal[...], NoneType)`` for the "equivalent"
+# members here but ``(Literal[...], NoneType)`` for the "equivalent"
 # ``Literal[...] | None`` - and every render_mode check would then fail.
 # ruff's PYI061 suggests that rewrite; it is not safe here.
-RenderMode = Literal["qtgl", "pygame", "panda3d", None]  # noqa: PYI061
+RenderMode = Literal["qtgl", "pygame", "panda3d", "rgb_array", None]  # noqa: PYI061
+
+#: The driver that draws a render mode's frames offscreen, by mode.
+FRAME_DRIVERS = {"rgb_array": "pygame"}
 
 
 def get_driver_class(render_mode: RenderMode) -> type[SimDriver]:
     """Return the driver class for *render_mode*, importing GUI stacks lazily."""
     if render_mode is None:
         return SimDriver
+    if render_mode in FRAME_DRIVERS:
+        return get_driver_class(FRAME_DRIVERS[render_mode])
     if render_mode == "qtgl":
         from .qtgl import QtGLSimDriver
 

@@ -11,6 +11,13 @@ With ``watch``, one copy - worker 0, or the only one - is built with
 others headless: a window per copy would crowd the screen, and the vector
 steps in lockstep, so every drawn copy would slow them all.
 
+With ``record``, every copy records its own clips
+(:class:`~bluesky_sandbox.interface.wrappers.RecordVideo`), built with
+``make_env(render_mode="rgb_array")`` and named ``worker{i}``: the copies step
+together, so their clips cover the same steps. They draw only while a clip
+records. :class:`~bluesky_sandbox.interface.wrappers.Clips` finds them from
+this process, to log.
+
 Needs SuperSuit (and Stable-Baselines3 for :func:`sb3_vec_env`), which the
 library does not depend on otherwise.
 """
@@ -24,6 +31,8 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import Any
 
 from pettingzoo.utils.wrappers import BaseParallelWrapper
+
+from bluesky_sandbox.interface.wrappers.record import Recording, RecordVideo
 
 __all__ = ["sb3_vec_env", "vec_env"]
 
@@ -42,10 +51,22 @@ class _Watched(BaseParallelWrapper):
         return out
 
 
-def _markov(make_env: Callable[..., Any], watch: bool = False) -> Any:
+def _markov(
+    make_env: Callable[..., Any],
+    watch: bool = False,
+    record: Recording | None = None,
+    worker: int = 0,
+) -> Any:
     from supersuit.vector.markov_vector_wrapper import MarkovVectorEnv  # noqa: PLC0415 - optional
 
-    env = _Watched(make_env(render_mode="pygame")) if watch else make_env()
+    if watch:
+        env = _Watched(make_env(render_mode="pygame"))
+    elif record is not None:
+        env = RecordVideo(
+            make_env(render_mode="rgb_array"), record, name=f"worker{worker}"
+        )
+    else:
+        env = make_env()
     return MarkovVectorEnv(env)
 
 
@@ -59,7 +80,12 @@ def _probe(make_env: Callable[[], Any]) -> tuple[Any, Any, int, dict]:
         env.close()
 
 
-def vec_env(make_env: Callable[..., Any], n_processes: int = 1, watch: bool = False) -> Any:
+def vec_env(
+    make_env: Callable[..., Any],
+    n_processes: int = 1,
+    watch: bool = False,
+    record: Recording | None = None,
+) -> Any:
     """``n_processes`` copies of the env from ``make_env`` as one gymnasium
     vector env, one entry per agent of each copy.
 
@@ -69,20 +95,33 @@ def vec_env(make_env: Callable[..., Any], n_processes: int = 1, watch: bool = Fa
     importable or picklable: each worker calls it to build its own copy. With
     one process the copy is built here, with no worker. With ``watch`` it must
     take ``render_mode``: one copy is built with a pygame window and drawn.
+    With ``record`` too: every copy is built drawing offscreen, and records.
     """
     if n_processes < 1:
         raise ValueError(f"n_processes must be at least 1, got {n_processes}.")
+    if watch and record is not None:
+        raise ValueError(
+            "watch and record both draw worker 0 - one in a window, one offscreen: pick one."
+        )
     if n_processes == 1:
-        return _markov(make_env, watch)
+        return _markov(make_env, watch, record)
     from supersuit.vector.multiproc_vec import ProcConcatVec  # noqa: PLC0415 - optional
 
     with ProcessPoolExecutor(1, mp_context=mp.get_context("spawn")) as pool:
         obs_space, act_space, per_copy, metadata = pool.submit(_probe, make_env).result()
-    builds = [functools.partial(_markov, make_env, watch and i == 0) for i in range(n_processes)]
+    builds = [
+        functools.partial(_markov, make_env, watch and i == 0, record, i)
+        for i in range(n_processes)
+    ]
     return ProcConcatVec(builds, obs_space, act_space, per_copy * n_processes, metadata)
 
 
-def sb3_vec_env(make_env: Callable[..., Any], n_processes: int = 1, watch: bool = False) -> Any:
+def sb3_vec_env(
+    make_env: Callable[..., Any],
+    n_processes: int = 1,
+    watch: bool = False,
+    record: Recording | None = None,
+) -> Any:
     """:func:`vec_env` as a Stable-Baselines3 ``VecEnv``."""
     from supersuit.vector.sb3_vector_wrapper import SB3VecEnvWrapper  # noqa: PLC0415 - optional
 
@@ -100,4 +139,4 @@ def sb3_vec_env(make_env: Callable[..., Any], n_processes: int = 1, watch: bool 
             observations, self.reset_infos = self.venv.reset(seed=seed, options=options)
             return observations
 
-    return _SeededOnReset(vec_env(make_env, n_processes, watch))
+    return _SeededOnReset(vec_env(make_env, n_processes, watch, record))

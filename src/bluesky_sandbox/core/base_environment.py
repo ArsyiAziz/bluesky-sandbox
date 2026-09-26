@@ -57,7 +57,7 @@ from bluesky_sandbox.sim.queryables import (
 )
 from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
 from bluesky_sandbox.sim.weather import WindField, wind_from_config
-from bluesky_sandbox.ui.drivers import RenderMode, get_driver_class
+from bluesky_sandbox.ui.drivers import FRAME_DRIVERS, RenderMode, get_driver_class
 
 from .runtime import BlueSkyRuntime
 from .services import (
@@ -122,7 +122,7 @@ if TYPE_CHECKING:
     ViewSpec: TypeAlias = PygameViewSpec | Panda3DViewSpec
 else:
     ViewSpec = Any
-_VIEWS_BY_MODE = {"pygame", "panda3d"}
+_VIEWS_BY_MODE = {"pygame", "panda3d", "rgb_array"}
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -183,6 +183,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
           bluesky-gym style.
         * ``"panda3d"`` - open an interactive Panda3D viewer in true-scale
           meters (orbit camera, click-to-select aircraft).
+        * ``"rgb_array"`` - open no window: ``render()`` draws the pygame
+          views offscreen and returns the frame, ``(height, width, 3)``
+          RGB. Nothing is drawn between ``render()`` calls.
         * ``None`` - no rendering (default).
     """
 
@@ -334,7 +337,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._runtime.configure()
 
         driver_cls = get_driver_class(render_mode)
-        driver_kwargs = {"realtime": realtime}
+        driver_kwargs: dict[str, Any] = {"realtime": realtime}
+        if render_mode in FRAME_DRIVERS:
+            driver_kwargs["offscreen"] = True
         if views is not None:
             if render_mode not in _VIEWS_BY_MODE:
                 raise ValueError(
@@ -571,14 +576,17 @@ class BlueskyBaseEnvironment(ParallelEnv):
                     ),
                 )
 
-    def render(self) -> None:
-        """Open (or keep alive) the BlueSky QtGL radar window.
+    def render(self) -> np.ndarray | None:
+        """Draw the current state: in its window, or - with ``render_mode``
+        ``"rgb_array"`` - offscreen, returned as a ``(height, width, 3)`` RGB
+        frame.
 
-        On the first call the ZMQ proxy thread is started, the sim node is
-        connected to it, and the QtGL client subprocess is launched.
-        Subsequent calls flush the sim node's ZMQ I/O so the GUI receives
-        fresh traffic data.
+        The first call opens the window (for QtGL: starts the ZMQ proxy
+        thread, connects the sim node and launches the client subprocess);
+        later calls draw the latest state.
         """
+        if self.render_mode in FRAME_DRIVERS:
+            return self._driver.frame()
         if not self._driver._started:
             self._driver.start()
             self._driver.wait_until_ready()

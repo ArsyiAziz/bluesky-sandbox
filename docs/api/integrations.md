@@ -42,6 +42,12 @@ With `watch=True`, one copy is built with `make_env(render_mode="pygame")` and
 drawn after every step, the others headless: the copies step together, so a
 drawn copy sets the pace for all of them.
 
+With `record=Recording("videos", every=10_000, length=200)`, every copy records
+its own clips - `worker0-step000010000.mp4`, `worker1-…` - built with
+`make_env(render_mode="rgb_array")` and drawing only while a clip records.
+`Clips("videos").new()` picks them up in the main process, to log
+(see [Rendering](../rendering.md#recording-video)).
+
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.integrations.vector
    :members:
