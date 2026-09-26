@@ -15,6 +15,11 @@ from bluesky.tools.geo import qdrpos
 
 from bluesky_sandbox.sim.bounds import Bounds
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
+from bluesky_sandbox.sim.scenario.geometry_json import (
+    bounds_geometry,
+    queryable_geometry,
+    spawn_region_geometry,
+)
 from bluesky_sandbox.sim.sampling.distributions import Categorical
 from bluesky_sandbox.sim.scenario import transforms as _t
 from bluesky_sandbox.sim.spawn import SpawnConfig
@@ -47,92 +52,6 @@ def _resolve_spawn_types(spawn: SpawnConfig, allowed_aircraft: list[str]) -> Non
             region.aircraft_type = resolve(region.aircraft_type)
 
 
-def _bounds_geometry(bounds: Bounds) -> dict[str, Any]:
-    (lat_min, lat_max), (lon_min, lon_max) = bounds.bounding_box
-    out: dict[str, Any] = {
-        "vertices": [[float(a), float(b)] for a, b in bounds.vertices],
-        "bounding_box": {
-            "lat_min": float(lat_min),
-            "lat_max": float(lat_max),
-            "lon_min": float(lon_min),
-            "lon_max": float(lon_max),
-        },
-    }
-    alt_min = getattr(bounds, "alt_min_ft", None)
-    alt_max = getattr(bounds, "alt_max_ft", None)
-    if alt_min is not None and alt_max is not None:
-        out["alt_min_ft"] = None if alt_min == float("-inf") else float(alt_min)
-        out["alt_max_ft"] = None if alt_max == float("inf") else float(alt_max)
-    # Per-vertex altitude band (for varying bands: linear/radial/vertex), aligned
-    # to `vertices`, so a 3D wireframe can slope its top/sides to follow the band.
-    per_vertex = None
-    try:
-        per_vertex = bounds.per_vertex_alt_range()
-    except Exception:
-        per_vertex = None
-    if per_vertex:
-        out["per_vertex_alt_ft"] = [[float(lo), float(hi)] for lo, hi in per_vertex]
-    return out
-
-
-def _heading_range(hdg: Any) -> list[float] | None:
-    """``[low, high]`` heading range for a spawn region, or ``None`` (uniform).
-
-    A fixed scalar becomes a degenerate ``[h, h]``; a range passes through; a
-    distribution uses its finite support when available, else ``None``.
-    """
-    if hdg is None:
-        return None
-    if isinstance(hdg, (int, float)):
-        return [float(hdg), float(hdg)]
-    if isinstance(hdg, tuple) and len(hdg) == 2:
-        return [float(hdg[0]), float(hdg[1])]
-    support = getattr(hdg, "support", None)
-    if callable(support):
-        try:
-            lo, hi = support()
-            if np.isfinite(lo) and np.isfinite(hi):
-                return [float(lo), float(hi)]
-        except Exception:
-            pass
-    return None
-
-
-def _queryable_geometry(name: str, q: Any, *, per_aircraft: bool = False) -> dict[str, Any]:
-    if isinstance(q, QueryRegion):
-        return {
-            "name": name,
-            "kind": "region",
-            "color": q.color,
-            "render_shape": q.render_shape,
-            "render_label": q.render_label,
-            **_bounds_geometry(q.bounds),
-        }
-    if isinstance(q, Waypoint):
-        return {
-            "name": name,
-            "kind": "waypoint",
-            "color": q.color,
-            "ident": q.waypoint,
-            "lat": float(q.lat),
-            "lon": float(q.lon),
-            "alt_ft": q.alt_ft,
-            "speed_kts": q.speed_kts,
-            "reach_radius_nm": q.reach_radius_nm,
-            "alt_tolerance_ft": q.alt_tolerance_ft,
-            "speed_tolerance_kts": q.speed_tolerance_kts,
-            "render_shape": q.render_shape,
-            "render_label": q.render_label,
-            # The runtime Waypoint no longer knows how it was sampled (the
-            # builder moves per-aircraft sampling onto route steps), so the
-            # flag comes from the spec. A per-aircraft waypoint's template
-            # lat/lon is meaningless as a point - the map draws per-aircraft
-            # target rings instead of a static marker.
-            "sample_per_aircraft": per_aircraft,
-        }
-    return {"name": name, "kind": "custom", "repr": repr(q)}
-
-
 def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
     """Return renderable geometry for a spec: airspace, queryables, spawn + samples.
 
@@ -147,13 +66,13 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
     _resolve_spawn_types(episode.spawn, spec.env.allowed_aircraft)
 
     airspace = (
-        _bounds_geometry(episode.airspace_bounds)
+        bounds_geometry(episode.airspace_bounds)
         if episode.airspace_bounds is not None
         else None
     )
 
     queryables = [
-        _queryable_geometry(
+        queryable_geometry(
             name,
             q,
             per_aircraft=(
@@ -176,23 +95,9 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
         if lo is not None and hi is not None and np.isfinite(lo) and np.isfinite(hi):
             entry["display_alt_ft"] = float(lo + hi) / 2.0
 
-    spawn_regions = []
-    for i, region in enumerate(episode.spawn.regions):
-        # A spawn region's altitude is its bounds' altitude band - the same band
-        # the designer derives the spawn `alt_ft` range from - so the box renders
-        # at the altitudes aircraft spawn into.
-        spawn_regions.append(
-            {
-                "name": region.name or f"SPAWN {i}",
-                "render_shape": region.render_shape,
-                "render_name": region.render_name,
-                "max_aircraft": region.max_n(),
-                # Initial-heading range (deg) for the spawn-direction arrows, or
-                # None when heading is unconstrained (uniform 0-360).
-                "heading": _heading_range(region.params.get("hdg_deg")),
-                **_bounds_geometry(region.bounds),
-            }
-        )
+    spawn_regions = [
+        spawn_region_geometry(i, region) for i, region in enumerate(episode.spawn.regions)
+    ]
 
     def _target(route, key: str) -> dict[str, Any] | None:
         """Resolve the aircraft's final route waypoint (its goal) to a point.
@@ -275,7 +180,7 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
                 chain = [group_maps[g] for g in group_chains[name] if g in group_maps]
                 if chain:
                     episode_bounds = _t.transform_bounds(bounds, _t.compose(*chain))
-            regions[name] = {"name": name, **_bounds_geometry(episode_bounds)}
+            regions[name] = {"name": name, **bounds_geometry(episode_bounds)}
 
     return {
         "airspace": airspace,
