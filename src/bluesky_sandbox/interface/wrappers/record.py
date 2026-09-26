@@ -5,16 +5,22 @@
 so an env recorded in short bursts trains at nearly full speed. The env must
 be built with ``render_mode="rgb_array"``, which draws offscreen.
 
-A clip is named ``{name}-step{start}.mp4``, after the step it starts at, and
-is written under a temporary name until it is whole, so a clip found in the
-folder is always complete. :class:`Clips` finds the clips a run has finished
-since it last looked - in parallel runs each worker records its own, and the
-main process is the one that can log them::
+A finished clip is a :class:`Clip`: its mp4 in memory (:attr:`Clip.data`),
+ready to upload. With no ``folder`` the clips are not kept - each is encoded in
+a temporary file, handed out and deleted - so a run that uploads its clips,
+to wandb, say, leaves none on disk::
 
-    clips = Clips("videos")
-    ...
-    for clip in clips.new():
-        wandb.log({f"video/{clip.name}": wandb.Video(str(clip.path))})
+    recording = Recording(every=10_000, length=200)
+    env = RecordVideo(Env(render_mode="rgb_array"), recording, on_clip=upload)
+
+    def upload(clip):
+        wandb.log({f"video/{clip.name}": wandb.Video(io.BytesIO(clip.data), format="mp4")})
+
+With a ``folder`` each clip is kept there too, as ``{name}-step{start}.mp4``.
+
+In a parallel run each worker records its own clips, and the main process is
+the one that can upload them: :class:`Clips` hands out the clips the workers
+have finished since it last looked, once each.
 
 Writing mp4 needs the ``recording`` extra (``imageio``, ``imageio-ffmpeg``).
 """
@@ -22,12 +28,13 @@ Writing mp4 needs the ``recording`` extra (``imageio``, ``imageio-ffmpeg``).
 from __future__ import annotations
 
 import re
+import shutil
+import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from pettingzoo.utils.wrappers import BaseParallelWrapper
 
 __all__ = ["Clip", "Clips", "RecordVideo", "Recording"]
@@ -38,13 +45,19 @@ _PART = ".part.mp4"
 
 @dataclass(frozen=True)
 class Recording:
-    """How to record: ``length`` steps every ``every`` steps, into ``folder``,
-    played back at ``fps``."""
+    """How to record: ``length`` steps every ``every`` steps, played back at
+    ``fps``.
 
-    folder: str | Path
+    ``folder`` keeps every clip there. Left out, clips are not kept: they are
+    written to a temporary folder only until they are handed out. That folder
+    is made when first used (:attr:`path`) and travels with the recording, so
+    every worker it is sent to writes where one :class:`Clips` finds them.
+    """
+
     every: int
     length: int
     fps: int = 10
+    folder: str | Path | None = None
 
     def __post_init__(self) -> None:
         if self.length < 1:
@@ -56,13 +69,47 @@ class Recording:
                 f"clips would overlap: every={self.every} is shorter than length={self.length}"
             )
 
+    @property
+    def keep(self) -> bool:
+        """Whether clips stay in :attr:`path` once handed out."""
+        return self.folder is not None
+
+    @property
+    def path(self) -> Path:
+        """Where clips are written: :attr:`folder`, or the temporary one."""
+        if self.folder is not None:
+            return Path(self.folder)
+        made = self.__dict__.get("_temporary")
+        if made is None:
+            made = Path(tempfile.mkdtemp(prefix="bluesky-clips-"))
+            object.__setattr__(self, "_temporary", made)
+        return made
+
+
+@dataclass(frozen=True)
+class Clip:
+    """A finished clip: whose it is, the step it starts at, and its mp4.
+    ``path`` is where it is kept, or ``None`` when it is not."""
+
+    name: str
+    step: int
+    data: bytes = field(repr=False)
+    path: Path | None = None
+
+
+def _hand_out(path: Path, name: str, step: int, keep: bool) -> Clip:
+    data = path.read_bytes()
+    if not keep:
+        path.unlink(missing_ok=True)
+    return Clip(name, step, data, path if keep else None)
+
 
 class RecordVideo(BaseParallelWrapper):
     """Record the wrapped env as :class:`Recording` says, a clip per burst.
 
-    ``name`` starts each clip's file name - a worker's, say, among the copies
-    of a parallel run. ``on_clip`` is called with each clip's path once it is
-    written.
+    ``name`` starts each clip's name - a worker's, say, among the copies of a
+    parallel run. ``on_clip`` is given each clip once it is finished; without
+    one, a clip waits in the recording's folder for :class:`Clips`.
     """
 
     def __init__(
@@ -71,7 +118,7 @@ class RecordVideo(BaseParallelWrapper):
         recording: Recording,
         *,
         name: str = "clip",
-        on_clip: Callable[[Path], None] | None = None,
+        on_clip: Callable[[Clip], None] | None = None,
     ) -> None:
         super().__init__(env)
         if self.env.unwrapped.render_mode != "rgb_array":
@@ -82,10 +129,11 @@ class RecordVideo(BaseParallelWrapper):
         self.recording = recording
         self.name = name
         self.on_clip = on_clip
-        self.folder = Path(recording.folder)
+        self.folder = recording.path
         self.folder.mkdir(parents=True, exist_ok=True)
         self._steps = 0
-        self._frames: list[np.ndarray] | None = None
+        self._writer: Any = None
+        self._frames = 0
         self._start = 0
 
     def reset(self, seed=None, options=None):
@@ -101,54 +149,65 @@ class RecordVideo(BaseParallelWrapper):
 
     def close(self):
         try:
-            if self._frames:
-                self._write()  # what there is of the clip
+            if self._writer is not None:
+                self._finish()  # what there is of the clip
         finally:
             self.env.close()
+        # Every clip was handed to on_clip and none kept: the temporary folder
+        # is empty now. Another recorder may still be using it; then it stays.
+        if self.on_clip is not None and not self.recording.keep:
+            try:
+                self.folder.rmdir()
+            except OSError:
+                pass
+
+    def _path(self) -> Path:
+        return self.folder / f"{self.name}-step{self._start:09d}.mp4"
 
     def _record(self) -> None:
-        if self._frames is None and self._steps % self.recording.every == 0:
-            self._frames, self._start = [], self._steps
-        if self._frames is None:
+        if self._writer is None and self._steps % self.recording.every == 0:
+            self._begin()
+        if self._writer is None:
             return
-        self._frames.append(self.env.render())
-        if len(self._frames) >= self.recording.length:
-            self._write()
+        # Each frame goes straight to the encoder: a clip is never held whole.
+        self._writer.append_data(self.env.render())
+        self._frames += 1
+        if self._frames >= self.recording.length:
+            self._finish()
 
-    def _write(self) -> None:
+    def _begin(self) -> None:
         import imageio  # noqa: PLC0415 - optional extra: [recording]
 
-        frames, self._frames = self._frames or [], None
-        path = self.folder / f"{self.name}-step{self._start:09d}.mp4"
-        part = path.with_name(path.stem + _PART)
-        with imageio.get_writer(
-            part,
-            fps=self.recording.fps,
+        self._start, self._frames = self._steps, 0
+        fps = self.recording.fps
+        self._writer = imageio.get_writer(
+            self._path().with_name(self._path().stem + _PART),
+            fps=fps,
             codec="libx264",
             macro_block_size=1,
-            output_params=["-r", str(self.recording.fps)],
-        ) as writer:
-            for frame in frames:
-                writer.append_data(frame)
-        part.replace(path)
+            output_params=["-r", str(fps)],
+        )
+
+    def _finish(self) -> None:
+        writer, self._writer = self._writer, None
+        writer.close()
+        path = self._path()
+        # Complete under its own name only now, so Clips never sees half a clip.
+        path.with_name(path.stem + _PART).replace(path)
         if self.on_clip is not None:
-            self.on_clip(path)
-
-
-@dataclass(frozen=True)
-class Clip:
-    """A finished clip: its file, whose it is, and the step it starts at."""
-
-    path: Path
-    name: str
-    step: int
+            self.on_clip(_hand_out(path, self.name, self._start, self.recording.keep))
 
 
 class Clips:
-    """The clips in a folder, handed out once each as they are finished."""
+    """The clips a recording's workers finish, handed out once each - in the
+    main process of a parallel run, to upload. Clips not kept are deleted as
+    they are handed out; :meth:`close` removes the temporary folder."""
 
-    def __init__(self, folder: str | Path) -> None:
-        self.folder = Path(folder)
+    def __init__(self, recording: Recording | str | Path) -> None:
+        if isinstance(recording, Recording):
+            self.folder, self.keep = recording.path, recording.keep
+        else:
+            self.folder, self.keep = Path(recording), True
         self._seen: set[Path] = set()
 
     def new(self) -> list[Clip]:
@@ -159,5 +218,12 @@ class Clips:
             if path in self._seen or path.name.endswith(_PART) or match is None:
                 continue
             self._seen.add(path)
-            found.append(Clip(path, match["name"], int(match["step"])))
-        return sorted(found, key=lambda c: (c.step, c.name))
+            found.append((int(match["step"]), match["name"], path))
+        return [
+            _hand_out(path, name, step, self.keep) for step, name, path in sorted(found)
+        ]
+
+    def close(self) -> None:
+        """Remove the temporary folder of a recording that keeps no clips."""
+        if not self.keep:
+            shutil.rmtree(self.folder, ignore_errors=True)

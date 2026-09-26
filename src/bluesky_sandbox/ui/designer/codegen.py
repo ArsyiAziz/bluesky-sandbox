@@ -44,6 +44,13 @@ from .builder import (
 )
 from .catalog import hooks as _hook_catalog
 from .emit import emit_env_sources, emit_scenario_sources
+from .recording import (
+    RecordOptions,
+    main_with_wandb,
+    record_options,
+    recording_block,
+    recording_imports,
+)
 from .setup_code import PRELUDE
 from .spec import SCENARIO_HOOKS, DesignSpec, TaskInfoSpec
 from .typed_api import MODULE as TYPES_MODULE
@@ -80,6 +87,11 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
     class_stem = _class_stem(pkg)
     template = template_of(spec)
     processes, watch = run_options(spec)
+    record = record_options(spec.metadata) if template != "plain" else None
+    if record is not None and watch:
+        raise ValueError(
+            "watch and record both draw worker 0 - one in a window, one offscreen: pick one."
+        )
     title = str(spec.metadata.get("name", pkg))
     meta = dict(spec.metadata)
 
@@ -150,6 +162,7 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
             notes=sb3_notes(spec),
             processes=processes,
             watch=watch,
+            record=record,
         )
     if template == "rl":
         files[f"{pkg}/train.py"] = _train_py(
@@ -159,6 +172,7 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
             has_cost=defines_cost(e),
             processes=processes,
             watch=watch,
+            record=record,
         )
     return files
 
@@ -607,9 +621,11 @@ def _sb3_train_py(
     notes: list[dict[str, str]],
     processes: int = 1,
     watch: bool = False,
+    record: RecordOptions | None = None,
 ) -> str:
     """``train.py`` for Stable-Baselines3: every agent shares one PPO policy,
-    through SuperSuit's PettingZoo-to-vector-env conversion."""
+    through SuperSuit's PettingZoo-to-vector-env conversion. With ``record``,
+    every copy records clips, uploaded to wandb as training goes."""
     listed = "".join(
         "\n" + textwrap.fill(f"- {n['level'].upper()}: {n['message']}", width=76, subsequent_indent="  ")
         for n in notes
@@ -652,10 +668,60 @@ class ActorView(BaseParallelWrapper):
     )
     wrap_view = "\n    env = ActorView(env)" if privileged else ""
     notes_block = f"\n\nWhat SB3 does differently from this design:{listed}\n" if listed else "\n"
+    if record is None:
+        stdlib = recorder = sandbox = optional = block = upload_callback = ""
+        make = f"    env = {class_stem}Env(render_mode=render_mode){wrap_view}"
+        record_arg = ""
+        record_doc = ""
+        vec_record = ""
+        learn = "model.learn(total_timesteps=total_timesteps)"
+        drain = ""
+        main = "if __name__ == \"__main__\":\n    train()\n"
+        install = "pip install stable-baselines3 supersuit"
+    else:
+        stdlib, sandbox, optional = recording_imports(record, clips=True)
+        recorder = "from stable_baselines3.common.callbacks import BaseCallback\n"
+        block = recording_block(record, pkg)
+        make = (
+            "    # A recorded copy draws offscreen, with the recording's driver and views.\n"
+            "    drawing = (\n"
+            "        {\"frame_driver\": FRAME_DRIVER, \"views\": recorded_views()}\n"
+            "        if render_mode == \"rgb_array\"\n"
+            "        else {}\n"
+            "    )\n"
+            f"    env = {class_stem}Env(render_mode=render_mode, **drawing){wrap_view}"
+        )
+        upload_callback = """
+
+class UploadClips(BaseCallback):
+    \"\"\"Uploads each clip the copies finish, as training goes.\"\"\"
+
+    def __init__(self, clips: Clips) -> None:
+        super().__init__()
+        self.clips = clips
+
+    def _on_step(self) -> bool:
+        for clip in self.clips.new():
+            upload(clip)
+        return True
+"""
+        record_arg = ",\n    record: bool = True"
+        record_doc = "\n    With ``record``, every copy records clips (``RECORDING``)."
+        vec_record = ", RECORDING if record else None"
+        learn = "model.learn(total_timesteps=total_timesteps, callback=UploadClips(clips))"
+        drain = (
+            "\n        # The clips the copies finished as they closed."
+            "\n        for clip in clips.new():"
+            "\n            upload(clip)"
+            "\n        clips.close()"
+        )
+        main = main_with_wandb("train()")
+        install = "pip install stable-baselines3 supersuit \"bluesky-sandbox[recording]\" wandb"
+    clips_open = "\n    clips = Clips(RECORDING)" if record is not None else ""
     return f'''"""Train this task with Stable-Baselines3: one PPO policy shared by every
 agent, the multi-agent env made a vector env by SuperSuit.
 
-    pip install stable-baselines3 supersuit
+    {install}
     python -m {pkg}.train
 
 ``train(n_processes=4)`` runs four copies of the env at once, one simulator
@@ -664,44 +730,45 @@ per process.
 
 from __future__ import annotations
 
-import gymnasium as gym
+{stdlib}import gymnasium as gym
 {view_imports}from stable_baselines3 import PPO
-
+{recorder}
 from bluesky_sandbox.integrations import sb3_vec_env, wrap_parallel_env
-
+{sandbox}
 from .env import {class_stem}Env
-{actor_view}
+{optional}{block}{actor_view}
 
 def make_env(render_mode=None):
     """The env as SB3 needs it: a fixed pool of agent IDs, intruders padded to
     a fixed shape."""
-    env = {class_stem}Env(render_mode=render_mode){wrap_view}
+{make}
     max_agents = env.unwrapped.scenario.support().max_aircraft
     return wrap_parallel_env(env, max_agents=max_agents)
-
+{upload_callback}
 
 def train(
-    total_timesteps: int = 100_000, seed: int = 0, n_processes: int = {processes}, watch: bool = {watch}
+    total_timesteps: int = 100_000,
+    seed: int = 0,
+    n_processes: int = {processes},
+    watch: bool = {watch}{record_arg},
 ) -> PPO:
     """Train, the episodes run in ``n_processes`` processes at once - BlueSky
     is one simulator per process - every agent of each an entry of SB3's
-    vector env. With ``watch``, one copy is drawn in a pygame window."""{guard}
-    vec = sb3_vec_env(make_env, n_processes, watch)
+    vector env. With ``watch``, one copy is drawn in a pygame window.{record_doc}"""{guard}
+    vec = sb3_vec_env(make_env, n_processes, watch{vec_record}){clips_open}
     # From here on the worker processes are running: close them whatever
     # happens, or this process cannot exit.
     try:
         policy = "MultiInputPolicy" if isinstance(vec.observation_space, gym.spaces.Dict) else "MlpPolicy"
         model = PPO(policy, vec, seed=seed, verbose=1)
-        model.learn(total_timesteps=total_timesteps)
+        {learn}
         model.save("ppo_{pkg}")
         return model
     finally:
-        vec.close()
+        vec.close(){drain}
 
 
-if __name__ == "__main__":
-    train()
-'''
+{main}'''
 
 
 def _step_unpack(has_cost: bool, indent: str) -> str:
@@ -722,6 +789,7 @@ def _train_py(
     has_cost: bool,
     processes: int = 1,
     watch: bool = False,
+    record: RecordOptions | None = None,
 ) -> str:
     """``train.py``: how a training loop is arranged around this design's MDP.
 
@@ -815,50 +883,11 @@ with the reward, and a cost critic is bootstrapped beside the value.
         else f"buffer.bootstrap(agent, value({critic_next}))"
     )
     if processes > 1:
-        return _train_vec_py(pkg, class_stem, privileged, has_cost, processes, watch)
+        return _train_vec_py(pkg, class_stem, privileged, has_cost, processes, watch, record)
     render_mode = '"pygame"' if watch else "None"
     draw = "\n            env.render()" if watch else ""
     draw_step = "\n        env.render()" if watch else ""
-    return f'''"""A training-loop scaffold for this task: what each network sees, and what
-a transition holds - the rest is yours.
-{views_note}{cost_note}
-{"A reward or cost" if has_cost else "A reward"} may be a number or an array of components, per the task's
-hooks. Run ``python -m {pkg}.train`` once the stubs are filled in.
-"""
-
-from __future__ import annotations
-
-{imports}from .env import {class_stem}Env
-
-
-def build_policy(observation_space):
-    """Your actor, built from the ACTOR observation space."""
-    raise NotImplementedError("build_policy: return an actor network.")
-
-
-def build_value(observation_space):
-    """Your critic, built from the CRITIC observation space."""
-    raise NotImplementedError("build_value: return a value network.")
-{cost_value_def}
-
-class Buffer:
-    """Your rollout storage. Holds RAW observations."""
-
-    def add(self, agent, {add_args}):
-        raise NotImplementedError("Buffer.add: store one transition.")
-
-    def bootstrap(self, agent, {bootstrap_args}):
-        raise NotImplementedError("Buffer.bootstrap: record the tail estimate of a truncated trajectory.")
-
-
-def update({update_args}):
-    """Your learning step."""
-    raise NotImplementedError("update: fit the networks on the collected rollout.")
-
-
-def training_loop(steps: int = 200, seed: int = 0) -> None:
-    env = {class_stem}Env(render_mode={render_mode})
-    obs, _infos = env.reset(seed=seed)
+    loop = f"""    obs, _infos = env.reset(seed=seed)
 
     # Aircraft arrive on a schedule: wait for the first agent to size the nets.
     while not env.agents and not env.episode_done:
@@ -890,15 +919,84 @@ def training_loop(steps: int = 200, seed: int = 0) -> None:
         obs = next_obs
 
     update({update_args})
+"""
+    if record is None:
+        stdlib = sandbox = optional = block = ""
+        signature = "steps: int = 200, seed: int = 0"
+        body = f"    env = {class_stem}Env(render_mode={render_mode})\n{loop}"
+        main = "if __name__ == \"__main__\":\n    training_loop()\n"
+    else:
+        stdlib, sandbox, optional = recording_imports(record, clips=False)
+        imports = imports.rstrip("\n") + "\n" if imports else ""
+        sandbox += "\n"
+        block = recording_block(record, pkg) + f'''
 
-
-if __name__ == "__main__":
-    training_loop()
+def make_env(record: bool):
+    """The env - recorded offscreen, as ``RECORDING`` says, with ``record``."""
+    if not record:
+        return {class_stem}Env()
+    env = {class_stem}Env(render_mode="rgb_array", frame_driver=FRAME_DRIVER, views=recorded_views())
+    return RecordVideo(env, RECORDING, on_clip=upload)
 '''
+        signature = "steps: int = 200, seed: int = 0, record: bool = True"
+        # Closed however the loop ends: the clip it was recording is uploaded.
+        body = (
+            "    env = make_env(record)\n    try:\n"
+            + textwrap.indent(loop, "    ", lambda line: line.strip() != "")
+            + "    finally:\n        env.close()\n"
+        )
+        main = main_with_wandb("training_loop()")
+    return f'''"""A training-loop scaffold for this task: what each network sees, and what
+a transition holds - the rest is yours.
+{views_note}{cost_note}
+{"A reward or cost" if has_cost else "A reward"} may be a number or an array of components, per the task's
+hooks. Run ``python -m {pkg}.train`` once the stubs are filled in.
+"""
+
+from __future__ import annotations
+
+{stdlib}{imports}{sandbox}from .env import {class_stem}Env
+{optional}{block}
+
+def build_policy(observation_space):
+    """Your actor, built from the ACTOR observation space."""
+    raise NotImplementedError("build_policy: return an actor network.")
+
+
+def build_value(observation_space):
+    """Your critic, built from the CRITIC observation space."""
+    raise NotImplementedError("build_value: return a value network.")
+{cost_value_def}
+
+class Buffer:
+    """Your rollout storage. Holds RAW observations."""
+
+    def add(self, agent, {add_args}):
+        raise NotImplementedError("Buffer.add: store one transition.")
+
+    def bootstrap(self, agent, {bootstrap_args}):
+        raise NotImplementedError("Buffer.bootstrap: record the tail estimate of a truncated trajectory.")
+
+
+def update({update_args}):
+    """Your learning step."""
+    raise NotImplementedError("update: fit the networks on the collected rollout.")
+
+
+def training_loop({signature}) -> None:
+{body}
+
+{main}'''
 
 
 def _train_vec_py(
-    pkg: str, class_stem: str, privileged: bool, has_cost: bool, processes: int, watch: bool
+    pkg: str,
+    class_stem: str,
+    privileged: bool,
+    has_cost: bool,
+    processes: int,
+    watch: bool,
+    record: RecordOptions | None = None,
 ) -> str:
     """``train.py`` for a training loop over copies of the env in parallel
     processes: the same arrangement as the one-env scaffold, over a vector env
@@ -950,6 +1048,38 @@ def _train_vec_py(
         if watch
         else "All copies run headless; ``watch=True`` draws one."
     )
+    if record is None:
+        stdlib = sandbox = optional = block = ""
+        make = f"    env = {class_stem}Env(render_mode=render_mode)"
+        record_arg = vec_record = clips_open = upload_step = drain = ""
+        main = "if __name__ == \"__main__\":\n    training_loop()\n"
+    else:
+        watch_note += (
+            "\n\nEvery copy records clips (``RECORDING``), uploaded to wandb as they"
+            "\nfinish."
+        )
+        stdlib, sandbox, optional = recording_imports(record, clips=True)
+        block = recording_block(record, pkg)
+        make = (
+            "    # A recorded copy draws offscreen, with the recording's driver and views.\n"
+            "    drawing = (\n"
+            "        {\"frame_driver\": FRAME_DRIVER, \"views\": recorded_views()}\n"
+            "        if render_mode == \"rgb_array\"\n"
+            "        else {}\n"
+            "    )\n"
+            f"    env = {class_stem}Env(render_mode=render_mode, **drawing)"
+        )
+        record_arg = ", record: bool = True"
+        vec_record = ", RECORDING if record else None"
+        clips_open = "\n    clips = Clips(RECORDING)"
+        upload_step = "\n            for clip in clips.new():\n                upload(clip)"
+        drain = (
+            "\n        # The clips the copies finished as they closed."
+            "\n        for clip in clips.new():"
+            "\n            upload(clip)"
+            "\n        clips.close()"
+        )
+        main = main_with_wandb("training_loop()")
     return f'''"""A training-loop scaffold for this task, its episodes run in {processes}
 processes at once - BlueSky is one simulator per process - as one vector env
 whose entries are every agent of every copy, one row each. {watch_note}
@@ -962,17 +1092,17 @@ are filled in (``pip install bluesky-sandbox[parallel]``).
 
 from __future__ import annotations
 
-import numpy as np
+{stdlib}import numpy as np
 
 {view_imports}from bluesky_sandbox.integrations import vec_env, wrap_parallel_env
-
+{sandbox}
 from .env import {class_stem}Env
-
+{optional}{block}
 
 def make_env(render_mode=None):
     """One copy, as the vector env takes it: a fixed pool of agent IDs, its
     intruders padded to a fixed shape. Each worker process builds its own."""
-    env = {class_stem}Env(render_mode=render_mode)
+{make}
     max_agents = env.unwrapped.scenario.support().max_aircraft
     return wrap_parallel_env(env, max_agents=max_agents)
 
@@ -1005,9 +1135,9 @@ def update({update_args}):
 
 
 def training_loop(
-    steps: int = 200, seed: int = 0, n_processes: int = {processes}, watch: bool = {watch}
+    steps: int = 200, seed: int = 0, n_processes: int = {processes}, watch: bool = {watch}{record_arg}
 ) -> None:
-    vec = vec_env(make_env, n_processes, watch)
+    vec = vec_env(make_env, n_processes, watch{vec_record}){clips_open}
     # From here on the worker processes are running: close them whatever
     # happens, or this process cannot exit.
     try:
@@ -1029,15 +1159,13 @@ def training_loop(
                 if truncations[row] and last is not None:
                     {bootstrap_call}
 
-            obs = next_obs
+            obs = next_obs{upload_step}
         update({update_args})
     finally:
-        vec.close()
+        vec.close(){drain}
 
 
-if __name__ == "__main__":
-    training_loop()
-'''
+{main}'''
 
 
 def _names_used(source: str) -> set[str]:
@@ -1143,6 +1271,7 @@ class {class_stem}Env(BlueskyEnv):
         render_mode=None,
         realtime: bool = False,
         views=None,
+        frame_driver=None,
     ) -> None:
         scenario = {class_stem}Scenario() if scenario is None else scenario
         super().__init__(
@@ -1151,6 +1280,7 @@ class {class_stem}Env(BlueskyEnv):
             render_mode=render_mode,
             realtime=realtime,
             views=views,
+            frame_driver=frame_driver,
         )
 
     def define_task_info_providers(self):

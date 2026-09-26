@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from .human_driver import HumanSimDriver
 from .sandbox_gui_driver import SandboxGUIDriver
@@ -17,16 +17,46 @@ from .sim_driver import SimDriver
 # ruff's PYI061 suggests that rewrite; it is not safe here.
 RenderMode = Literal["qtgl", "pygame", "panda3d", "rgb_array", None]  # noqa: PYI061
 
-#: The driver that draws a render mode's frames offscreen, by mode.
-FRAME_DRIVERS = {"rgb_array": "pygame"}
+
+class FrameDriver(NamedTuple):
+    """A driver that can draw offscreen, for ``render_mode="rgb_array"``: the
+    views it offers, by name, each as ``"module:Class"``; the ones it draws
+    when given none; and whether ``views=`` takes instances (Panda3D) rather
+    than classes (pygame, which stacks them top to bottom)."""
+
+    views: dict[str, str]
+    default: tuple[str, ...]
+    instances: bool
+
+
+#: The drivers that can draw frames offscreen, by name; the first is the default.
+FRAME_DRIVERS: dict[str, FrameDriver] = {
+    "pygame": FrameDriver(
+        views={
+            "vertical": "bluesky_sandbox.ui.drivers.pygame.views:VerticalView",
+            "horizontal": "bluesky_sandbox.ui.drivers.pygame.views:HorizontalView",
+            "tsas": "bluesky_sandbox.ui.drivers.pygame.views:TSASView",
+        },
+        default=("vertical", "horizontal"),
+        instances=False,
+    ),
+    "panda3d": FrameDriver(
+        views={
+            "world": "bluesky_sandbox.ui.drivers.panda3d.views:WorldView",
+            "tsas": "bluesky_sandbox.ui.drivers.panda3d.views:TSASView",
+        },
+        default=("world", "tsas"),
+        instances=True,
+    ),
+}
 
 
 def get_driver_class(render_mode: RenderMode) -> type[SimDriver]:
     """Return the driver class for *render_mode*, importing GUI stacks lazily."""
     if render_mode is None:
         return SimDriver
-    if render_mode in FRAME_DRIVERS:
-        return get_driver_class(FRAME_DRIVERS[render_mode])
+    if render_mode == "rgb_array":
+        return get_driver_class(next(iter(FRAME_DRIVERS)))
     if render_mode == "qtgl":
         from .qtgl import QtGLSimDriver
 

@@ -103,6 +103,8 @@ def vec_env(
         raise ValueError(
             "watch and record both draw worker 0 - one in a window, one offscreen: pick one."
         )
+    if record is not None:
+        record.path  # noqa: B018 - makes a temporary folder here, for every worker to share
     if n_processes == 1:
         return _markov(make_env, watch, record)
     from supersuit.vector.multiproc_vec import ProcConcatVec  # noqa: PLC0415 - optional

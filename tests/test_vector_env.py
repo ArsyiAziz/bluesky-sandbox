@@ -36,11 +36,12 @@ class _Scenario:
         return EpisodeSpec(airspace_bounds=None, spawn=spawn, queryables={}, max_aircraft=3)
 
 
-def make_env(render_mode=None):
+def make_env(render_mode=None, **drawing):
     """Module-level, so a worker process can import it."""
     env = BlueskyEnv(
         scenario=_Scenario(),
         render_mode=render_mode,
+        **drawing,
         config=EnvConfig(dt=5.0, obs_fields=[obs.AltFt(), obs.LatDeg()], action_fields=[act.HdgDeltaDeg()]),
     )
     return wrap_parallel_env(env, max_agents=3)

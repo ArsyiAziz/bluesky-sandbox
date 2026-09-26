@@ -183,9 +183,10 @@ class BlueskyBaseEnvironment(ParallelEnv):
           bluesky-gym style.
         * ``"panda3d"`` - open an interactive Panda3D viewer in true-scale
           meters (orbit camera, click-to-select aircraft).
-        * ``"rgb_array"`` - open no window: ``render()`` draws the pygame
-          views offscreen and returns the frame, ``(height, width, 3)``
-          RGB. Nothing is drawn between ``render()`` calls.
+        * ``"rgb_array"`` - open no window: ``render()`` draws offscreen and
+          returns the frame, ``(height, width, 3)`` RGB, drawn by
+          ``frame_driver`` - pygame unless told otherwise. Nothing is drawn
+          between ``render()`` calls.
         * ``None`` - no rendering (default).
     """
 
@@ -207,11 +208,16 @@ class BlueskyBaseEnvironment(ParallelEnv):
         render_mode: RenderMode = None,
         realtime: bool = False,
         views: ViewSpec | None = None,
+        frame_driver: str | None = None,
     ) -> None:
         """Construct the env.
 
         Parameters
         ----------
+        frame_driver:
+            With ``render_mode="rgb_array"``, which driver draws the frames:
+            ``"pygame"`` (the default) or ``"panda3d"``. ``views`` then takes
+            that driver's shape.
         views:
             Per-renderer layout spec. Shape depends on ``render_mode``:
 
@@ -245,7 +251,19 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 f"got {render_mode!r}"
             )
 
+        if frame_driver is not None and render_mode != "rgb_array":
+            raise ValueError(
+                f'frame_driver picks who draws render_mode="rgb_array" frames; '
+                f"render_mode {render_mode!r} draws with its own driver"
+            )
+        frame_driver = frame_driver or next(iter(FRAME_DRIVERS))
+        if frame_driver not in FRAME_DRIVERS:
+            raise ValueError(
+                f"frame_driver must be one of {list(FRAME_DRIVERS)}, got {frame_driver!r}"
+            )
+
         self.render_mode = render_mode
+        self.frame_driver = frame_driver if render_mode == "rgb_array" else None
         self.realtime = realtime
 
         if not isinstance(config, EnvConfig):
@@ -336,9 +354,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
         self._runtime.configure()
 
-        driver_cls = get_driver_class(render_mode)
+        driver_cls = get_driver_class(self.frame_driver or render_mode)
         driver_kwargs: dict[str, Any] = {"realtime": realtime}
-        if render_mode in FRAME_DRIVERS:
+        if self.frame_driver is not None:
             driver_kwargs["offscreen"] = True
         if views is not None:
             if render_mode not in _VIEWS_BY_MODE:
@@ -585,7 +603,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         thread, connects the sim node and launches the client subprocess);
         later calls draw the latest state.
         """
-        if self.render_mode in FRAME_DRIVERS:
+        if self.frame_driver is not None:
             return self._driver.frame()
         if not self._driver._started:
             self._driver.start()

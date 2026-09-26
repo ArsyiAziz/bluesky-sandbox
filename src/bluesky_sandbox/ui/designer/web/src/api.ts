@@ -101,6 +101,13 @@ export interface GenerateResult {
   notes?: { level: "error" | "warning" | "info"; message: string }[];
   // The server machine's cores, for choosing how many processes to train in.
   cpus?: number;
+  // What clips can be recorded with: each driver's views, and the defaults.
+  recording?: RecordingCatalog;
+}
+
+export interface RecordingCatalog {
+  drivers: Record<string, { views: string[]; default: string[] }>;
+  defaults: { every: number; length: number; fps: number; driver: string };
 }
 
 

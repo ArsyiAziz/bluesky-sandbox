@@ -100,6 +100,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         render_mode: RenderMode = None,
         realtime: bool = False,
         views: ViewSpec | None = None,
+        frame_driver: str | None = None,
     ) -> None:
         super().__init__(
             config=config,
@@ -107,6 +108,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
             render_mode=render_mode,
             realtime=realtime,
             views=views,
+            frame_driver=frame_driver,
         )
         task_info_providers = list(self.define_task_info_providers())
         if any(not callable(provider) for provider in task_info_providers):

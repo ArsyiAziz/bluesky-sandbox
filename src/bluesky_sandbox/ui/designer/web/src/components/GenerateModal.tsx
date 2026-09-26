@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import { api, type GenerateResult, type SpecDict } from "../api";
 
+// A design's recording settings, as kept in its metadata.
+type RecordMeta = {
+  every: number;
+  length: number;
+  fps: number;
+  driver: string;
+  views: string[];
+  folder?: string | null;
+};
+
 // "Generate task structure": turns the current design into a runnable task
 // package (design.json + scenario/env/task scaffolding) the user can download
 // and keep iterating on in code.
@@ -39,6 +49,8 @@ export default function GenerateModal({
   // How the training script runs the env: in how many processes, one copy watched.
   const processes = Math.max(1, Number(spec.metadata?.processes ?? 1) || 1);
   const watch = Boolean(spec.metadata?.watch);
+  // Video clips of training, drawn offscreen and uploaded; null when off.
+  const record = (spec.metadata?.record ?? null) as RecordMeta | null;
   const trains = template !== "plain";
   const [name, setName] = useState(defaultName);
   const [result, setResult] = useState<GenerateResult | null>(null);
@@ -66,7 +78,32 @@ export default function GenerateModal({
     const handle = setTimeout(generate, 250);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [template, processes, watch]);
+  }, [template, processes, watch, JSON.stringify(record)]);
+
+  // What can record, from the server: each driver's views and the defaults.
+  const catalog = result?.recording;
+  const setRecord = (patch: Partial<RecordMeta> | null) =>
+    setMeta(patch === null ? { record: null } : { record: { ...(record ?? {}), ...patch } });
+  const startRecording = () => {
+    if (!catalog) return;
+    const { driver, ...defaults } = catalog.defaults;
+    // Both draw worker 0 - one in a window, one offscreen - so recording
+    // replaces watching.
+    setMeta({
+      watch: false,
+      record: { ...defaults, driver, views: catalog.drivers[driver].default },
+    });
+  };
+  const recordDriver = record?.driver ?? catalog?.defaults.driver ?? "";
+  const offeredViews = catalog?.drivers[recordDriver]?.views ?? [];
+  const recordViews = record?.views ?? catalog?.drivers[recordDriver]?.default ?? [];
+  const toggleView = (view: string) => {
+    const next = recordViews.includes(view)
+      ? recordViews.filter((v) => v !== view)
+      : [...recordViews, view];
+    // Kept in the driver's order: pygame stacks them top to bottom in it.
+    if (next.length) setRecord({ views: offeredViews.filter((v) => next.includes(v)) });
+  };
 
   const writeFolder = async (
     root: FileSystemDirectoryHandle,
@@ -168,12 +205,90 @@ export default function GenerateModal({
               </label>
               {result?.cpus && <span className="muted small">of {result.cpus} cores</span>}
               <label title="Draw one copy in a pygame window; the others run headless. The copies step together, so the drawn one sets the pace.">
-                <input type="checkbox" checked={watch} onChange={(e) => setMeta({ watch: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={watch}
+                  onChange={(e) => setMeta(e.target.checked ? { watch: true, record: null } : { watch: false })}
+                />
                 watch one copy
+              </label>
+              <label title="Every copy records video clips offscreen, uploaded to wandb as they finish. Nothing is drawn between clips.">
+                <input
+                  type="checkbox"
+                  checked={record !== null}
+                  disabled={!catalog}
+                  onChange={(e) => (e.target.checked ? startRecording() : setRecord(null))}
+                />
+                record video
               </label>
             </div>
           )}
         </div>
+        {trains && record && catalog && (
+          <div className="generate-options generate-run generate-record">
+            <label title="A clip starts every this many steps of each copy">
+              every
+              <input
+                type="number"
+                min={1}
+                value={record.every}
+                onChange={(e) => setRecord({ every: Math.max(1, Math.round(Number(e.target.value) || 1)) })}
+              />
+              steps
+            </label>
+            <label title="Steps per clip: one frame each">
+              clip
+              <input
+                type="number"
+                min={1}
+                max={record.every}
+                value={record.length}
+                onChange={(e) => setRecord({ length: Math.max(1, Math.round(Number(e.target.value) || 1)) })}
+              />
+              steps
+            </label>
+            <label title="Playback frame rate">
+              <input
+                type="number"
+                min={1}
+                max={60}
+                value={record.fps}
+                onChange={(e) => setRecord({ fps: Math.max(1, Math.round(Number(e.target.value) || 1)) })}
+              />
+              fps
+            </label>
+            <label title="Who draws the clips">
+              drawn by
+              <select
+                value={recordDriver}
+                onChange={(e) => setRecord({ driver: e.target.value, views: catalog.drivers[e.target.value].default })}
+              >
+                {Object.keys(catalog.drivers).map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="generate-views" title="The views a clip shows">
+              {offeredViews.map((view) => (
+                <label key={view}>
+                  <input type="checkbox" checked={recordViews.includes(view)} onChange={() => toggleView(view)} />
+                  {view}
+                </label>
+              ))}
+            </span>
+            <label title="Keep every clip in this folder too. Blank: clips are uploaded from memory and none is kept.">
+              keep in
+              <input
+                className="generate-folder"
+                placeholder="(upload only)"
+                value={record.folder ?? ""}
+                onChange={(e) => setRecord({ folder: e.target.value || null })}
+              />
+            </label>
+          </div>
+        )}
         {error && <pre className="error-text">{error}</pre>}
         {result?.notes && result.notes.length > 0 && (
           <ul className="generate-notes">

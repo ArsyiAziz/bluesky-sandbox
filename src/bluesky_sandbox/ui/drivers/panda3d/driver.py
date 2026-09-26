@@ -83,6 +83,8 @@ from __future__ import annotations
 import math
 import time
 
+import numpy as np
+
 from bluesky_sandbox.ui.drivers.common import (
     ViewPrimitiveFanoutMixin,
     preferred_panda3d_font_path,
@@ -110,6 +112,9 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         the viewer.  Defaults to ``[WorldView(), TSASView()]`` - the
         standard 3D-scene + waypoint-sequencing combo.  Pass a custom
         list to add / drop / reorder panels.
+    offscreen:
+        Open no window: draw into an offscreen buffer of ``window_size``,
+        only when a frame is asked for (:meth:`frame`).
     """
 
     _PICK_RADIUS_PX = 22
@@ -121,6 +126,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         realtime: bool = True,
         window_size: tuple[int, int] = (1280, 800),
         views: list[Panda3DView] | None = None,
+        offscreen: bool = False,
     ) -> None:
         # Import lazily so users who never request render_mode='panda3d'
         # don't need panda3d installed.  The import is heavyweight and
@@ -135,6 +141,9 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
         super().__init__(realtime=realtime)
         self.window_size = window_size
+        self.offscreen = offscreen
+        if offscreen:
+            self.auto_track = True  # a frame shows a route and a readout
 
         # Default composition: 3D scene + waypoint sequencing strips.
         self._views: list[Panda3DView] = (
@@ -187,8 +196,12 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             ConfigVariableBool,
             ConfigVariableString,
             WindowProperties,
+            loadPrcFileData,
         )
 
+        if self.offscreen:
+            width, height = self.window_size
+            loadPrcFileData("", f"window-type offscreen\nwin-size {width} {height}")
         ConfigVariableString("audio-library-name").setValue("null")
         ConfigVariableBool("show-frame-rate-meter").setValue(False)
         ConfigVariableBool("sync-video").setValue(False)
@@ -206,10 +219,11 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         # first frame doesn't flash Panda's default grey.
         self._show.setBackgroundColor(0.07, 0.10, 0.14, 1.0)
 
-        props = WindowProperties()
-        props.setTitle("BlueSky Sandbox - 3D")
-        props.setSize(*self.window_size)
-        self._show.win.requestProperties(props)
+        if not self.offscreen:  # a buffer has no title, and its size is set
+            props = WindowProperties()
+            props.setTitle("BlueSky Sandbox - 3D")
+            props.setSize(*self.window_size)
+            self._show.win.requestProperties(props)
 
         self._render = self._show.render
         self._ui_font = self._load_ui_font()
@@ -326,7 +340,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         # refresh + frame draw fire at most render_fps, so throughput isn't
         # capped by rendering. Input is processed inside taskMgr.step(), so it is
         # gated too - the sub-frame latency that adds is imperceptible.
-        if self._render_due():
+        if self._render_due() and not self.offscreen:
             self._apply_held_motion()
             self._dispatch_step()
             self._refresh_hud()
@@ -336,13 +350,27 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         self._wait_realtime()
 
     def _draw_idle_frame(self) -> None:
-        if self._show is None:
+        if self._show is None or self.offscreen:
             return
         if self._render_due():
             self._apply_held_motion()
             self._dispatch_step()
             self._refresh_hud()
             self._show.taskMgr.step()
+
+    def frame(self) -> np.ndarray:
+        """Draw the current state and return it, ``(height, width, 3)`` RGB."""
+        if not self._started:
+            self.start()
+        self._dispatch_step()
+        self._refresh_hud()
+        self._show.taskMgr.step()
+        self._show.graphicsEngine.renderFrame()
+        texture = self._show.win.getScreenshot()
+        pixels = np.frombuffer(bytes(texture.getRamImageAs("RGB")), dtype=np.uint8)
+        # Panda3D's rows run bottom to top.
+        image = pixels.reshape(texture.getYSize(), texture.getXSize(), 3)[::-1]
+        return np.ascontiguousarray(image)
 
     def _dispatch_step(self) -> None:
         """Fan ``on_step`` out to every view."""
@@ -467,8 +495,9 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             sb.accept(f"{key}-up",   self._release, [marker])
 
         sb.taskMgr.add(self._camera_task, "panda3d_sim_driver_camera")
-        sb.win.setCloseRequestEvent("panda3d_window_close")
-        sb.accept("panda3d_window_close", self._on_window_close)
+        if not self.offscreen:
+            sb.win.setCloseRequestEvent("panda3d_window_close")
+            sb.accept("panda3d_window_close", self._on_window_close)
 
     def toggle_labels(self) -> None:
         super().toggle_labels()
@@ -498,7 +527,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
     def _on_left_down(self) -> None:
         mw = self._show.mouseWatcherNode
-        if not mw.hasMouse():
+        if mw is None or not mw.hasMouse():
             return
         aspect_pos = self._mouse_aspect_pos()
         if aspect_pos is not None:
@@ -517,7 +546,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         elapsed = int(time.monotonic() * 1000) - self._drag_started_at_ms
         mw = self._show.mouseWatcherNode
         moved = 0.0
-        if mw.hasMouse():
+        if mw is not None and mw.hasMouse():
             mx, my = mw.getMouseX(), mw.getMouseY()
             moved = math.hypot(mx - self._drag_mouse[0], my - self._drag_mouse[1])
         if self._drag_kind == "view":
@@ -534,7 +563,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
     def _on_right_down(self) -> None:
         mw = self._show.mouseWatcherNode
-        if not mw.hasMouse():
+        if mw is None or not mw.hasMouse():
             return
         self._drag_kind = "pan"
         self._drag_mouse = (mw.getMouseX(), mw.getMouseY())
@@ -545,7 +574,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
     def _apply_orbit_drag(self) -> None:
         mw = self._show.mouseWatcherNode
-        if not mw.hasMouse():
+        if mw is None or not mw.hasMouse():
             return
         mx, my = mw.getMouseX(), mw.getMouseY()
         dx = mx - self._drag_mouse[0]
@@ -557,7 +586,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
     def _apply_pan_drag(self) -> None:
         mw = self._show.mouseWatcherNode
-        if not mw.hasMouse():
+        if mw is None or not mw.hasMouse():
             return
         mx, my = mw.getMouseX(), mw.getMouseY()
         dx = mx - self._drag_mouse[0]
@@ -590,7 +619,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if self._show is None:
             return None
         mw = self._show.mouseWatcherNode
-        if not mw.hasMouse():
+        if mw is None or not mw.hasMouse():
             return None
         return (
             mw.getMouseX() * self._show.getAspectRatio(),
@@ -636,7 +665,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if self._world_view is None:
             return
         mw = self._show.mouseWatcherNode
-        if not mw.hasMouse():
+        if mw is None or not mw.hasMouse():
             return
         win = self._show.win
         w, h = win.getXSize(), win.getYSize()

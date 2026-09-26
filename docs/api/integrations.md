@@ -42,11 +42,22 @@ With `watch=True`, one copy is built with `make_env(render_mode="pygame")` and
 drawn after every step, the others headless: the copies step together, so a
 drawn copy sets the pace for all of them.
 
-With `record=Recording("videos", every=10_000, length=200)`, every copy records
-its own clips - `worker0-step000010000.mp4`, `worker1-…` - built with
-`make_env(render_mode="rgb_array")` and drawing only while a clip records.
-`Clips("videos").new()` picks them up in the main process, to log
-(see [Rendering](../rendering.md#recording-video)).
+With `record=Recording(every=10_000, length=200)`, every copy records its own
+clips - named `worker0`, `worker1`, … - built with
+`make_env(render_mode="rgb_array")` and drawing only while a clip records. The
+workers cannot upload; `Clips(recording).new()` hands their finished clips to
+the main process, in memory, once each, and deletes them unless the recording
+keeps a `folder` (see [Rendering](../rendering.md#recording-video)):
+
+```python
+recording = Recording(every=10_000, length=200)
+clips = Clips(recording)
+vec = sb3_vec_env(make_env, n_processes=4, record=recording)
+...
+for clip in clips.new():
+    wandb.log({f"video/{clip.name}": wandb.Video(io.BytesIO(clip.data), format="mp4")})
+clips.close()  # removes the temporary folder
+```
 
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.integrations.vector

@@ -49,6 +49,7 @@ from .code_intel import code_intel, forget_type_checking_names
 from .diagnostics import diagnostics
 from .mdp import mdp_summary
 from .preview import airspace_warnings, scenario_preview
+from .recording import record_catalog
 from .spec import DesignSpec, SpecError
 from .store import SpecStore
 from .trail import forget_call_trails
@@ -287,6 +288,8 @@ def create_app() -> FastAPI:
             "notes": notes,
             # For choosing how many processes to train in: this machine's cores.
             "cpus": os.cpu_count() or 1,
+            # For choosing how clips are recorded: each driver's views, and defaults.
+            "recording": record_catalog(),
         }
 
     @app.post("/api/spec/run")
