@@ -99,19 +99,6 @@ def test_sb3_takes_the_seed_it_is_given():
     np.testing.assert_allclose(a, b)
 
 
-def test_watching_draws_one_copy_the_others_headless(monkeypatch):
-    pytest.importorskip("pygame")
-    # No display needed: SDL draws to a dummy one, in this process and its workers.
-    monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
-    v = vec_env(make_env, n_processes=2, watch=True)
-    try:
-        v.reset(seed=0)
-        _step(v)
-        assert v.num_envs == 6
-    finally:
-        v.close()
-
-
 def test_a_padded_critic_intruder_block_widens_each_row():
     from gymnasium.spaces import Box, Dict  # noqa: PLC0415
 

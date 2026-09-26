@@ -51,10 +51,12 @@ wandb itself stages what it logs in its run folder before uploading it; that
 is wandb's, and it syncs and manages it.
 
 The designer's **Generate task** dialog sets this up for the RL and SB3
-packages: tick **record video**, then choose how often, how long, the driver
-and its views, and optionally a folder to keep the clips in. The generated
-`train.py` uploads each clip to the running wandb run, or saves it to
-`videos/` when there is none.
+packages: tick **record training**, then choose how often, how long, the
+driver and its views, and where the clips go - **wandb**, each uploaded from
+memory to the running wandb run (or saved to `videos/` when there is none), or
+a **local folder**. Training itself never draws a window: the packages'
+`evaluate.py` flies the trained policy, in the window chosen as **evaluate
+in** (`RENDER_MODE`).
 
 ## Real time and views
 

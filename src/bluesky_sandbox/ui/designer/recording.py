@@ -1,11 +1,12 @@
-"""Video recording in a generated training script: the options a design keeps,
-and the code they become.
+"""Recording training in a generated training script: the options a design
+keeps, and the code they become.
 
 A design asks for clips with ``metadata["record"]``: ``every`` and ``length``
 in steps of each copy of the env, ``fps``, the ``driver`` that draws them and
-its ``views``, and optionally a ``folder`` to keep them in. The generated
-``train.py`` records them offscreen (:class:`~bluesky_sandbox.interface.
-wrappers.RecordVideo`) and uploads each, from memory, to the running wandb run.
+its ``views``, and where they go - ``upload``: ``"wandb"``, each uploaded from
+memory to the running wandb run, or ``"local"``, each saved to ``folder``. The
+generated ``train.py`` records them offscreen (:class:`~bluesky_sandbox.
+interface.wrappers.RecordVideo`).
 """
 
 from __future__ import annotations
@@ -17,10 +18,24 @@ from typing import Any
 
 from bluesky_sandbox.ui.drivers import FRAME_DRIVERS
 
-__all__ = ["RECORD_DEFAULTS", "RecordOptions", "record_catalog", "record_options"]
+__all__ = [
+    "DESTINATIONS",
+    "RECORD_DEFAULTS",
+    "RecordOptions",
+    "record_catalog",
+    "record_options",
+]
 
+#: Where clips can go: uploaded to wandb, or saved to a local folder.
+DESTINATIONS = ("wandb", "local")
 #: A new recording's settings, before the design changes them.
-RECORD_DEFAULTS: dict[str, Any] = {"every": 10_000, "length": 200, "fps": 10}
+RECORD_DEFAULTS: dict[str, Any] = {
+    "every": 10_000,
+    "length": 200,
+    "fps": 10,
+    "upload": DESTINATIONS[0],
+    "folder": "videos",
+}
 
 
 @dataclass(frozen=True)
@@ -32,11 +47,18 @@ class RecordOptions:
     fps: int
     driver: str
     views: tuple[str, ...]
+    upload: str
+    #: Where clips are saved, uploading ``"local"``; ``None`` for wandb.
     folder: str | None
+
+    @property
+    def uploads(self) -> bool:
+        """Whether clips go to wandb, rather than a local folder."""
+        return self.upload == "wandb"
 
     def recording_source(self) -> str:
         """The ``Recording(...)`` it becomes, as source."""
-        folder = f", folder={json.dumps(self.folder)}" if self.folder else ""
+        folder = "" if self.uploads else f", folder={json.dumps(self.folder)}"
         return f"Recording(every={self.every}, length={self.length}, fps={self.fps}{folder})"
 
 
@@ -58,7 +80,12 @@ def record_options(metadata: dict[str, Any]) -> RecordOptions | None:
         raise ValueError(
             f"{driver} has no view {', '.join(unknown)}; it has {', '.join(offered.views)}"
         )
-    folder = str(options.get("folder") or "").strip() or None
+    upload = str(options.get("upload") or DESTINATIONS[0])
+    if upload not in DESTINATIONS:
+        raise ValueError(
+            f"record upload must be one of {list(DESTINATIONS)}, got {upload!r}"
+        )
+    folder = str(options.get("folder") or "").strip() or RECORD_DEFAULTS["folder"]
     every, length, fps = (int(options[k]) for k in ("every", "length", "fps"))
     if fps < 1:
         raise ValueError(f"record fps must be at least 1, got {fps}")
@@ -66,7 +93,8 @@ def record_options(metadata: dict[str, Any]) -> RecordOptions | None:
         raise ValueError(
             f"record length must be at least 1 and at most every ({every}), got {length}"
         )
-    return RecordOptions(every, length, fps, driver, views, folder)
+    folder = None if upload == "wandb" else folder
+    return RecordOptions(every, length, fps, driver, views, upload, folder)
 
 
 def record_catalog() -> dict[str, Any]:
@@ -77,6 +105,7 @@ def record_catalog() -> dict[str, Any]:
             name: {"views": list(driver.views), "default": list(driver.default)}
             for name, driver in FRAME_DRIVERS.items()
         },
+        "destinations": list(DESTINATIONS),
         "defaults": {**RECORD_DEFAULTS, "driver": next(iter(FRAME_DRIVERS))},
     }
 
@@ -105,36 +134,45 @@ def views_source(options: RecordOptions) -> str:
 
 
 def recording_block(options: RecordOptions, project: str) -> str:
-    """The module-level recording settings and ``upload``, as source."""
+    """The module-level recording settings - and, uploading to wandb,
+    ``upload`` - as source."""
     driver = FRAME_DRIVERS[options.driver]
     order = "" if driver.instances else ", top to bottom"
-    kept = (
-        f"each is also kept in {options.folder}/."
-        if options.folder
-        else "none is kept on disk."
+    goes = (
+        "uploaded to wandb as they finish; none is kept on disk."
+        if options.uploads
+        else f"saved to {options.folder}/ as they finish."
     )
     about = textwrap.fill(
         f"Video clips of training: {options.length} steps of each copy every "
         f"{options.every}, drawn offscreen - nothing is drawn between clips - and "
-        f"uploaded as they finish; {kept}",
+        f"{goes}",
         width=78,
         initial_indent="#: ",
         subsequent_indent="#: ",
     )
-    return f'''
+    settings = f"""
 
 {about}
 RECORDING = {options.recording_source()}
 #: Who draws the clips.
 FRAME_DRIVER = {json.dumps(options.driver)}
-#: The wandb project the clips are uploaded to.
-WANDB_PROJECT = {json.dumps(project)}
-
+"""
+    views = f'''
 
 def recorded_views():
     """The views a clip shows{order}."""
     return {views_source(options)}
-
+'''
+    if not options.uploads:
+        return settings + views
+    return (
+        settings
+        + f"""#: The wandb project the clips are uploaded to.
+WANDB_PROJECT = {json.dumps(project)}
+"""
+        + views
+        + f'''
 
 def upload(clip: Clip) -> None:
     """Where a finished clip goes: to the running wandb run, straight from
@@ -147,11 +185,21 @@ def upload(clip: Clip) -> None:
         path.parent.mkdir(exist_ok=True)
         path.write_bytes(clip.data)
 '''
+    )
 
 
 def recording_imports(options: RecordOptions, *, clips: bool) -> tuple[str, str, str]:
     """The imports the recording code needs: the standard library's, the
-    sandbox's, and wandb's - optional, so imported after the rest."""
+    sandbox's, and wandb's - optional, so imported after the rest. ``clips``:
+    the clips are collected from worker processes, not handed over in this one."""
+    if not options.uploads:  # saved where they are recorded: nothing to collect
+        names = "Recording" if clips else "Recording, RecordVideo"
+        return (
+            "",
+            f"from bluesky_sandbox.interface.wrappers import {names}\n"
+            + view_imports(options),
+            "",
+        )
     names = "Clip, Clips, Recording" if clips else "Clip, Recording, RecordVideo"
     return (
         "import io\nfrom pathlib import Path\n\n",

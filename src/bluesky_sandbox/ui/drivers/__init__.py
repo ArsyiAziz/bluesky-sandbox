@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, get_args
 
 from .human_driver import HumanSimDriver
 from .sandbox_gui_driver import SandboxGUIDriver
@@ -16,6 +16,12 @@ from .sim_driver import SimDriver
 # ``Literal[...] | None`` - and every render_mode check would then fail.
 # ruff's PYI061 suggests that rewrite; it is not safe here.
 RenderMode = Literal["qtgl", "pygame", "panda3d", "rgb_array", None]  # noqa: PYI061
+
+
+#: The render modes that draw in a window, for watching an env as it runs.
+WINDOW_RENDER_MODES: tuple[str, ...] = tuple(
+    mode for mode in get_args(RenderMode) if mode not in (None, "rgb_array")
+)
 
 
 class FrameDriver(NamedTuple):

@@ -38,10 +38,6 @@ def make_env(render_mode=None):     # module-level, so each worker can import it
 model = PPO("MultiInputPolicy", sb3_vec_env(make_env, n_processes=4))
 ```
 
-With `watch=True`, one copy is built with `make_env(render_mode="pygame")` and
-drawn after every step, the others headless: the copies step together, so a
-drawn copy sets the pace for all of them.
-
 With `record=Recording(every=10_000, length=200)`, every copy records its own
 clips - named `worker0`, `worker1`, … - built with
 `make_env(render_mode="rgb_array")` and drawing only while a clip records. The

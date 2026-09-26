@@ -49,6 +49,7 @@ from .code_intel import code_intel, forget_type_checking_names
 from .diagnostics import diagnostics
 from .mdp import mdp_summary
 from .preview import airspace_warnings, scenario_preview
+from .evaluation import evaluation_catalog
 from .recording import record_catalog
 from .spec import DesignSpec, SpecError
 from .store import SpecStore
@@ -290,6 +291,8 @@ def create_app() -> FastAPI:
             "cpus": os.cpu_count() or 1,
             # For choosing how clips are recorded: each driver's views, and defaults.
             "recording": record_catalog(),
+            # For choosing the window evaluate.py draws the trained policy in.
+            "evaluation": evaluation_catalog(),
         }
 
     @app.post("/api/spec/run")

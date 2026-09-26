@@ -149,9 +149,3 @@ def test_every_worker_of_a_parallel_run_records_its_own_clips():
         clips.close()
     assert not recording.path.exists()
 
-
-def test_watch_and_record_cannot_share_worker_zero():
-    from bluesky_sandbox.integrations import vec_env  # noqa: PLC0415
-
-    with pytest.raises(ValueError, match="pick one"):
-        vec_env(make_env, watch=True, record=Recording(every=10, length=3))

@@ -1613,7 +1613,7 @@ def test_an_unknown_template_is_refused():
 
 def test_an_sb3_package_trains_with_ppo_and_flags_what_sb3_cannot_do():
     plain = _templated("sb3")["train.py"]
-    assert "PPO(" in plain and "sb3_vec_env(make_env, n_processes, watch)" in plain
+    assert "PPO(" in plain and "sb3_vec_env(make_env, n_processes)" in plain
     assert "ActorView" not in plain and "raise NotImplementedError" not in plain
     ast.parse(plain)
 
@@ -1633,9 +1633,9 @@ def test_an_sb3_package_trains_with_ppo_and_flags_what_sb3_cannot_do():
     assert "env = ActorView(env)" in train
 
 
-def _run_as(template: str, processes: int, watch: bool = False) -> str:
+def _run_as(template: str, processes: int) -> str:
     spec = _example_design_spec()
-    spec.metadata.update(template=template, processes=processes, watch=watch)
+    spec.metadata.update(template=template, processes=processes)
     spec.env.critic_obs_fields = [S.FieldRef("CasKts")]
     files = codegen.generate_task(spec, "Par")
     return next(t for p, t in files.items() if p.endswith("train.py"))
@@ -1644,24 +1644,55 @@ def _run_as(template: str, processes: int, watch: bool = False) -> str:
 def test_an_rl_package_in_processes_steps_a_vector_env():
     one = _run_as("rl", 1)
     assert "vec_env(" not in one and "for agent, ob in obs.items()" in one
-    many = _run_as("rl", 3, watch=True)
+    many = _run_as("rl", 3)
     ast.parse(many)
-    assert "n_processes: int = 3, watch: bool = True" in many
-    assert "vec = vec_env(make_env, n_processes, watch)" in many
+    assert "n_processes: int = 3" in many
+    assert "vec = vec_env(make_env, n_processes)" in many
     assert "critic_observation_space(vec.observation_space)" in many
     # The workers are closed whatever happens once they run.
     body = many.split("vec = vec_env(", 1)[1]
     assert body.index("try:") < body.index("vec.reset(") < body.index("finally:\n        vec.close()")
 
 
-def test_a_watched_single_process_draws_every_step():
-    one = _run_as("rl", 1, watch=True)
-    assert 'Env(render_mode="pygame")' in one and "env.render()" in one
+def test_training_never_draws_the_evaluation_does():
+    for template, processes in (("rl", 1), ("rl", 3), ("sb3", 2)):
+        spec = _example_design_spec()
+        # A design saved when training could draw a copy: that is ignored now.
+        spec.metadata.update(template=template, processes=processes, watch=True)
+        files = codegen.generate_task(spec, "Ev")
+        train = next(t for p, t in files.items() if p.endswith("train.py"))
+        evaluate = next(t for p, t in files.items() if p.endswith("evaluate.py"))
+        assert "render()" not in train and "pygame" not in train and "watch" not in train
+        assert 'RENDER_MODE = "pygame"' in evaluate and "env.render()" in evaluate
+        ast.parse(evaluate)
+
+
+def test_the_evaluation_draws_in_the_window_asked_for_or_none():
+    spec = _example_design_spec()
+    spec.metadata.update(template="sb3", eval_render_mode="panda3d")
+    evaluate = codegen.generate_task(spec, "Ev")["ev/evaluate.py"]
+    assert 'RENDER_MODE = "panda3d"' in evaluate and "PPO.load(" in evaluate
+    spec.metadata.update(eval_render_mode=None)
+    assert "RENDER_MODE = None" in codegen.generate_task(spec, "Ev")["ev/evaluate.py"]
+    spec.metadata.update(eval_render_mode="rgb_array")
+    with pytest.raises(ValueError, match="eval_render_mode"):
+        codegen.generate_task(spec, "Ev")
+
+
+def test_the_rl_evaluation_calls_a_batched_policy_on_a_batch_of_one():
+    spec = _example_design_spec()
+    spec.env.critic_obs_fields = [S.FieldRef("CasKts")]
+    spec.metadata.update(template="rl", processes=1)
+    one = codegen.generate_task(spec, "Ev")["ev/evaluate.py"]
+    assert "policy(actor_obs(ob))" in one and "def one(" not in one
+    spec.metadata.update(processes=3)
+    many = codegen.generate_task(spec, "Ev")["ev/evaluate.py"]
+    assert "policy(one(actor_obs(ob)))[0]" in many and "def load_policy" in many
 
 
 def test_an_sb3_package_runs_in_the_processes_asked_for():
     sb3 = _run_as("sb3", 4)
-    assert "n_processes: int = 4" in sb3 and "sb3_vec_env(make_env, n_processes, watch)" in sb3
+    assert "n_processes: int = 4" in sb3 and "sb3_vec_env(make_env, n_processes)" in sb3
     assert "finally:\n        vec.close()" in sb3
 
 

@@ -103,11 +103,21 @@ export interface GenerateResult {
   cpus?: number;
   // What clips can be recorded with: each driver's views, and the defaults.
   recording?: RecordingCatalog;
+  // The windows evaluate.py can draw the trained policy in.
+  evaluation?: { render_modes: string[]; default: string };
 }
 
 export interface RecordingCatalog {
   drivers: Record<string, { views: string[]; default: string[] }>;
-  defaults: { every: number; length: number; fps: number; driver: string };
+  destinations: string[];
+  defaults: {
+    every: number;
+    length: number;
+    fps: number;
+    driver: string;
+    upload: string;
+    folder: string;
+  };
 }
 
 
