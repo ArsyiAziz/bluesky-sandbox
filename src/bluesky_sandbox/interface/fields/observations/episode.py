@@ -17,7 +17,7 @@ from .._state import (
     _TimeInEnvBacked,
     action_masks,
 )
-from ..actions.mask import action_name
+from ..actions.mask import action_name, lock_holds
 from ..base import ActionField, ObsField, ObsMeta, ObsQuantity, Unit
 
 
@@ -188,3 +188,40 @@ class PrevActionMasked(_BroadcastObs, _ActionMaskBacked, ObsField):
     def _expected(self, idx: int) -> Any:
         masks = _state._ACTION_MASKS.read_one(idx)
         return 1.0 if masks.get(self.target, False) else 0.0
+
+
+@dataclass(frozen=True)
+class ActionLocked(_BroadcastObs, _ActionMaskBacked, ObsField):
+    """1 while a clearance of ``target`` is still being flown, so a new one on
+    its axis would be refused; else 0.
+
+    For a target whose :class:`~bluesky_sandbox.interface.fields.actions.ActionMask`
+    locks until captured: read by the same rule the dispatcher refuses by
+    (:func:`~bluesky_sandbox.interface.fields.actions.mask.lock_holds`), so what
+    the policy sees and what it is refused always agree. ``target`` names the
+    action as the mask does.
+    """
+
+    meta = ObsMeta("action_locked", Unit.SWITCH, ObsQuantity.INDICATOR)
+    target: Annotated[
+        str | type[ActionField] | ActionField,
+        "the locked action: its name, its class or an instance",
+    ] = ""
+    low: Annotated[float, "lower bound"] = 0.0
+    high: Annotated[float, "upper bound"] = 1.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "target", action_name(self.target))
+        super().__post_init__()
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return self._configured_bounds()
+
+    def _values(self, indices: Any) -> Any:
+        return np.array(
+            [lock_holds(int(i), self.target) for i in _indices_array(indices)],
+            dtype=np.float64,
+        )
+
+    def _expected(self, idx: int) -> Any:
+        return 1.0 if lock_holds(idx, self.target) else 0.0

@@ -43,7 +43,7 @@ def _env(lock: bool) -> BlueskyEnv:
         scenario=_Empty(),
         config=EnvConfig(
             dt=5.0,
-            obs_fields=[obs.ApLnavOn()],
+            obs_fields=[obs.ApLnavOn(), obs.ActionLocked(target=act.HdgDeg)],
             action_fields=[
                 act.HdgDeg(),
                 act.AutopilotLnavVnav(),
@@ -119,7 +119,7 @@ def test_an_aircraft_given_nothing_flies_its_route(free):
     agent = _fly(free)
     for _ in range(3):
         seen, _ = _step(free, agent)
-    np.testing.assert_array_equal(seen, [1.0])
+    np.testing.assert_array_equal(seen, [1.0, 0.0])
     assert _off(bs.traf.ap.trk[_idx()], _bearing_to_waypoint()) < 2.0
 
 
@@ -127,13 +127,13 @@ def test_a_vector_is_held_and_resuming_returns_the_aircraft_to_its_route(free):
     agent = _fly(free)
     _step(free, agent)
     seen, _ = _step(free, agent, heading=180.0, mask=0)
-    np.testing.assert_array_equal(seen, [0.0])  # the vector took LNAV off
+    np.testing.assert_array_equal(seen, [0.0, 0.0])  # LNAV off; no lock here
     for _ in range(6):
         _step(free, agent)
     assert bs.traf.ap.trk[_idx()] == pytest.approx(180.0)  # held
 
     seen, _ = _resume(free, agent)
-    np.testing.assert_array_equal(seen, [1.0])
+    np.testing.assert_array_equal(seen[:1], [1.0])
     for _ in range(12):
         _step(free, agent)
     assert _off(bs.traf.trk[_idx()], _bearing_to_waypoint()) < 2.0
@@ -143,7 +143,7 @@ def test_a_masked_switch_leaves_own_navigation_alone(free):
     agent = _fly(free)
     for _ in range(3):
         seen, _ = _step(free, agent, nav=0, nav_mask=1)
-    np.testing.assert_array_equal(seen, [1.0])
+    np.testing.assert_array_equal(seen[:1], [1.0])
 
 
 def test_resuming_takes_the_heading_axis_over_that_step(free):
@@ -179,6 +179,20 @@ def test_a_vector_is_flown_before_the_heading_is_cleared_again(locking):
             break
     assert bs.traf.swlnav[_idx()]
     assert _off(track_before, 180.0) < 1.0  # released at the end of the turn
+
+
+def test_the_policy_sees_the_lock_it_would_be_refused_by(locking):
+    agent = _fly(locking)
+    seen, _ = _step(locking, agent, heading=180.0, mask=0)
+    assert seen[1] == 1.0  # turning: a new heading would be refused
+    for _ in range(40):
+        locked_seen = seen[1]
+        seen, info = _step(locking, agent, heading=0.0, mask=0)
+        refused = info["action_applied"]["continuous"][0] == 0.0
+        assert refused == (locked_seen == 1.0)
+        if not refused:
+            break
+    assert not refused
 
 
 def test_a_clearance_that_stops_closing_releases_its_lock(locking, monkeypatch):

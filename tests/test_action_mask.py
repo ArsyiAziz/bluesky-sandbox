@@ -342,4 +342,4 @@ def test_the_designer_offers_the_designs_actions_for_a_target():
         for f in catalog.action_fields() + catalog.obs_fields()
         if any("refers" in p for p in f["params"])
     ]
-    assert sorted(marked) == ["ActionMask", "PrevActionMasked"]
+    assert sorted(marked) == ["ActionLocked", "ActionMask", "PrevActionMasked"]

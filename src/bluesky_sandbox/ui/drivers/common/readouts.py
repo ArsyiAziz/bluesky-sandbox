@@ -7,6 +7,11 @@ import math
 import bluesky as bs
 from bluesky.tools.aero import ft, kts
 
+from bluesky_sandbox.interface.fields._route import _active_route_waypoint
+from bluesky_sandbox.interface.fields._state import arrival_time
+from bluesky_sandbox.interface.fields.observations import (
+    ActiveRouteWaypointArrivalErrorS,
+)
 from bluesky_sandbox.interface.task import AircraftReadoutItem, WaypointReadoutItem
 from bluesky_sandbox.sim.performance.speeds import crossover_display
 
@@ -131,6 +136,7 @@ class AircraftReadoutMixin:
         max_kts: float | None = None,
         tolerance_kts: float | None = None,
         alt_ft: float | None = None,
+        scheduled: bool = False,
     ) -> list[str]:
         """Waypoint speed-constraint label line(s), CAS below / Mach above crossover.
 
@@ -139,6 +145,8 @@ class AircraftReadoutMixin:
         crossover speed action holds the target there - and **CAS** below. Falls
         back to CAS when the waypoint has no altitude (the regime is undecidable).
         ``idx`` is the live aircraft (supplies Mmo); ``alt_ft`` is the waypoint's.
+        ``scheduled`` marks a speed the fix's arrival time implies rather than a
+        gate: ``TBO``.
         """
         ref_kts = (
             max_kts if max_kts is not None
@@ -182,7 +190,16 @@ class AircraftReadoutMixin:
                         lines.append(f"SPD  +/-{band:.2f} M")
                 else:
                     lines.append(f"SPD  +/-{int(round(float(tolerance_kts)))} KT")
+        if scheduled and lines:
+            lines[0] += " TBO"
         return lines
+
+    @staticmethod
+    def format_waypoint_time_lines(wp: dict) -> list[str]:
+        """The fix's arrival-time line: how late (+) or early (-) the aircraft
+        would be over it flying on as it is; none for a fix without a time."""
+        error_s = wp.get("arrival_error_s")
+        return [] if error_s is None else [f"TIME {float(error_s):+.0f} S"]
 
     @classmethod
     def _info_row(cls, label: str, value: object) -> str:
@@ -272,6 +289,20 @@ class AircraftReadoutMixin:
                 except (IndexError, TypeError, ValueError):
                     pass
                 reached = wp_idx < active_idx
+                # Ahead of the aircraft, the fix as the library reads it: a
+                # speed its arrival time implies where it has no gate, and how
+                # late or early the aircraft would be over it.
+                scheduled = False
+                arrival_error_s = None
+                if wp_idx >= active_idx:
+                    offset = wp_idx - active_idx
+                    fix = _active_route_waypoint(idx, offset)
+                    if speed_kts is None and fix is not None and fix[3] is not None:
+                        speed_kts, scheduled = fix[3] / kts, True
+                    if arrival_time(idx, wp_idx) is not None:
+                        arrival_error_s = float(
+                            ActiveRouteWaypointArrivalErrorS(route_offset=offset).get(idx)
+                        )
                 waypoints.append(
                     {
                         "index": wp_idx,
@@ -281,6 +312,8 @@ class AircraftReadoutMixin:
                         "lon": lon,
                         "alt_ft": alt_ft,
                         "speed_kts": speed_kts,
+                        "scheduled": scheduled,
+                        "arrival_error_s": arrival_error_s,
                         "active": wp_idx == active_idx,
                         "reached": reached,
                         "future": wp_idx >= active_idx and not reached,

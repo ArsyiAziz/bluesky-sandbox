@@ -1086,8 +1086,12 @@ class HorizontalView(PygameView):
                                 WaypointReadoutKey.SPEED_TOLERANCE_KTS
                             ),
                             alt_ft=target_alt_ft,
+                            scheduled=bool(wp.get("scheduled"))
+                            and WaypointReadoutKey.SPEED_KTS not in constraints
+                            and WaypointReadoutKey.TARGET_SPEED_KTS not in metadata,
                         )
                     )
+            label_lines.extend(driver.format_waypoint_time_lines(wp))
             alt_tol_ft = constraints.get(WaypointReadoutKey.ALT_TOLERANCE_FT)
             if radius_nm is not None:
                 label_lines.append(f"R    {float(radius_nm):.1f} NM")

@@ -244,9 +244,7 @@ class ActionDispatcher:
             if not isinstance(field, ActionMask)
         }
         locked_axes = {
-            axis_of.get(mask.target)
-            for mask, _value in masks
-            if mask.locked(idx, axis_of.get(mask.target))
+            axis_of.get(mask.target) for mask, _value in masks if mask.locked(idx)
         }
         applied = [
             field.meta.name not in masked and not _commands(field, locked_axes)
@@ -307,7 +305,7 @@ class ActionDispatcher:
                 applied[i] and field.meta.name == mask.target
                 for i, (field, _v) in enumerate(values)
             ):
-                mask.target_applied(idx)
+                mask.target_applied(idx, axis_of.get(mask.target))
         return applied
 
 

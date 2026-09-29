@@ -48,6 +48,7 @@ from .conflict import (
     InLosNow,
 )
 from .episode import (
+    ActionLocked,
     PrevActionMasked,
     PrevActionNorm,
     TimeInEnvS,
@@ -240,6 +241,7 @@ __all__ = [
     "InLosNow",
     "ConflictRisk",
     "TimeInEnvS",
+    "ActionLocked",
     "PrevActionMasked",
     "PrevActionNorm",
     "LaggedObs",

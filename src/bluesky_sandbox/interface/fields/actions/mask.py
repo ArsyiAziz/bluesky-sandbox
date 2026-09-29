@@ -25,7 +25,13 @@ from ..base import (
     Unit,
 )
 
-__all__ = ["AXIS_ERRORS", "ActionMask", "action_name", "check_action_masks"]
+__all__ = [
+    "AXIS_ERRORS",
+    "ActionMask",
+    "action_name",
+    "check_action_masks",
+    "lock_holds",
+]
 
 #: What a clearance on each axis leaves to fly, for a mask locking until
 #: captured: the autopilot error observation measuring it - the selection
@@ -104,26 +110,38 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
     def current_switch_state(self, idx: int) -> bool:
         return bool(action_masks(self.target, [idx])[0])
 
-    def locked(self, idx: int, axis: ControlAxis | None) -> bool:
+    def locked(self, idx: int) -> bool:
         """Whether the target's axis is locked for the aircraft at ``idx``: its
-        last clearance still being flown, the axis error still shrinking. A
-        lock whose error has stopped shrinking is released."""
-        if not self.lock_until_captured or axis not in AXIS_ERRORS:
+        last clearance still being flown (:func:`lock_holds`). A lock that no
+        longer holds is released; one that does notes the error it read."""
+        lock = action_lock(idx, self.target)
+        if lock is None:
             return False
-        locked, last = action_lock(idx, self.target)
-        if not locked:
+        if not lock_holds(idx, self.target):
+            set_action_lock(idx, self.target)
             return False
-        error = axis_error(idx, axis)
-        if last is not None and error >= last:
-            set_action_lock(idx, self.target, False)
-            return False
-        set_action_lock(idx, self.target, True, error)
+        axis = lock[0]
+        set_action_lock(idx, self.target, axis, axis_error(idx, axis))
         return True
 
-    def target_applied(self, idx: int) -> None:
-        """The target was just applied: lock it while flown, if this locks."""
-        if self.lock_until_captured:
-            set_action_lock(idx, self.target, True)
+    def target_applied(self, idx: int, axis: ControlAxis | None) -> None:
+        """The target was just applied on ``axis``: lock it while it is flown,
+        if this mask locks and the axis has an error to watch."""
+        if self.lock_until_captured and axis in AXIS_ERRORS:
+            set_action_lock(idx, self.target, axis)
+
+
+def lock_holds(idx: int, target: str) -> bool:
+    """Whether ``target``'s lock still holds for the aircraft at ``idx``: it is
+    locked, and its axis error has shrunk since it was last read (or has not
+    been read since the clearance). What the dispatcher refuses by, and what
+    :class:`~bluesky_sandbox.interface.fields.observations.ActionLocked`
+    shows."""
+    lock = action_lock(idx, target)
+    if lock is None:
+        return False
+    axis, last = lock
+    return last is None or axis_error(idx, axis) < last
 
 
 def axis_error(idx: int, axis: ControlAxis) -> float:
