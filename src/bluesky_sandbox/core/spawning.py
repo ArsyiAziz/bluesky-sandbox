@@ -32,8 +32,8 @@ import bluesky as bs
 import numpy as np
 from bluesky.tools.aero import ft, kts, nm
 
-from bluesky_sandbox.interface.fields._state import set_arrival_times
-from bluesky_sandbox.sim.arrival import arrival_times
+from bluesky_sandbox.interface.fields._state import set_arrival_times, set_route_plan
+from bluesky_sandbox.sim.arrival import arrival_times, planned_legs
 from bluesky_sandbox.sim.geometry.clearance import (
     inside_separation_zone,
     predicted_conflict,
@@ -550,8 +550,9 @@ class SpawnGenerator:
                 callsign,
                 route.names,
             )
+            acidx = self.env._runtime.index(callsign)
+            set_route_plan(acidx, planned_legs(acidx, route.targets))
             if any(slack is not None for slack in route.arrival_slacks):
-                acidx = self.env._runtime.index(callsign)
                 set_arrival_times(
                     acidx,
                     arrival_times(

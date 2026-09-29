@@ -193,6 +193,8 @@ action_fields = [
 ]
 ```
 
+A temporary deviation - a level or a speed held for a while, then given back - needs a zero that means "back to the plan". The route-relative altitude and speed actions measure from the fix's gate; where the fix has none, `nominal_from_plan=True` measures from the planned value instead of the current one: the spawn level and speed, carried on from each gate the aircraft passes (`bluesky_sandbox.sim.arrival.planned_legs`, the same plan its arrival times are computed from).
+
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.interface.fields.actions.mask
    :members: ActionMask

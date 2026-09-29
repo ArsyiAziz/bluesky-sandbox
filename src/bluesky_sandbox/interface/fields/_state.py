@@ -108,11 +108,13 @@ class _CommBacked:
         _COMM_MESSAGE.forget(acid)
 
 
-class _ArrivalTimeBacked:
-    """State hooks for the arrival-time fields."""
+class _RoutePlanBacked:
+    """State hooks for what reads an aircraft's route plan: its planned level
+    and speed per leg, and its arrival times."""
 
     def on_aircraft_removed(self, acid: str) -> None:
         _ARRIVAL_TIMES.forget(acid)
+        _ROUTE_PLAN.forget(acid)
 
 
 class _ActionMaskBacked:
@@ -259,3 +261,21 @@ def arrival_time(idx: int, route_index: int) -> float | None:
     """The aircraft at ``idx``'s arrival time over route fix ``route_index``."""
     times = _ARRIVAL_TIMES.read_one(idx)
     return times[route_index] if 0 <= route_index < len(times) else None
+
+
+# Each aircraft's planned level (m) and CAS (m/s) per route leg, by route index:
+# what it flies that leg at unless cleared otherwise. Assigned at spawn
+# (sim.arrival.planned_legs), read by the route-relative actions.
+_ROUTE_PLAN = AircraftMemory(default=())
+
+
+def set_route_plan(idx: int, plan: tuple[tuple[float, float], ...]) -> None:
+    """Store the aircraft at ``idx``'s planned ``(level_m, cas_ms)`` per leg."""
+    _ROUTE_PLAN.write(idx, tuple(plan))
+
+
+def route_plan(idx: int, route_index: int) -> tuple[float, float] | None:
+    """The aircraft at ``idx``'s planned ``(level_m, cas_ms)`` on leg
+    ``route_index``, or ``None``."""
+    plan = _ROUTE_PLAN.read_one(idx)
+    return plan[route_index] if 0 <= route_index < len(plan) else None

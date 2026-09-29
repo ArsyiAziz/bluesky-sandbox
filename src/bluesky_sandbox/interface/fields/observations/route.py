@@ -24,7 +24,7 @@ from .._common import (
     _traf_array,
 )
 from .._route import _active_route_waypoint, _route_along_distance_nm, _route_index
-from .._state import _ArrivalTimeBacked, arrival_time
+from .._state import _RoutePlanBacked, arrival_time
 from ..base import ObsField, ObsMeta, ObsQuantity, Unit
 
 
@@ -542,7 +542,7 @@ class ActiveRouteWaypointVerticalEteS(_ActiveRouteWaypointField):
 
 
 @dataclass(frozen=True)
-class _ArrivalTimeField(_ArrivalTimeBacked, _ActiveRouteWaypointField):
+class _ArrivalTimeField(_RoutePlanBacked, _ActiveRouteWaypointField):
     """Reads the target arrival time over the fix at ``route_offset``, assigned
     at spawn when the route step asks for one (``arrival_slack_s``)."""
 
