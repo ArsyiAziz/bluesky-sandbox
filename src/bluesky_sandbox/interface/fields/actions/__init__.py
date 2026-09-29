@@ -23,7 +23,6 @@ from .autopilot import (
     AutopilotLnav,
     AutopilotLnavVnav,
     AutopilotVnav,
-    ResumeOwnNav,
 )
 from .comm import (
     CommBroadcast,
@@ -80,7 +79,6 @@ __all__ = [
     "AutopilotLnav",
     "AutopilotVnav",
     "AutopilotLnavVnav",
-    "ResumeOwnNav",
     "CommBroadcast",
     "ActionMask",
 ]

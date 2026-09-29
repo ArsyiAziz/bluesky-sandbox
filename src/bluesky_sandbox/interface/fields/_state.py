@@ -217,25 +217,31 @@ def action_masks(target: str, indices) -> np.ndarray:
     )
 
 
-# Each aircraft's locked actions, by target name: a mask locking until captured
-# locks its target when it is applied, and releases it once the aircraft has
-# flown it. Written and read by ActionMask.
-_ACTION_LOCKS = AircraftMemory(default=frozenset())
+# Each aircraft's locked actions, by target name, each with the axis error last
+# seen while it was locked (None until the first reading): a mask locking until
+# captured locks its target when it is applied, and releases it the first step
+# that error does not shrink. Written and read by ActionMask.
+_ACTION_LOCKS = AircraftMemory(default={})
 
 
-def action_locked(idx: int, target: str) -> bool:
-    """Whether ``target`` is locked for the aircraft at ``idx``."""
-    return target in _ACTION_LOCKS.read_one(idx)
+def action_lock(idx: int, target: str) -> tuple[bool, float | None]:
+    """Whether ``target`` is locked for the aircraft at ``idx``, and the axis
+    error last seen while it was."""
+    locks = _ACTION_LOCKS.read_one(idx)
+    return (target in locks, locks.get(target))
 
 
-def set_action_lock(idx: int, target: str, locked: bool) -> None:
-    """Lock ``target`` for the aircraft at ``idx``, or release it."""
-    locks = set(_ACTION_LOCKS.read_one(idx))
+def set_action_lock(
+    idx: int, target: str, locked: bool, error: float | None = None
+) -> None:
+    """Lock ``target`` for the aircraft at ``idx`` - noting the axis error last
+    seen - or release it."""
+    locks = dict(_ACTION_LOCKS.read_one(idx))
     if locked:
-        locks.add(target)
+        locks[target] = error
     else:
-        locks.discard(target)
-    _ACTION_LOCKS.write(idx, frozenset(locks))
+        locks.pop(target, None)
+    _ACTION_LOCKS.write(idx, locks)
 
 
 # Each aircraft's target arrival time over each fix of its route, by route

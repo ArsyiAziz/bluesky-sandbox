@@ -1,9 +1,10 @@
 """Vectoring: a heading given once and held, and own navigation resumed.
 
 With a mask on the heading, an aircraft given nothing keeps flying what it was
-last cleared - its route on LNAV, or a vector. ``ResumeOwnNav`` hands it back
-to its route; a mask locking until captured makes each vector a committed unit,
-flown before anything else on the heading axis is accepted.
+last cleared - its route on LNAV, or a vector. A masked ``AutopilotLnavVnav``
+hands it back to its route when unmasked at 1; a mask locking until captured
+makes each vector a committed unit, flown before anything else on the heading
+axis is accepted.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as act
 from bluesky_sandbox.interface.fields import observations as obs
+from bluesky_sandbox.interface.fields.actions import mask as mask_module
 from bluesky_sandbox.sim.scenario import EpisodeSpec
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
@@ -44,8 +46,9 @@ def _env(lock: bool) -> BlueskyEnv:
             obs_fields=[obs.ApLnavOn()],
             action_fields=[
                 act.HdgDeg(),
-                act.ResumeOwnNav(),
+                act.AutopilotLnavVnav(),
                 act.ActionMask(target=act.HdgDeg, lock_until_captured=lock),
+                act.ActionMask(target=act.AutopilotLnavVnav),
             ],
         ),
     )
@@ -75,13 +78,18 @@ def _fly(env, route: bool = True) -> str:
     return "VEC1"
 
 
-def _step(env, agent, heading=0.0, resume=0, mask=1):
+def _step(env, agent, heading=0.0, mask=1, nav=0, nav_mask=1):
+    """``mask`` masks the heading; ``nav`` is LNAV+VNAV, masked by ``nav_mask``."""
     action = {
         "continuous": np.array([heading], np.float32),
-        "binary": np.array([resume, mask]),
+        "binary": np.array([nav, mask, nav_mask]),
     }
     observations, _, _, _, infos = env.step({agent: action})
     return observations[agent], infos[agent]
+
+
+def _resume(env, agent):
+    return _step(env, agent, nav=1, nav_mask=0)
 
 
 def _idx() -> int:
@@ -104,7 +112,7 @@ def _off(a: float, b: float) -> float:
     return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
-# ---- resume ---------------------------------------------------------------- #
+# ---- vectors and resuming -------------------------------------------------- #
 
 
 def test_an_aircraft_given_nothing_flies_its_route(free):
@@ -115,42 +123,35 @@ def test_an_aircraft_given_nothing_flies_its_route(free):
     assert _off(bs.traf.ap.trk[_idx()], _bearing_to_waypoint()) < 2.0
 
 
-def test_a_vector_is_held_and_resume_returns_the_aircraft_to_its_route(free):
+def test_a_vector_is_held_and_resuming_returns_the_aircraft_to_its_route(free):
     agent = _fly(free)
     _step(free, agent)
     seen, _ = _step(free, agent, heading=180.0, mask=0)
     np.testing.assert_array_equal(seen, [0.0])  # the vector took LNAV off
     for _ in range(6):
         _step(free, agent)
-    assert bs.traf.ap.trk[_idx()] == pytest.approx(180.0)  # held, unmasked by nobody
+    assert bs.traf.ap.trk[_idx()] == pytest.approx(180.0)  # held
 
-    seen, _ = _step(free, agent, resume=1)
+    seen, _ = _resume(free, agent)
     np.testing.assert_array_equal(seen, [1.0])
     for _ in range(12):
         _step(free, agent)
     assert _off(bs.traf.trk[_idx()], _bearing_to_waypoint()) < 2.0
 
 
-def test_a_zero_never_turns_lnav_off(free):
+def test_a_masked_switch_leaves_own_navigation_alone(free):
     agent = _fly(free)
     for _ in range(3):
-        seen, _ = _step(free, agent, resume=0)
+        seen, _ = _step(free, agent, nav=0, nav_mask=1)
     np.testing.assert_array_equal(seen, [1.0])
 
 
-def test_resume_takes_the_heading_axis_over_that_step(free):
+def test_resuming_takes_the_heading_axis_over_that_step(free):
     agent = _fly(free)
     _step(free, agent, heading=180.0, mask=0)
-    _, info = _step(free, agent, heading=270.0, resume=1, mask=0)
+    _, info = _step(free, agent, heading=270.0, mask=0, nav=1, nav_mask=0)
     np.testing.assert_array_equal(info["action_applied"]["continuous"], [0.0])
     assert bs.traf.swlnav[_idx()]
-
-
-def test_an_aircraft_with_no_route_has_nothing_to_resume(free):
-    agent = _fly(free, route=False)
-    _step(free, agent, heading=180.0, mask=0)
-    seen, _ = _step(free, agent, resume=1)
-    np.testing.assert_array_equal(seen, [0.0])
 
 
 # ---- locking until captured ------------------------------------------------ #
@@ -165,19 +166,31 @@ def test_a_vector_is_flown_before_the_heading_is_cleared_again(locking):
     # Mid-turn: a new vector, and a resume, are both refused.
     _, info = _step(locking, agent, heading=0.0, mask=0)
     np.testing.assert_array_equal(info["action_applied"]["continuous"], [0.0])
-    _, info = _step(locking, agent, resume=1)
-    np.testing.assert_array_equal(info["action_applied"]["binary"], [0.0, 1.0])
+    _, info = _resume(locking, agent)
+    np.testing.assert_array_equal(info["action_applied"]["binary"], [0.0, 1.0, 1.0])
     assert not bs.traf.swlnav[_idx()]
     assert bs.traf.ap.trk[_idx()] == pytest.approx(180.0)
 
     # Once the turn is flown, the heading is free again.
-    for _ in range(30):
-        _step(locking, agent)
-        if _off(bs.traf.trk[_idx()], 180.0) <= 2.0:
+    for _ in range(40):
+        track_before = float(bs.traf.trk[_idx()])
+        _, info = _resume(locking, agent)
+        if info["action_applied"]["binary"][0]:
             break
-    _, info = _step(locking, agent, resume=1)
-    np.testing.assert_array_equal(info["action_applied"]["binary"], [1.0, 1.0])
     assert bs.traf.swlnav[_idx()]
+    assert _off(track_before, 180.0) < 1.0  # released at the end of the turn
+
+
+def test_a_clearance_that_stops_closing_releases_its_lock(locking, monkeypatch):
+    # A setpoint the aircraft cannot fly any further - the error stuck - must
+    # not hold the axis forever.
+    agent = _fly(locking)
+    _step(locking, agent, heading=180.0, mask=0)
+    monkeypatch.setattr(mask_module, "axis_error", lambda *_: 42.0)
+    _, info = _step(locking, agent, heading=0.0, mask=0)  # first reading: locked
+    np.testing.assert_array_equal(info["action_applied"]["continuous"], [0.0])
+    _, info = _step(locking, agent, heading=0.0, mask=0)  # not shrinking: free
+    np.testing.assert_array_equal(info["action_applied"]["continuous"], [1.0])
 
 
 def test_a_lock_is_dropped_with_its_episode(locking):
@@ -188,12 +201,12 @@ def test_a_lock_is_dropped_with_its_episode(locking):
     np.testing.assert_array_equal(info["action_applied"]["continuous"], [1.0])
 
 
-def test_a_lock_needs_an_axis_a_capture_is_measured_on():
+def test_a_lock_needs_an_axis_whose_error_is_measured():
     with pytest.raises(ValueError, match="locks until captured"):
         EnvConfig(
             obs_fields=[],
             action_fields=[
-                act.ResumeOwnNav(),
-                act.ActionMask(target=act.ResumeOwnNav, lock_until_captured=True),
+                act.AutopilotLnavVnav(),
+                act.ActionMask(target=act.AutopilotLnavVnav, lock_until_captured=True),
             ],
         )

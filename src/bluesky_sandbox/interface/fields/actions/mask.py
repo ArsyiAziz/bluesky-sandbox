@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 from .._state import (
     _ActionMaskBacked,
-    action_locked,
+    action_lock,
     action_masks,
     record_action_mask,
     set_action_lock,
@@ -25,15 +25,15 @@ from ..base import (
     Unit,
 )
 
-__all__ = ["CAPTURE", "ActionMask", "action_name", "check_action_masks"]
+__all__ = ["AXIS_ERRORS", "ActionMask", "action_name", "check_action_masks"]
 
-#: How a clearance on each axis counts as flown, for a mask locking until
-#: captured: the autopilot error observation measuring it - its selection
-#: against the aircraft - and the default tolerance, in that field's unit.
-CAPTURE: dict[ControlAxis, tuple[str, float]] = {
-    ControlAxis.HEADING: ("ApHdgErrorDeg", 2.0),
-    ControlAxis.ALTITUDE: ("ApAltErrorFt", 100.0),
-    ControlAxis.SPEED: ("ApCasErrorKts", 2.0),
+#: What a clearance on each axis leaves to fly, for a mask locking until
+#: captured: the autopilot error observation measuring it - the selection
+#: against the aircraft.
+AXIS_ERRORS: dict[ControlAxis, str] = {
+    ControlAxis.HEADING: "ApHdgErrorDeg",
+    ControlAxis.ALTITUDE: "ApAltErrorFt",
+    ControlAxis.SPEED: "ApCasErrorKts",
 }
 
 
@@ -75,9 +75,12 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
 
     ``lock_until_captured`` makes a clearance a committed unit: once the target
     is applied, it - and every other action commanding its axis, such as a
-    switch that takes that axis over - is skipped until the aircraft has flown
-    it, its autopilot error on that axis within ``capture_tolerance``
-    (:data:`CAPTURE`). A vector cannot be changed or abandoned mid-turn.
+    switch that takes that axis over - is skipped while the aircraft is still
+    flying it: while its autopilot error on that axis (:data:`AXIS_ERRORS`)
+    keeps shrinking step on step. The first step it does not - the clearance
+    flown, or one the aircraft cannot fly any further, such as a level above
+    its ceiling - releases it, so no lock outlives its clearance and there is
+    no tolerance to choose. A vector cannot be changed or abandoned mid-turn.
     """
 
     meta = ActionMeta("action_mask", Unit.SWITCH, mode=ActionMode.SWITCH)
@@ -88,9 +91,6 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
     lock_until_captured: Annotated[
         bool, "once applied, nothing on the target's axis until it is flown"
     ] = False
-    capture_tolerance: Annotated[
-        float | None, "how close counts as flown, in deg / ft / kt; None = default"
-    ] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "target", action_name(self.target))
@@ -106,31 +106,32 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
 
     def locked(self, idx: int, axis: ControlAxis | None) -> bool:
         """Whether the target's axis is locked for the aircraft at ``idx``: its
-        last clearance not yet flown. A lock found flown is released."""
-        if (
-            not self.lock_until_captured
-            or axis not in CAPTURE
-            or not action_locked(idx, self.target)
-        ):
+        last clearance still being flown, the axis error still shrinking. A
+        lock whose error has stopped shrinking is released."""
+        if not self.lock_until_captured or axis not in AXIS_ERRORS:
             return False
-        if _captured(idx, axis, self.capture_tolerance):
+        locked, last = action_lock(idx, self.target)
+        if not locked:
+            return False
+        error = axis_error(idx, axis)
+        if last is not None and error >= last:
             set_action_lock(idx, self.target, False)
             return False
+        set_action_lock(idx, self.target, True, error)
         return True
 
     def target_applied(self, idx: int) -> None:
-        """The target was just applied: lock it until flown, if this locks."""
+        """The target was just applied: lock it while flown, if this locks."""
         if self.lock_until_captured:
             set_action_lock(idx, self.target, True)
 
 
-def _captured(idx: int, axis: ControlAxis | None, tolerance: float | None) -> bool:
-    """Whether the aircraft has flown its clearance on ``axis``."""
+def axis_error(idx: int, axis: ControlAxis) -> float:
+    """How far the aircraft at ``idx`` still has to go on ``axis``: the size of
+    its autopilot error there (:data:`AXIS_ERRORS`)."""
     from .. import observations  # noqa: PLC0415 - observations import this module
 
-    name, default = CAPTURE[axis]
-    error = float(getattr(observations, name)().get(idx))
-    return abs(error) <= (default if tolerance is None else float(tolerance))
+    return abs(float(getattr(observations, AXIS_ERRORS[axis])().get(idx)))
 
 
 def check_action_masks(action_fields: Iterable[Any]) -> None:
@@ -162,9 +163,9 @@ def check_action_masks(action_fields: Iterable[Any]) -> None:
         raise ValueError(f"more than one ActionMask masks {twice}.")
     axes = {f.meta.name: f.meta.control_axis for f in action_fields}
     for mask in masks:
-        if mask.lock_until_captured and axes[mask.target] not in CAPTURE:
+        if mask.lock_until_captured and axes[mask.target] not in AXIS_ERRORS:
             raise ValueError(
                 f"ActionMask on {mask.target!r} locks until captured, but that "
                 f"action commands no axis a capture is measured on "
-                f"({', '.join(a.value for a in CAPTURE)})."
+                f"({', '.join(a.value for a in AXIS_ERRORS)})."
             )

@@ -180,15 +180,16 @@ A masked switch keeps its state, even when a switch turned on requires it, and s
 
 #### Vectoring
 
-Masks on the heading, altitude and speed actions turn continuous control into clearances: a masked step says nothing, and the aircraft flies on what it was last given - its route on LNAV, or a heading. `actions.ResumeOwnNav` hands it back to its route (1 turns LNAV on, 0 does nothing), and `obs.ApLnavOn` tells the policy which of the two it is flying. `lock_until_captured=True` makes a clearance a committed unit: once the target is applied, nothing on its axis is accepted until the aircraft has flown it.
+Masks on the heading, altitude and speed actions turn continuous control into clearances: a masked step says nothing, and the aircraft flies on what it was last given - its route on LNAV and VNAV, or a heading, level or speed. A masked `actions.AutopilotLnavVnav` resumes own navigation when unmasked at 1, and `obs.ApLnavOn` / `obs.ApLnavVnavOn` tell the policy which it is flying. `lock_until_captured=True` makes a clearance a committed unit: once the target is applied, nothing on its axis is accepted while the aircraft is still flying it - while its autopilot error keeps shrinking. The first step it does not, flown or stalled, releases the lock.
 
 ```python
 action_fields = [
     actions.ActiveRouteWaypointHdgDeltaDeg(),
-    actions.ResumeOwnNav(),
+    actions.AutopilotLnavVnav(),
     actions.ActionMask(
         target=actions.ActiveRouteWaypointHdgDeltaDeg, lock_until_captured=True
     ),
+    actions.ActionMask(target=actions.AutopilotLnavVnav),
 ]
 ```
 
