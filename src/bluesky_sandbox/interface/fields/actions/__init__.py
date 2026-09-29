@@ -39,6 +39,9 @@ from .kinematics import (
     SpdKts,
     SpdMs,
 )
+from .mask import (
+    ActionMask,
+)
 from .route import (
     ActiveRouteWaypointAltDeltaFt,
     ActiveRouteWaypointHdgDeltaDeg,
@@ -77,4 +80,5 @@ __all__ = [
     "AutopilotVnav",
     "AutopilotLnavVnav",
     "CommBroadcast",
+    "ActionMask",
 ]

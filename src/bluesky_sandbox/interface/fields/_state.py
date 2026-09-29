@@ -108,6 +108,13 @@ class _CommBacked:
         _COMM_MESSAGE.forget(acid)
 
 
+class _ActionMaskBacked:
+    """State hooks for the action masks and the field that reads them."""
+
+    def on_aircraft_removed(self, acid: str) -> None:
+        _ACTION_MASKS.forget(acid)
+
+
 # Each aircraft's most recent *normalized* action. The environment writes it when actions are applied (one BlueSky sim
 # per process, so this is per-env), and :class:`PrevActionNorm` reads it. Exposing
 # the previous action keeps an action-rate reward penalty (``|a_t - a_{t-1}|``)
@@ -180,3 +187,23 @@ _COMM_NOISE_RNG = np.random.default_rng()
 def _reseed_comm_noise(seed: int | None) -> None:
     global _COMM_NOISE_RNG
     _COMM_NOISE_RNG = np.random.default_rng(seed)
+
+
+# Each aircraft's action masks as its last action set them: ``{target: masked}``,
+# each target the name of the action masked. Written by ActionMask when the
+# action is applied, read back by it and by PrevActionMasked.
+_ACTION_MASKS = AircraftMemory(default={})
+
+
+def record_action_mask(idx: int, target: str, masked: bool) -> None:
+    """Store whether an aircraft's last action masked ``target``."""
+    masks = dict(_ACTION_MASKS.read_one(idx))
+    masks[target] = bool(masked)
+    _ACTION_MASKS.write(idx, masks)
+
+
+def action_masks(target: str, indices) -> np.ndarray:
+    """Whether each aircraft's last action masked ``target``; False if unset."""
+    return np.array(
+        [m.get(target, False) for m in _ACTION_MASKS.read(indices)], dtype=bool
+    )

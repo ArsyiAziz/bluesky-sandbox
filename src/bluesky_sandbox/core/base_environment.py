@@ -30,6 +30,7 @@ from bluesky_sandbox.core.batch import (
 )
 from bluesky_sandbox.core.layout import (
     Slot,
+    action_applied,
     action_layout,
     flatten_action,
     observation_layout,
@@ -43,6 +44,7 @@ from bluesky_sandbox.core.step_values import (
 )
 from bluesky_sandbox.interface.fields._common import reset_field_state
 from bluesky_sandbox.interface.fields._state import set_action_space_bounds
+from bluesky_sandbox.interface.fields.actions.mask import ActionMask
 from bluesky_sandbox.interface.fields.base import StepContext
 from bluesky_sandbox.interface.task import (
     AgentStepContext,
@@ -473,6 +475,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         controlled_agents = self._controlled_live_agents
         observations = self._assemble_observations(controlled_agents)
         infos = self._build_infos(controlled_agents)
+        self._add_action_applied(infos, {})
 
         self._populate_task_info(observations, {}, infos)
         return observations, infos
@@ -490,6 +493,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._query_state_monitor.begin_step()
         self._hooks.on_before_step()
         live_index = self._live_agent_index()
+        applied: dict[Callsign, list[bool]] = {}
 
         for acid, action in actions.items():
             idx = live_index.get(acid)
@@ -512,7 +516,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
             if not self._hooks.on_agent_action(idx, action):
                 values = self._action_dispatcher.denormalize(idx, action)
                 self._step_values.record_action(acid, raw_action_values(values))
-                self._action_dispatcher.apply_values(idx, values)
+                applied[acid] = self._action_dispatcher.apply_values(idx, values)
 
         # A steady field is applied once at reset; only a gusting one needs
         # pushing into BlueSky again each step.
@@ -531,6 +535,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         controlled_agents = self._controlled_live_agents
         observations = self._assemble_observations(controlled_agents)
         infos = self._build_infos(controlled_agents)
+        self._add_action_applied(infos, applied)
         self._populate_task_info(observations, actions, infos)
         terminations, truncations = self._apply_done_conditions(
             controlled_agents,
@@ -937,15 +942,17 @@ class BlueskyBaseEnvironment(ParallelEnv):
         return self._agent_context_cache[acid]
 
     def _collect_stateful_fields(self):
-        """Configured observation fields that override the state hooks.
+        """Configured fields that override the state hooks.
 
-        Every field list is walked, critic-only blocks included: a privileged
-        field maintains state the same way an actor-visible one does, and a
+        Every field list is walked, critic-only blocks and actions included: a
+        privileged field maintains state the same way an actor-visible one does,
+        an action (an ``ActionMask``) may remember what it was set to, and a
         field that is recorded but never dropped on despawn is exactly the leak
         the hooks exist to prevent.
         """
         seen: set[int] = set()
         for name in (
+            "action_fields",
             "obs_fields",
             "intruder_obs_fields",
             "critic_obs_fields",
@@ -1116,6 +1123,17 @@ class BlueskyBaseEnvironment(ParallelEnv):
         infos = self.build_aircraft_infos(controlled_agents)
         self.cache_live_info(infos)
         return infos
+
+    def _add_action_applied(
+        self, infos: AgentInfos, applied: Mapping[Callsign, list[bool]]
+    ) -> None:
+        """With an ``ActionMask`` configured, ``info["action_applied"]``: which
+        values of each agent's action took effect, shaped as the action - all
+        of them for an agent given no action, or one a hook consumed."""
+        if not any(isinstance(f, ActionMask) for f in self.config.action_fields):
+            return
+        for acid, info in infos.items():
+            info["action_applied"] = action_applied(self.config, applied.get(acid))
 
     # ------------------------------------------------------------------
     # Pure helpers

@@ -8,6 +8,7 @@ import numpy as np
 
 from bluesky_sandbox.interface.fields import actions
 from bluesky_sandbox.interface.fields import observations as obs
+from bluesky_sandbox.interface.fields.actions.mask import check_action_masks
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
     EnvObsField,
@@ -417,6 +418,8 @@ class EnvConfig:
                     "critic_intruder_obs_fields must contain ObsField or "
                     f"PairObsField instances, got {invalid_critic_intr!r}."
                 )
+
+        check_action_masks(self.action_fields)
 
         self.performance_model = apply_performance_model(self.performance_model)
         available = _available_aircraft(self.performance_model)

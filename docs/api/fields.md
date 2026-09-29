@@ -162,6 +162,28 @@ The autopilot's selected heading, speed and altitude, relative to the current va
    :show-inheritance:
 ```
 
+### `actions.mask`
+
+A 0/1 action that, set to 1, skips another action that step: the aircraft keeps the last command it was given. The policy then decides *when* to act as well as how, e.g. giving a heading vector once and letting the aircraft fly it out. The target is named by its class, an instance or its name:
+
+```python
+action_fields = [
+    actions.HdgDeg(),
+    actions.AutopilotLnav(),
+    actions.ActionMask(target=actions.HdgDeg),
+    actions.ActionMask(target="autopilot_lnav"),  # switches too
+]
+obs_fields = [obs.PrevActionMasked(target=actions.HdgDeg)]
+```
+
+A masked switch keeps its state, even when a switch turned on requires it, and suppresses nothing. With a mask configured, every agent's `info["action_applied"]` says which values of its action took effect, shaped as the action: 1 for each value applied, 0 for each one skipped, whether masked or on an axis a switch suppressed. A custom loss can use it to leave skipped values out of the policy gradient. `PrevActionMasked` shows the policy what it masked last.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.interface.fields.actions.mask
+   :members: ActionMask
+   :show-inheritance:
+```
+
 ### `actions.comm`
 
 A learned message, with no effect on the aircraft.

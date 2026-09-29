@@ -12,10 +12,13 @@ from .._common import _BroadcastObs, _indices_array
 from .._state import (
     _LAST_NORM_ACTION,
     _TIME_IN_ENV,
+    _ActionMaskBacked,
     _LastActionBacked,
     _TimeInEnvBacked,
+    action_masks,
 )
-from ..base import ObsField, ObsMeta, ObsQuantity, Unit
+from ..actions.mask import action_name
+from ..base import ActionField, ObsField, ObsMeta, ObsQuantity, Unit
 
 
 @dataclass(frozen=True)
@@ -152,3 +155,36 @@ class PrevActionNorm(_BroadcastObs, _LastActionBacked, ObsField):
             exposed = stored[self.offset : self.offset + self.dim]
             values[: len(exposed)] = exposed
         return values
+
+
+@dataclass(frozen=True)
+class PrevActionMasked(_BroadcastObs, _ActionMaskBacked, ObsField):
+    """Whether ownship's previous action masked ``target``: 1 when an
+    :class:`~bluesky_sandbox.interface.fields.actions.ActionMask` skipped it, 0
+    when it let it through - and before the first action.
+
+    ``target`` names the action as the mask does - its class, an instance of
+    it, or its name. An action no mask targets always reads 0.
+    """
+
+    meta = ObsMeta("prev_action_masked", Unit.SWITCH, ObsQuantity.INDICATOR)
+    target: Annotated[
+        str | type[ActionField] | ActionField,
+        "the masked action: its name, its class or an instance",
+    ] = ""
+    low: Annotated[float, "lower bound"] = 0.0
+    high: Annotated[float, "upper bound"] = 1.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "target", action_name(self.target))
+        super().__post_init__()
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return self._configured_bounds()
+
+    def _values(self, indices: Any) -> Any:
+        return action_masks(self.target, _indices_array(indices)).astype(np.float64)
+
+    def _expected(self, idx: int) -> Any:
+        masks = _state._ACTION_MASKS.read_one(idx)
+        return 1.0 if masks.get(self.target, False) else 0.0

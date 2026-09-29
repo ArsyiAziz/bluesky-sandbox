@@ -13,6 +13,7 @@ from gymnasium.spaces import Box, Dict, MultiBinary, Sequence
 
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.aircraft_table import AircraftTable, Column
+from bluesky_sandbox.interface.fields.actions.mask import ActionMask
 from bluesky_sandbox.interface.fields.base import (
     ActionKind,
     PairObsField,
@@ -178,8 +179,8 @@ class ActionDispatcher:
             raise RuntimeError("ActionDispatcher env has not been set.")
         return self.env.config
 
-    def apply(self, idx: int, action) -> None:
-        self.apply_values(idx, self.denormalize(idx, action))
+    def apply(self, idx: int, action) -> list[bool]:
+        return self.apply_values(idx, self.denormalize(idx, action))
 
     def denormalize(self, idx: int, action) -> list[tuple[Any, Any]]:
         """``(field, value)`` for each action field: the value it is set to."""
@@ -213,52 +214,70 @@ class ActionDispatcher:
             )
         return values
 
-    def apply_values(self, idx: int, values: list[tuple[Any, Any]]) -> None:
-        """Set each action field to its value, switches ordered around the rest."""
-        switch_fields = [
-            (field, value)
+    def apply_values(self, idx: int, values: list[tuple[Any, Any]]) -> list[bool]:
+        """Set each action field to its value, switches ordered around the rest;
+        return whether each one was applied, in order.
+
+        An action an :class:`ActionMask` set to 1 names is skipped - a switch
+        too, which keeps its state even when a switch turned on requires it - and
+        so is one on an axis a switch turned on suppresses.
+        """
+        masked = {
+            field.target
             for field, value in values
-            if isinstance(field, SwitchActionMixin)
-        ]
-        switch_on = {
-            field.meta.name: field.switch_command(value)
-            for field, value in switch_fields
+            if isinstance(field, ActionMask) and field.switch_command(value)
         }
+        applied = [field.meta.name not in masked for field, _value in values]
+        # Each switch applied, by position: masks share a name, so a name
+        # cannot key them.
+        switch_on = {
+            i: field.switch_command(value)
+            for i, (field, value) in enumerate(values)
+            if isinstance(field, SwitchActionMixin) and applied[i]
+        }
+        by_name: dict[str, list[int]] = {}
+        for i in switch_on:
+            by_name.setdefault(values[i][0].meta.name, []).append(i)
 
         changed = True
         while changed:
             changed = False
-            for field, _value in switch_fields:
-                if not switch_on.get(field.meta.name, False):
+            for i in switch_on:
+                if not switch_on[i]:
                     continue
-                for required in field.meta.requires_on:
-                    if not switch_on.get(required, False):
-                        switch_on[required] = True
-                        changed = True
+                for required in values[i][0].meta.requires_on:
+                    for j in by_name.get(required, ()):
+                        if not switch_on[j]:
+                            switch_on[j] = True
+                            changed = True
 
         suppressed_axes = {
             axis
-            for field, _value in switch_fields
-            if switch_on.get(field.meta.name, False)
-            for axis in field.meta.suppresses_when_on
+            for i, on in switch_on.items()
+            if on
+            for axis in values[i][0].meta.suppresses_when_on
         }
 
         # Each switch is set once, to its state after the dependencies: a switch
         # another one requires stays on, rather than going off and back on.
-        for field, value in switch_fields:
-            if not switch_on[field.meta.name]:
+        for i, on in switch_on.items():
+            if not on:
+                field, value = values[i]
                 field.set(idx, value)
 
-        for field, value in values:
-            if isinstance(field, SwitchActionMixin):
+        for i, (field, value) in enumerate(values):
+            if isinstance(field, SwitchActionMixin) or not applied[i]:
                 continue
             if field.meta.control_axis in suppressed_axes:
+                applied[i] = False
                 continue
             field.set(idx, value)
 
-        for field, _value in switch_fields:
-            if switch_on[field.meta.name]:
+        for i, on in switch_on.items():
+            if on:
+                field = values[i][0]
                 field.set(idx, field.switch_on_value())
+        return applied
 
 
 class ObservationAssembler:

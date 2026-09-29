@@ -16,7 +16,7 @@ that adds columns extends them.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -30,6 +30,7 @@ from .slot import Slot, unique_names
 
 __all__ = [
     "Slot",
+    "action_applied",
     "action_layout",
     "flatten_action",
     "observation_layout",
@@ -121,6 +122,38 @@ def flatten_action(config: EnvConfig, action: Any) -> np.ndarray:
         out.append(arrays[field.kind][start : start + width])
         cursors[field.kind] = start + width
     return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
+
+
+def action_applied(config: EnvConfig, applied: Sequence[bool] | None = None) -> Any:
+    """Which values of an action took effect, shaped as the action: 1 for each
+    value applied, 0 for each one skipped - masked by an ``ActionMask``, or on
+    an axis a switch suppressed.
+
+    ``applied`` has one flag per action field, in config order; ``None`` is
+    every one applied. A ``Box`` action space's is one vector; a ``Dict`` one's
+    a dict of the parts.
+    """
+    fields = config.action_fields
+    if applied is None:
+        applied = [True] * len(fields)
+    if len(applied) != len(fields):
+        raise ValueError(
+            f"{len(applied)} applied flags for {len(fields)} action fields."
+        )
+    parts: dict[ActionKind, list[np.ndarray]] = {
+        kind: [] for kind in _action_parts(fields)
+    }
+    for field, flag in zip(fields, applied):
+        parts[field.kind].append(
+            np.full(_field_output_size(field), float(flag), dtype=np.float32)
+        )
+    arrays = {
+        kind: np.concatenate(values) if values else np.zeros(0, dtype=np.float32)
+        for kind, values in parts.items()
+    }
+    if set(arrays) <= {ActionKind.CONTINUOUS}:
+        return arrays.get(ActionKind.CONTINUOUS, np.zeros(0, dtype=np.float32))
+    return {kind.value: values for kind, values in arrays.items()}
 
 
 def zero_action(space: Space) -> Any:
