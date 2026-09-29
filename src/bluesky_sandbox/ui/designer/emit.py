@@ -420,6 +420,16 @@ def emit_field_sources(env: EnvSpec, package: str | None = None) -> dict[str, st
         if env.critic_intruder_obs_fields is None
         else em.field_tuple(env.critic_intruder_obs_fields, "obs")
     )
+    state = (
+        "None"
+        if env.state_fields is None
+        else em.field_tuple(env.state_fields, "obs")
+    )
+    state_intr = (
+        "None"
+        if env.intruder_state_fields is None
+        else em.field_tuple(env.intruder_state_fields, "obs")
+    )
     actions = em.field_tuple(env.action_fields, "act")
     scipy_import = (
         f"from scipy.stats import {', '.join(sorted(em.scipy_names))}\n"
@@ -446,6 +456,8 @@ from bluesky_sandbox.interface.fields import queryables as qobs
         "intruder_obs_fields": intr,
         "critic_obs_fields": critic_obs,
         "critic_intruder_obs_fields": critic_intr,
+        "state_fields": state,
+        "intruder_state_fields": state_intr,
         "action_fields": actions,
     }
 
@@ -470,6 +482,16 @@ def emit_env_sources(spec: DesignSpec, package: str | None = None) -> dict[str, 
         "None"
         if env.critic_intruder_obs_fields is None
         else em.field_tuple(env.critic_intruder_obs_fields, "obs")
+    )
+    state = (
+        "None"
+        if env.state_fields is None
+        else em.field_tuple(env.state_fields, "obs")
+    )
+    state_intr = (
+        "None"
+        if env.intruder_state_fields is None
+        else em.field_tuple(env.intruder_state_fields, "obs")
     )
     actions = em.field_tuple(env.action_fields, "act")
 
@@ -514,6 +536,8 @@ from bluesky_sandbox.interface.fields import queryables as qobs
         "intruder_obs_fields": intr,
         "critic_obs_fields": critic_obs,
         "critic_intruder_obs_fields": critic_intr,
+        "state_fields": state,
+        "intruder_state_fields": state_intr,
         "action_fields": actions,
     }
 

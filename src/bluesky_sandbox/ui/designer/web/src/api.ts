@@ -13,6 +13,8 @@ export interface ValidateResult {
     intruder_obs_fields: string[] | null;
     critic_obs_fields: string[] | null;
     critic_intruder_obs_fields: string[] | null;
+    state_fields: string[];
+    intruder_state_fields: string[];
     action_fields: string[];
     allowed_aircraft: string[];
     max_aircraft: number;

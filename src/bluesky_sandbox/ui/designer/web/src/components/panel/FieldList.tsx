@@ -90,6 +90,7 @@ export function FieldList({
   scaffolds,
   allowRelative,
   references = {},
+  addLabel,
 }: {
   label: string;
   fields: SpecDict[];
@@ -108,6 +109,8 @@ export function FieldList({
   allowRelative?: boolean;
   // What a referring parameter can name, by what it refers to (see FieldParam).
   references?: Record<string, Choice[]>;
+  // The add picker's placeholder, when the label alone does not say it.
+  addLabel?: string;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   // A row being dragged, and the gap it would drop into (0 is before the first).
@@ -141,11 +144,12 @@ export function FieldList({
   const normalizerOrder = normalizers.map((n) => n.name);
   const optByName = (n: string) => options.find((o) => o.name === n);
   const pickerLabel =
-    label === "action"
+    addLabel ??
+    (label === "action"
       ? "Add an action…"
       : label === "intruder"
         ? "Add an intruder observation…"
-        : "Add an ownship observation…";
+        : "Add an ownship observation…");
 
   const setKwargs = (i: number, kwargs: SpecDict) =>
     onChange(fields.map((f, j) => (j === i ? { ...f, kwargs } : f)));

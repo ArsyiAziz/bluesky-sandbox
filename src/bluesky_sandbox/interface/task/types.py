@@ -255,7 +255,8 @@ class DesignKeys:
     """Marks a value whose keys the design fixes, for tools reading annotations.
 
     ``Annotated[Mapping[str, Any], DesignKeys("observation")]`` says the keys
-    are the observation's parts, each keyed by its fields' names; ``"action"``
+    are the observation's parts, each keyed by its fields' names; ``"state"``
+    the state fields' parts the same way; ``"action"``
     the action fields' names; ``"queryable"`` / ``"queryable_result"`` the
     configured queryables' names, each giving the queryable or its result. On a
     parameter, the argument is one of those keys. ``batched`` marks values
@@ -263,7 +264,7 @@ class DesignKeys:
     checks these keys against the design.
     """
 
-    source: Literal["observation", "action", "queryable", "queryable_result"]
+    source: Literal["observation", "state", "action", "queryable", "queryable_result"]
     batched: bool = False
 
 
@@ -274,9 +275,10 @@ class AgentStepContext:
     ``raw_obs`` is this aircraft's observation in raw values, by part and field
     name - ``raw_obs["ownship"]["alt_ft"]``, ``raw_obs["intruders"]
     ["dist_to_own_nm"][i]`` for intruder row ``i``, ``raw_obs["intruders"]
-    ["acid"][i]`` its callsign. ``raw_action`` is the action it was given this
-    step, as the value each action field was set to. Both read the values the
-    step already computed.
+    ["acid"][i]`` its callsign. ``state`` is its state fields the same way:
+    computed every step like the observation, but seen by no agent.
+    ``raw_action`` is the action it was given this step, as the value each
+    action field was set to. All read the values the step already computed.
     """
 
     acid: str
@@ -289,6 +291,9 @@ class AgentStepContext:
     raw_obs: Annotated[
         Mapping[str, Mapping[str, Any]], DesignKeys("observation")
     ] = field(default_factory=dict, repr=False)
+    state: Annotated[Mapping[str, Mapping[str, Any]], DesignKeys("state")] = field(
+        default_factory=dict, repr=False
+    )
     raw_action: Annotated[Mapping[str, Any], DesignKeys("action")] = field(
         default_factory=dict, repr=False
     )

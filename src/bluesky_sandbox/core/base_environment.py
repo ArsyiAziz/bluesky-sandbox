@@ -35,6 +35,7 @@ from bluesky_sandbox.core.layout import (
     flatten_action,
     observation_layout,
     observation_parts,
+    state_parts,
 )
 from bluesky_sandbox.core.step_values import (
     RawObservation,
@@ -745,6 +746,11 @@ class BlueskyBaseEnvironment(ParallelEnv):
         """
         return self._raw_observation(self._runtime.agent_ids.index(agent))
 
+    def raw_state(self, agent: str) -> RawObservation:
+        """``agent``'s state fields in raw values, as :meth:`raw_observation`
+        gives its observation: ``raw["ownship"]["alt_ft"]``. Seen by no agent."""
+        return self._raw_state(self._runtime.agent_ids.index(agent))
+
     def raw_action(self, agent: str) -> Mapping[str, Any]:
         """The action ``agent`` was given this step, in raw values by field
         name: what each action field was set to. Empty if it had none."""
@@ -757,6 +763,15 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
     def _observation_parts(self) -> dict[str, list[Any]]:
         return observation_parts(self.config)
+
+    def _raw_state(self, acidx: int) -> RawObservation:
+        return RawObservation(
+            self._step_values,
+            state_parts(self.config),
+            acidx,
+            self._agent_indices,
+            what="state",
+        )
 
     def _step_batch(
         self,
@@ -778,6 +793,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
             acidx=acidx,
             obs=stack_observations([observations[acid] for acid in agent_ids]),
             raw_obs=RawBatch(self._step_values, self._observation_parts(), acidx),
+            state=RawBatch(
+                self._step_values, state_parts(self.config), acidx, what="state"
+            ),
             raw_action=raw_action,
             has_action=has_action,
             intruder_idx=intruder_indices(acidx),
@@ -957,6 +975,8 @@ class BlueskyBaseEnvironment(ParallelEnv):
             "intruder_obs_fields",
             "critic_obs_fields",
             "critic_intruder_obs_fields",
+            "state_fields",
+            "intruder_state_fields",
         ):
             for obs_field in getattr(self.config, name, None) or ():
                 if type(obs_field).is_stateful() and id(obs_field) not in seen:
@@ -971,6 +991,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
             queryables=self.episode_queryables,
             query_state=self._query_state_monitor,
             raw_obs=self._raw_observation(acidx),
+            state=self._raw_state(acidx),
             raw_action=self._step_values.action(acid),
             _step_values=self._step_values,
             airspace=self._build_airspace_context(acidx),

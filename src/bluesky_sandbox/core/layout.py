@@ -35,6 +35,7 @@ __all__ = [
     "flatten_action",
     "observation_layout",
     "observation_parts",
+    "state_parts",
     "zero_action",
 ]
 
@@ -63,6 +64,16 @@ def observation_parts(config: EnvConfig) -> dict[str, list[Any]]:
         for key, fields in parts.items()
         if fields or key == "ownship"
     }
+
+
+def state_parts(config: EnvConfig) -> dict[str, list[Any]]:
+    """Each state part and its fields, keyed as hooks read them: ``ownship``
+    and ``intruders``, each when configured. No agent observes them."""
+    parts = {
+        "ownship": getattr(config, "state_fields", None),
+        "intruders": getattr(config, "intruder_state_fields", None),
+    }
+    return {key: list(fields) for key, fields in parts.items() if fields}
 
 
 def observation_layout(config: EnvConfig) -> dict[str, list[Slot]]:

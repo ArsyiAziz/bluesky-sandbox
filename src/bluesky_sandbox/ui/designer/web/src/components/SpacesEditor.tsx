@@ -11,6 +11,8 @@ const FIELD_LISTS = [
   "intruder_obs_fields",
   "critic_obs_fields",
   "critic_intruder_obs_fields",
+  "state_fields",
+  "intruder_state_fields",
   "action_fields",
 ];
 
@@ -223,6 +225,52 @@ export default function SpacesEditor({
               />
             )}
           </div>
+        </Section>
+
+        {/* State: computed every step like the observation, read by the hooks
+            (context.state), never observed - by the actor or the critic. */}
+        <Section title="State" subtitle="hidden from every agent — read in hooks">
+          <p className="strategy-note muted small">
+            Values computed every step like observations, but seen by no agent. Rewards,
+            done conditions and task info read them by name: <code>context.state["ownship"][name]</code>,
+            and <code>context.state["intruders"][name][i]</code> per intruder row.
+          </p>
+          {(
+            [
+              ["state_fields", "ownship", "state ownship", false],
+              ["intruder_state_fields", "intruder", "state intruder", true],
+            ] as const
+          ).map(([key, title, label, perIntruder]) => (
+            <div className="critic-block" key={key}>
+              <label className="radio">
+                <input
+                  type="checkbox"
+                  checked={env[key] != null}
+                  onChange={(e) => edit((s) => (s.env[key] = e.target.checked ? [] : null))}
+                />
+                {title}
+              </label>
+              {env[key] != null && (
+                <FieldList
+                  label={label}
+                  addLabel={`Add ${perIntruder ? "an intruder" : "an ownship"} state field…`}
+                  fields={env[key]}
+                  options={(catalog?.obs_fields ?? []).filter((f: any) => perIntruder || !f.pair_only)}
+                  normalizers={catalog?.normalizers ?? []}
+                  queryables={spec.queryables ?? {}}
+                  validationError={validationError}
+                  code={spec.code ?? {}}
+                  onCodeChange={(code) => edit((s) => (s.code = code))}
+                  onChange={(fl) => edit((s) => (s.env[key] = fl))}
+                  onRemove={(i) => removeField(key, i)}
+                  scaffolds={scaffolds}
+                  references={references}
+                  onAddScaffold={() => addScaffold("obs", key)}
+                  allowRelative={perIntruder}
+                />
+              )}
+            </div>
+          ))}
         </Section>
 
         {/* ----------------------------------------------------------- actions */}

@@ -139,7 +139,9 @@ class RawObservation(Mapping[str, Mapping[str, Any]]):
         parts: Mapping[str, Any],
         acidx: int,
         owns: Callable[[], np.ndarray],
+        what: str = "observation",
     ) -> None:
+        self._what = what
         self._values = values
         self._parts = dict(parts)
         self._acidx = acidx
@@ -152,7 +154,7 @@ class RawObservation(Mapping[str, Mapping[str, Any]]):
         if built is None:
             if part not in self._parts:
                 raise KeyError(
-                    f"no observation part {part!r}; this environment has "
+                    f"no {self._what} part {part!r}; this environment has "
                     f"{sorted(self._parts)}"
                 )
             self._values.check_current(self._traffic)
@@ -167,7 +169,7 @@ class RawObservation(Mapping[str, Mapping[str, Any]]):
         return len(self._parts)
 
     def __repr__(self) -> str:
-        return f"RawObservation(parts={list(self._parts)})"
+        return f"RawObservation({self._what}, parts={list(self._parts)})"
 
     def _build(self, part: str, fields: Any) -> dict[str, Any]:
         names = unique_names_of(fields)

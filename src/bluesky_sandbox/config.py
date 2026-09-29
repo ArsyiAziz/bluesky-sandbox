@@ -191,6 +191,16 @@ class EnvConfig:
         No effect on pair fields, fields with fixed bounds (set ``low``/``high``
         for one absolute scale), or fields without a normalizer. Applies to
         ``critic_intruder_obs_fields`` too.
+    state_fields:
+        Fields computed for each agent every step like its observation, but
+        never observed: no agent, actor or critic, sees them. Hooks read them
+        by name, in raw values - ``context.state["ownship"]["alt_ft"]``, and
+        ``batch.state`` for the batched hooks. For what a reward, a done
+        condition or an info needs but the policy must not depend on.
+    intruder_state_fields:
+        The same per other aircraft, as ``intruder_obs_fields`` are:
+        ``context.state["intruders"]["dist_to_own_nm"][i]`` for intruder row ``i``,
+        in the observation's intruder order.
     action_fields:
         Ordered action field objects that form each agent's action vector.
     allowed_aircraft:
@@ -246,6 +256,9 @@ class EnvConfig:
     # Both default to ``None`` (symmetric: critic and actor see the same obs).
     critic_obs_fields: list[ObsField] | None = None
     critic_intruder_obs_fields: list[ObsField | PairObsField] | None = None
+    # Computed like observations, seen by no agent: read in hooks as context.state.
+    state_fields: list[ObsField] | None = None
+    intruder_state_fields: list[ObsField | PairObsField] | None = None
     intruder_obs_bounds: str = DEFAULT_INTRUDER_OBS_BOUNDS
     action_fields: list[ActionField] = field(
         default_factory=lambda: [actions.HdgDeg(), actions.SpdKts(), actions.AltFt()]
@@ -299,6 +312,12 @@ class EnvConfig:
                 env,
                 self.critic_intruder_obs_fields,
             )
+        if self.state_fields is not None:
+            self.state_fields = _bind_env_obs_fields(env, self.state_fields)
+        if self.intruder_state_fields is not None:
+            self.intruder_state_fields = _bind_env_obs_fields(
+                env, self.intruder_state_fields
+            )
 
     def __post_init__(self) -> None:
         # Before any field validation: ``field.stacked(depth=n)`` puts a LIST in
@@ -309,6 +328,8 @@ class EnvConfig:
         self.critic_intruder_obs_fields = _flatten_obs_fields(
             self.critic_intruder_obs_fields
         )
+        self.state_fields = _flatten_obs_fields(self.state_fields)
+        self.intruder_state_fields = _flatten_obs_fields(self.intruder_state_fields)
         if not (
             isinstance(self.dt, (int, float)) and self.dt > 0 and np.isfinite(self.dt)
         ):
@@ -417,6 +438,26 @@ class EnvConfig:
                 raise TypeError(
                     "critic_intruder_obs_fields must contain ObsField or "
                     f"PairObsField instances, got {invalid_critic_intr!r}."
+                )
+
+        # State fields follow the observation rules: the ownship list holds
+        # single-aircraft fields only, the intruder list either kind.
+        pair_in_state = [f for f in self.state_fields or () if isinstance(f, PairObsField)]
+        if pair_in_state:
+            raise ValueError(
+                "state_fields contains pair-only fields (intruder-relative; not "
+                f"valid for the ownship): {[f.meta.name for f in pair_in_state]}"
+            )
+        for name, fields, kinds in (
+            ("state_fields", self.state_fields, (ObsField,)),
+            ("intruder_state_fields", self.intruder_state_fields, (ObsField, PairObsField)),
+        ):
+            invalid_state = [f for f in fields or () if not isinstance(f, kinds)]
+            if invalid_state:
+                raise TypeError(
+                    f"{name} must contain "
+                    f"{' or '.join(k.__name__ for k in kinds)} instances, got "
+                    f"{invalid_state!r}."
                 )
 
         check_action_masks(self.action_fields)

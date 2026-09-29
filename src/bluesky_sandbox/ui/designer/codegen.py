@@ -470,10 +470,15 @@ def _config_py(env_sources: dict[str, str]) -> str:
         else f"list({intruder_obs_fields})"
     )
 
-    # Privileged critic-only field lists are emitted only when configured, so
-    # symmetric designs keep the compact config they had before.
+    # Privileged critic-only and state field lists are emitted only when
+    # configured, so designs without them keep the compact config they had.
     critic_lines = ""
-    for key in ("critic_obs_fields", "critic_intruder_obs_fields"):
+    for key in (
+        "critic_obs_fields",
+        "critic_intruder_obs_fields",
+        "state_fields",
+        "intruder_state_fields",
+    ):
         src = env_sources.get(key, "None")
         if src and src != "None":
             critic_lines += f"    {key}=list({src}),\n"

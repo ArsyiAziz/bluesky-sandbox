@@ -336,6 +336,8 @@ def _temporal_queryable_names(spec: DesignSpec) -> set[str]:
         fields.extend(spec.env.critic_obs_fields)
     if spec.env.critic_intruder_obs_fields:
         fields.extend(spec.env.critic_intruder_obs_fields)
+    fields.extend(spec.env.state_fields or ())
+    fields.extend(spec.env.intruder_state_fields or ())
     for ref in fields:
         queryable_spec = _field_queryable_spec(ref)
         if queryable_spec is None:
@@ -955,12 +957,24 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
         if env.critic_intruder_obs_fields is None
         else [resolve_obs_field(f) for f in env.critic_intruder_obs_fields]
     )
+    state_fields = (
+        None
+        if env.state_fields is None
+        else [resolve_obs_field(f) for f in env.state_fields]
+    )
+    intruder_state_fields = (
+        None
+        if env.intruder_state_fields is None
+        else [resolve_obs_field(f) for f in env.intruder_state_fields]
+    )
     try:
         config = EnvConfig(
             obs_fields=[resolve_obs_field(f) for f in env.obs_fields],
             intruder_obs_fields=intruder_fields,
             critic_obs_fields=critic_obs_fields,
             critic_intruder_obs_fields=critic_intruder_fields,
+            state_fields=state_fields,
+            intruder_state_fields=intruder_state_fields,
             action_fields=[resolve_action_field(f) for f in env.action_fields],
             allowed_aircraft=list(env.allowed_aircraft),
             dt=env.dt,

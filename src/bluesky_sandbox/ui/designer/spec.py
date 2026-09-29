@@ -900,6 +900,10 @@ class EnvSpec:
     # ownship / intruder lists; both default to None (symmetric).
     critic_obs_fields: list[FieldRef] | None = None
     critic_intruder_obs_fields: list[FieldRef] | None = None
+    # State fields: computed every step like observations, seen by no agent -
+    # hooks read them as context.state. Mirror the ownship / intruder lists.
+    state_fields: list[FieldRef] | None = None
+    intruder_state_fields: list[FieldRef] | None = None
     action_fields: list[FieldRef] = field(default_factory=list)
     # Module-level Python emitted before inline task-info providers. Use this
     # for imports, constants, and small helper functions shared by providers.
@@ -952,6 +956,16 @@ class EnvSpec:
                 if self.critic_intruder_obs_fields is None
                 else [f.to_dict() for f in self.critic_intruder_obs_fields]
             ),
+            "state_fields": (
+                None
+                if self.state_fields is None
+                else [f.to_dict() for f in self.state_fields]
+            ),
+            "intruder_state_fields": (
+                None
+                if self.intruder_state_fields is None
+                else [f.to_dict() for f in self.intruder_state_fields]
+            ),
             "action_fields": [f.to_dict() for f in self.action_fields],
             "task_info_setup": self.task_info_setup,
             "task_info": [p.to_dict() for p in self.task_info],
@@ -980,6 +994,8 @@ class EnvSpec:
         intruders = d.get("intruder_obs_fields")
         critic_own = d.get("critic_obs_fields")
         critic_intr = d.get("critic_intruder_obs_fields")
+        state_own = d.get("state_fields")
+        state_intr = d.get("intruder_state_fields")
         return cls(
             obs_fields=[FieldRef.from_dict(f) for f in d.get("obs_fields", [])],
             intruder_obs_fields=(
@@ -992,6 +1008,14 @@ class EnvSpec:
                 None
                 if critic_intr is None
                 else [FieldRef.from_dict(f) for f in critic_intr]
+            ),
+            state_fields=(
+                None if state_own is None else [FieldRef.from_dict(f) for f in state_own]
+            ),
+            intruder_state_fields=(
+                None
+                if state_intr is None
+                else [FieldRef.from_dict(f) for f in state_intr]
             ),
             action_fields=[FieldRef.from_dict(f) for f in d.get("action_fields", [])],
             task_info_setup=str(d.get("task_info_setup", "")),

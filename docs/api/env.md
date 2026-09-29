@@ -69,6 +69,22 @@ raw["intruders"]["acid"][i]                  # its callsign
 context.raw_action["alt_delta_ft"]           # what the action field was set to, ft
 ```
 
+State fields are read the same way, but no agent observes them: list them in
+`EnvConfig.state_fields` / `intruder_state_fields`, and hooks read them by name,
+in raw values. Use them for what a reward, a done condition or an info needs but
+the policy must not depend on, whether actor or critic:
+
+```python
+config = EnvConfig(
+    obs_fields=[obs.CasKts()],
+    state_fields=[obs.AltFt()],                      # computed, never observed
+    intruder_state_fields=[obs.DistToOwnNm()],
+)
+context.state["ownship"]["alt_ft"]           # in a hook; env.raw_state(agent) outside
+context.state["intruders"]["dist_to_own_nm"][i]
+batch.state["ownship"]["alt_ft"]             # (n_agents,), in a batched hook
+```
+
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.core.step_values
    :members: RawObservation, StepValues

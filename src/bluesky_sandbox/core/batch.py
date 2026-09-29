@@ -40,8 +40,13 @@ class RawBatch(Mapping[str, Mapping[str, np.ndarray]]):
     """
 
     def __init__(
-        self, values: StepValues, parts: Mapping[str, Any], acidx: np.ndarray
+        self,
+        values: StepValues,
+        parts: Mapping[str, Any],
+        acidx: np.ndarray,
+        what: str = "observation",
     ) -> None:
+        self._what = what
         self._values = values
         self._parts = dict(parts)
         self._acidx = acidx
@@ -53,7 +58,7 @@ class RawBatch(Mapping[str, Mapping[str, np.ndarray]]):
         if built is None:
             if part not in self._parts:
                 raise KeyError(
-                    f"no observation part {part!r}; this environment has "
+                    f"no {self._what} part {part!r}; this environment has "
                     f"{sorted(self._parts)}"
                 )
             self._values.check_current(self._traffic)
@@ -68,7 +73,10 @@ class RawBatch(Mapping[str, Mapping[str, np.ndarray]]):
         return len(self._parts)
 
     def __repr__(self) -> str:
-        return f"RawBatch(parts={list(self._parts)}, agents={self._acidx.size})"
+        return (
+            f"RawBatch({self._what}, parts={list(self._parts)}, "
+            f"agents={self._acidx.size})"
+        )
 
     def _build(self, part: str, fields: Any) -> dict[str, np.ndarray]:
         names = unique_names_of(fields)
@@ -105,6 +113,7 @@ class StepBatch:
 
     ``obs`` holds the observations as the policy sees them, stacked per part;
     ``raw_obs`` the raw values by part and field name (:class:`RawBatch`);
+    ``state`` the state fields' the same way - computed, never observed;
     ``raw_action`` each action field's value by name, NaN for an agent given no
     action (``has_action``). ``terminated`` and ``truncated`` are filled in
     once decided, for ``reward_batch`` and ``cost_batch``. ``query(name)`` reads a queryable for
@@ -115,6 +124,7 @@ class StepBatch:
     acidx: np.ndarray
     obs: dict[str, np.ndarray]
     raw_obs: Annotated[RawBatch, DesignKeys("observation", batched=True)]
+    state: Annotated[RawBatch, DesignKeys("state", batched=True)]
     raw_action: Annotated[dict[str, np.ndarray], DesignKeys("action", batched=True)]
     has_action: np.ndarray
     intruder_idx: np.ndarray

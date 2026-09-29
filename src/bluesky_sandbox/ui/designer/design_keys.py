@@ -1,7 +1,7 @@
 """The keys a design fixes, for what reads a ``DesignKeys`` annotation.
 
 A ``DesignKeys`` marker says where a value's keys come from - the observation's
-parts and fields, the action fields, the queryables. :func:`design_keys` lists
+parts and fields, the state's, the action fields, the queryables. :func:`design_keys` lists
 them for one design: each key's name, the type of its value, a one-line detail
 and a doc. The code editor (``code_intel``) and the generated package's types
 (``typed_api``) are both built from this, so they cannot disagree.
@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 
 from bluesky_sandbox.config import EnvConfig
-from bluesky_sandbox.core.layout import observation_parts
+from bluesky_sandbox.core.layout import observation_parts, state_parts
 from bluesky_sandbox.core.step_values import ACID, unique_names_of
 from bluesky_sandbox.interface.fields.base import ActionKind
 from bluesky_sandbox.interface.task import DesignKeys
@@ -47,8 +47,18 @@ def design_keys(marker: DesignKeys, config: EnvConfig, support: Any) -> list[Key
 
 
 def _observation(batched: bool, config: EnvConfig, _support: Any) -> list[Key]:
+    return _parts(observation_parts(config), batched)
+
+
+def _state(batched: bool, config: EnvConfig, _support: Any) -> list[Key]:
+    return _parts(state_parts(config), batched)
+
+
+def _parts(parts_fields: dict[str, list[Any]], batched: bool) -> list[Key]:
+    """Each part as a key holding its fields' keys - an intruder part's first
+    its rows' callsigns."""
     parts = []
-    for part, fields in observation_parts(config).items():
+    for part, fields in parts_fields.items():
         per_intruder = part.endswith("intruders")
         keys = [
             _field_key(name, f, batched, per_intruder)
@@ -91,6 +101,7 @@ def _queryable_result(batched: bool, _config: EnvConfig, support: Any) -> list[K
 
 _SOURCES = {
     "observation": _observation,
+    "state": _state,
     "action": _action,
     "queryable": _queryable,
     "queryable_result": _queryable_result,

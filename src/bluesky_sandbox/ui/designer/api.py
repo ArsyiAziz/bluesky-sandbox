@@ -85,6 +85,10 @@ def _spec_summary(spec: DesignSpec) -> dict[str, Any]:
             if cfg.critic_intruder_obs_fields is None
             else [f.meta.name for f in cfg.critic_intruder_obs_fields]
         ),
+        "state_fields": [f.meta.name for f in cfg.state_fields or ()],
+        "intruder_state_fields": [
+            f.meta.name for f in cfg.intruder_state_fields or ()
+        ],
         "action_fields": [f.meta.name for f in cfg.action_fields],
         "allowed_aircraft": list(cfg.allowed_aircraft),
         "max_aircraft": spec_max_aircraft(spec),
