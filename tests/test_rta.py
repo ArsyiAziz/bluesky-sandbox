@@ -8,6 +8,7 @@ aircraft adjusts its speed to be over the fix on time, early or late alike.
 from __future__ import annotations
 
 import bluesky as bs
+from bluesky.tools.aero import kts
 import numpy as np
 import pytest
 from bluesky.tools.geo import kwikqdrdist
@@ -16,6 +17,7 @@ from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as act
 from bluesky_sandbox.interface.fields import observations as obs
+from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
 from bluesky_sandbox.sim.queryables import Waypoint
 from bluesky_sandbox.sim.scenario import EpisodeSpec
@@ -130,5 +132,50 @@ def test_lateness_the_speed_range_cannot_recover_reads_above_zero():
             observations, *_ = env.step({agent: np.array([0.0], np.float32)})
         error, absorb, unrecoverable = observations[agent]
         assert error > 0.0 and unrecoverable > 0.0 and absorb == 0.0
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize(
+    ("slow_steps", "overdue"),
+    [(30, False), (140, True)],
+    ids=["late, time still ahead", "past its time, fix still ahead"],
+)
+def test_resuming_own_navigation_late_flies_the_on_time_speed_not_the_old_one(
+    slow_steps, overdue
+):
+    env = BlueskyEnv(
+        scenario=_Scenario(0.0),
+        config=EnvConfig(
+            dt=5.0,
+            obs_fields=_FIELDS,
+            action_fields=[act.CommBroadcast()],  # leaves the aircraft alone
+            fly_arrival_times=True,
+        ),
+    )
+    try:
+        observations, _ = env.reset(seed=0)
+        (agent,) = observations
+
+        def step():
+            env.step({agent: np.array([0.0], np.float32)})
+
+        bs.stack.stack(f"VNAV {agent} ON")
+        step()
+        initial_kts = float(bs.traf.cas[bs.traf.id.index(agent)]) / kts
+        bs.stack.stack(f"SPD {agent} 150")  # a speed clearance: off RTA
+        for _ in range(slow_steps):
+            step()
+        i = bs.traf.id.index(agent)
+        time_left = float(obs.ActiveRouteWaypointTimeToGoS().get(i))
+        assert (time_left < 0.0) is overdue
+        bs.stack.stack(f"VNAV {agent} ON")  # resume own navigation
+        for _ in range(3):
+            step()
+        i = bs.traf.id.index(agent)
+        selected_kts = float(bs.traf.selspd[i]) / kts
+        assert selected_kts > initial_kts + 20.0  # catching up, not the old speed
+        if overdue:
+            assert selected_kts == pytest.approx(cas_ceiling_ms(i) / kts, abs=0.5)
     finally:
         env.close()

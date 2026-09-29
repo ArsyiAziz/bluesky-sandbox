@@ -62,6 +62,7 @@ from bluesky_sandbox.sim.queryables import (
     RegionCurrent,
     RegionResult,
 )
+from bluesky_sandbox.sim.arrival import hurry_overdue
 from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
 from bluesky_sandbox.sim.weather import WindField, wind_from_config
 from bluesky_sandbox.ui.drivers import FRAME_DRIVERS, RenderMode, get_driver_class
@@ -529,6 +530,11 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 values = self._action_dispatcher.denormalize(idx, action)
                 self._step_values.record_action(acid, raw_action_values(values))
                 applied[acid] = self._action_dispatcher.apply_values(idx, values)
+
+        # Own navigation meeting arrival times: BlueSky's RTA gives up on a
+        # fix whose time has passed, so an overdue aircraft flies flat out.
+        if self.config.fly_arrival_times:
+            hurry_overdue()
 
         # A steady field is applied once at reset; only a gusting one needs
         # pushing into BlueSky again each step.

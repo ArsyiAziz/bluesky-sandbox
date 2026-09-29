@@ -27,7 +27,7 @@ from bluesky.tools.geo import kwikqdrdist
 
 from bluesky_sandbox.sim.sampling.distributions import sample_scalar
 
-__all__ = ["arrival_times", "planned_legs"]
+__all__ = ["arrival_times", "hurry_overdue", "planned_legs"]
 
 # Floors that keep a division finite for an aircraft that is not moving or a
 # performance model that reports no rate; flying traffic never reaches them.
@@ -92,3 +92,28 @@ def arrival_times(
         out.append(t if slack is not None else None)
         lat, lon, alt_m = float(target.lat), float(target.lon), to_alt_m
     return tuple(out)
+
+
+def hurry_overdue() -> None:
+    """Fly every aircraft whose arrival time at its active fix has passed at
+    its maximum speed, while it is on VNAV speed and the fix has no speed gate.
+
+    BlueSky's RTA stops guiding speed once the time is past - it leaves the
+    last speed in place, which after a speed clearance is the cleared one - so
+    an overdue aircraft resumed onto own navigation would stay slow. Called by
+    the environment each step when own navigation meets arrival times.
+    """
+    from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms  # noqa: PLC0415
+
+    now = float(bs.sim.simt)
+    actwp = bs.traf.actwp
+    for idx in range(int(bs.traf.ntraf)):
+        if not (bs.traf.swvnavspd[idx] and actwp.spdcon[idx] < 0.0):
+            continue
+        route = bs.traf.ap.route[idx]
+        k = int(getattr(route, "iactwp", -1))
+        if not 0 <= k < len(route.wprta):
+            continue
+        due = float(route.wprta[k])
+        if 0.0 <= due <= now:
+            actwp.spd[idx] = float(cas_ceiling_ms(idx))
