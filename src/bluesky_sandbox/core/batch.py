@@ -111,21 +111,22 @@ def intruder_indices(acidx: np.ndarray) -> np.ndarray:
 class StepBatch:
     """This step for every controlled agent, stacked: index ``k`` is ``acids[k]``.
 
-    ``obs`` holds the observations as the policy sees them, stacked per part;
-    ``raw_obs`` the raw values by part and field name (:class:`RawBatch`);
-    ``state`` the state fields' the same way - computed, never observed;
-    ``raw_action`` each action field's value by name, NaN for an agent given no
-    action (``has_action``). ``terminated`` and ``truncated`` are filled in
+    ``obs``, ``state`` and ``action`` are the per-agent context's mappings,
+    stacked: the observation and the state fields by part and field name
+    (:class:`RawBatch`), and each action field's value by name, NaN for an
+    agent given no action (``has_action``) - all raw values.
+    ``policy_obs`` holds the observations as the policy sees them, stacked per
+    part. ``terminated`` and ``truncated`` are filled in
     once decided, for ``reward_batch`` and ``cost_batch``. ``query(name)`` reads a queryable for
     every agent at once; ``context(k)`` is agent ``k``'s per-agent context.
     """
 
     acids: tuple[str, ...]
     acidx: np.ndarray
-    obs: dict[str, np.ndarray]
-    raw_obs: Annotated[RawBatch, DesignKeys("observation", batched=True)]
+    obs: Annotated[RawBatch, DesignKeys("observation", batched=True)]
     state: Annotated[RawBatch, DesignKeys("state", batched=True)]
-    raw_action: Annotated[dict[str, np.ndarray], DesignKeys("action", batched=True)]
+    action: Annotated[dict[str, np.ndarray], DesignKeys("action", batched=True)]
+    policy_obs: dict[str, np.ndarray]
     has_action: np.ndarray
     intruder_idx: np.ndarray
     infos: list[dict[str, Any]]

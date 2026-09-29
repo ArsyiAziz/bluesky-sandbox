@@ -189,7 +189,7 @@ spawn / fields directly); editable helper modules such as `custom_fields.py`
 live in `spec.code`; `scenario.py` / `env.py` / `__main__.py` are read-only.
 Every code editor - hooks, task info, setup, custom code - completes, colors,
 explains on hover and shows the signature of what the code can use, following a
-chain one step at a time: `context.raw_obs["intruders"]["dist_to_own_nm"]`,
+chain one step at a time: `context.obs["intruders"]["dist_to_own_nm"]`,
 `context.query("goal").current`, or a name assigned from one. It is read from the
 code, not listed: types from annotations, each block's names from what runs
 there (a hook's signature, the setup module, a custom module), and the keys a

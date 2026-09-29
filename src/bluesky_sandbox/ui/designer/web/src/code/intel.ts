@@ -2,7 +2,7 @@
 //
 // The backend (ui/designer/code_intel.py) describes types, each code block's
 // scope, and the keys the design fixes - all by introspection. This resolves an
-// expression chain - `context.raw_obs["intruders"]["acid"]`, `goal.current` after
+// expression chain - `context.obs["intruders"]["acid"]`, `goal.current` after
 // `goal = context.query("goal")` - one step at a time against that description.
 // Nothing here knows a member by name.
 
@@ -330,7 +330,7 @@ function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// The text of a chain, for titles: `context.raw_obs["intruders"]`.
+// The text of a chain, for titles: `context.obs["intruders"]`.
 export function chainText(chain: Chain, upTo = chain.steps.length): string {
   let text = chain.root.text;
   for (const step of chain.steps.slice(0, upTo)) {

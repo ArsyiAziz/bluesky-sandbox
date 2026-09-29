@@ -2,7 +2,7 @@
 
 Types come from annotations, each block's names from what runs there, and the
 keys a design fixes from ``DesignKeys`` markers - so the editor completes
-``context.raw_obs["intruders"]["acid"]`` and ``context.query("wp").current``
+``context.obs["intruders"]["acid"]`` and ``context.query("wp").current``
 without the designer naming any of them.
 """
 
@@ -94,7 +94,7 @@ def test_hooks_and_task_info_share_the_setup_modules_names(intel):
 
 
 def test_raw_observation_keys_come_from_the_design(intel):
-    raw_obs = _attr(intel, _context(intel), "raw_obs")["type"]
+    raw_obs = _attr(intel, _context(intel), "obs")["type"]
     parts = {m["name"]: m["type"] for m in _type(intel, raw_obs)["items"]}
     assert list(parts) == ["ownship", "intruders"]
     ownship = {m["name"]: m for m in _type(intel, parts["ownship"])["items"]}
@@ -105,9 +105,9 @@ def test_raw_observation_keys_come_from_the_design(intel):
     assert intruders == ["acid", "dist_to_own_nm"]
 
 
-def test_raw_action_keys_come_from_the_design(intel):
-    raw_action = _attr(intel, _context(intel), "raw_action")["type"]
-    assert [m["name"] for m in _type(intel, raw_action)["items"]] == [
+def test_action_keys_come_from_the_design(intel):
+    action = _attr(intel, _context(intel), "action")["type"]
+    assert [m["name"] for m in _type(intel, action)["items"]] == [
         "hdg_deg",
         "spd_kts",
     ]
@@ -137,7 +137,7 @@ def test_a_type_checking_import_resolves(intel):
 
 def test_a_batched_hook_sees_stacked_shapes(intel):
     batch = _param(intel, "hook:reward_batch", "batch")["type"]
-    raw_obs = _attr(intel, batch, "raw_obs")["type"]
+    raw_obs = _attr(intel, batch, "obs")["type"]
     intruders = next(
         m for m in _type(intel, raw_obs)["items"] if m["name"] == "intruders"
     )

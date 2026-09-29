@@ -1,7 +1,7 @@
 """A generated task's types: its design's keys, checked by a type checker.
 
 ``task_types.py`` types the context and the step batch for the design, and the
-hooks are annotated with them - so an editor completes ``context.raw_obs
+hooks are annotated with them - so an editor completes ``context.obs
 ["ownship"]["alt_ft"]`` and a type checker flags a key the design lacks.
 """
 
@@ -32,7 +32,7 @@ def package(tmp_path_factory):
 
 def test_the_package_has_its_types(package):
     source = (package / "typed_pkg" / "task_types.py").read_text()
-    assert "class RawObsOwnship(TypedDict):" in source
+    assert "class ObsOwnship(TypedDict):" in source
     assert "    alt_ft: float" in source
     assert "def query(self, name: Literal['wp']) -> WaypointResult: ..." in source
     assert "class TaskAgentStepContext(AgentStepContext):" in source
@@ -57,14 +57,14 @@ def test_a_type_checker_reads_the_design_keys(package, monkeypatch):
             from typed_pkg.task_types import TaskAgentStepContext, TaskStepBatch
 
             def per_agent(context: TaskAgentStepContext) -> None:
-                reveal_type(context.raw_obs["ownship"]["alt_ft"])
-                reveal_type(context.raw_obs["intruders"]["acid"])
+                reveal_type(context.obs["ownship"]["alt_ft"])
+                reveal_type(context.obs["intruders"]["acid"])
                 reveal_type(context.query("wp").current.distance_nm)
-                context.raw_obs["ownship"]["alt_fx"]
+                context.obs["ownship"]["alt_fx"]
                 context.query("nope")
 
             def batched(batch: TaskStepBatch) -> None:
-                reveal_type(batch.raw_obs["ownship"]["alt_ft"])
+                reveal_type(batch.obs["ownship"]["alt_ft"])
                 reveal_type(batch.context(0))
             """
         )

@@ -43,6 +43,6 @@ demo_task/
 
 The hooks in `env.py` and the task-info functions in `setup.py` are annotated
 with the types in `task_types.py`, generated from the design: an editor that
-reads annotations (VS Code, PyCharm) completes `context.raw_obs["ownship"]["alt_ft"]`
+reads annotations (VS Code, PyCharm) completes `context.obs["ownship"]["alt_ft"]`
 or `context.query("goal")`, and a type checker flags a key the design does not
 have. They are for editors only - nothing in them runs.

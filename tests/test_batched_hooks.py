@@ -39,10 +39,10 @@ class _Empty:
 
 class _PerAgent(BlueskyEnv):
     def reward(self, _obs, _action, _term, _trunc, context, _info, _rng):
-        return context.raw_obs["ownship"]["alt_ft"] / 1_000.0
+        return context.obs["ownship"]["alt_ft"] / 1_000.0
 
     def terminated(self, _obs, _action, context, _info, _rng):
-        return context.raw_obs["ownship"]["alt_ft"] > _CEILING_FT
+        return context.obs["ownship"]["alt_ft"] > _CEILING_FT
 
 
 class _Batched(BlueskyEnv):
@@ -56,16 +56,16 @@ class _Batched(BlueskyEnv):
         # Read during the step: the aircraft that terminate are gone after it.
         self.seen["env_raw"] = {a: self.raw_observation(a) for a in batch.acids}
         self.seen["intruders"] = {
-            key: batch.raw_obs["intruders"][key] for key in ("acid", "dist_to_own_nm")
+            key: batch.obs["intruders"][key] for key in ("acid", "dist_to_own_nm")
         }
         self.seen["env_intruders"] = {
             a: dict(raw["intruders"]) for a, raw in self.seen["env_raw"].items()
         }
-        return batch.raw_obs["ownship"]["alt_ft"] / 1_000.0
+        return batch.obs["ownship"]["alt_ft"] / 1_000.0
 
     def terminated_batch(self, batch):
         self.batches.append(batch)
-        return batch.raw_obs["ownship"]["alt_ft"] > _CEILING_FT
+        return batch.obs["ownship"]["alt_ft"] > _CEILING_FT
 
 
 def _make(cls, **config):
@@ -141,8 +141,8 @@ def test_the_batch_stacks_each_agents_view(batched):
     batch = env.batches[-1]
     assert batch.acids == tuple(agents) and len(batch) == len(agents)
     n = len(agents)
-    assert batch.obs["ownship"].shape == (n, 2)
-    assert batch.obs["intruders"].shape == (n, n - 1, 2)
+    assert batch.policy_obs["ownship"].shape == (n, 2)
+    assert batch.policy_obs["intruders"].shape == (n, n - 1, 2)
     for k, acid in enumerate(agents):
         env_view = env.seen["env_intruders"][acid]
         assert list(env.seen["intruders"]["acid"][k]) == list(env_view["acid"])
@@ -156,8 +156,8 @@ def test_an_agent_given_no_action_is_nan_in_the_raw_action(batched):
     env, _agents, _terminations = batched
     batch = env.batches[-1]
     assert list(batch.has_action) == [True, True, True, False]
-    assert np.allclose(batch.raw_action["hdg_delta_deg"][:3], 5.0)
-    assert np.isnan(batch.raw_action["hdg_delta_deg"][3])
+    assert np.allclose(batch.action["hdg_delta_deg"][:3], 5.0)
+    assert np.isnan(batch.action["hdg_delta_deg"][3])
 
 
 def test_raw_values_kept_past_their_step_refuse_to_build():
@@ -184,7 +184,7 @@ def test_a_batched_task_info_provider_is_called_once_per_step():
 
         def __call__(self, batch):
             calls.append(len(batch))
-            for info, alt in zip(batch.infos, batch.raw_obs["ownship"]["alt_ft"]):
+            for info, alt in zip(batch.infos, batch.obs["ownship"]["alt_ft"]):
                 info["task"]["alt_ft"] = float(alt)
 
     env = _make(_PerAgent, task_info_providers=[Provider()])

@@ -2,7 +2,7 @@
 
 ``state_fields`` / ``intruder_state_fields`` are read in hooks as
 ``context.state`` (``batch.state`` batched), by part and field name in raw
-values - exactly as ``raw_obs`` reads the observation - but no observation, of
+values - exactly as ``obs`` reads the observation - but no observation, of
 actor or critic, carries them.
 """
 

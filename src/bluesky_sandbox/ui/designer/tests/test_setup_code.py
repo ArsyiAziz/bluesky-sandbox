@@ -122,7 +122,7 @@ def test_an_error_names_its_block_and_line(design, where):
 def _batched_design() -> S.DesignSpec:
     design = _design(hook_setup="import numpy as np")
     design.env.hooks["reward_batch"] = (
-        'return batch.raw_obs["ownship"]["alt_ft"] * 0.0 + len(batch)'
+        'return batch.obs["ownship"]["alt_ft"] * 0.0 + len(batch)'
     )
     return design
 

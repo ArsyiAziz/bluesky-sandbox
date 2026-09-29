@@ -253,7 +253,7 @@ class ConflictView:
 
     Exposed as ``context.conflicts``. Per-intruder arrays are aligned to *all*
     other live aircraft (``bs.traf`` order excluding self) - the same ordering as
-    ``context.intruder_values`` and the obs intruder block. All reductions are
+    ``context.obs["intruders"]`` and the obs intruder block. All reductions are
     safe when the agent is alone (return ``inf`` / empty arrays).
     """
 

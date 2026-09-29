@@ -11,7 +11,7 @@ this returns. Nothing here names a library member:
   setup module the builder runs, a custom code module.
 
 ``types`` maps a key to ``{"doc", "attrs", "items"}``; a member names its
-``type`` by key, so the editor resolves ``context.raw_obs["intruders"]["acid"]``
+``type`` by key, so the editor resolves ``context.obs["intruders"]["acid"]``
 one step at a time. ``scopes`` maps each code block to its ``params`` and the
 key of its ``names`` in ``names`` - blocks sharing a module share one list.
 """

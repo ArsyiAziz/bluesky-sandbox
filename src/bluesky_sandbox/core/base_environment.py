@@ -784,19 +784,19 @@ class BlueskyBaseEnvironment(ParallelEnv):
             return self._batch
         index = self._live_agent_index()
         acidx = np.array([index[acid] for acid in agent_ids], dtype=np.intp)
-        raw_action, has_action = stack_actions(
+        action, has_action = stack_actions(
             unique_names_of(self.config.action_fields),
             [self._step_values.action(acid) for acid in agent_ids],
         )
         self._batch = StepBatch(
             acids=tuple(agent_ids),
             acidx=acidx,
-            obs=stack_observations([observations[acid] for acid in agent_ids]),
-            raw_obs=RawBatch(self._step_values, self._observation_parts(), acidx),
+            policy_obs=stack_observations([observations[acid] for acid in agent_ids]),
+            obs=RawBatch(self._step_values, self._observation_parts(), acidx),
             state=RawBatch(
                 self._step_values, state_parts(self.config), acidx, what="state"
             ),
-            raw_action=raw_action,
+            action=action,
             has_action=has_action,
             intruder_idx=intruder_indices(acidx),
             infos=[infos[acid] for acid in agent_ids],
@@ -990,10 +990,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
             data=self._hooks.define_agent_context(acid, acidx),
             queryables=self.episode_queryables,
             query_state=self._query_state_monitor,
-            raw_obs=self._raw_observation(acidx),
+            obs=self._raw_observation(acidx),
             state=self._raw_state(acidx),
-            raw_action=self._step_values.action(acid),
-            _step_values=self._step_values,
+            action=self._step_values.action(acid),
             airspace=self._build_airspace_context(acidx),
             separation=self._traffic_monitor.build_separation_context(acid, acidx),
         )

@@ -58,31 +58,33 @@ process, say.
 
 ## `bluesky_sandbox.core.step_values`
 
-Raw (unnormalized) values, by field name, from the arrays the observation is
-built from - so reading them costs no recomputation:
+A hook's context holds three mappings, by name and in raw (unnormalized)
+values - each field's own unit, not what the policy sees. They read the arrays
+the observation is built from, so reading them costs no recomputation:
 
 ```python
-raw = context.raw_obs                        # in a hook; env.raw_observation(agent) outside
-raw["ownship"]["alt_ft"]                     # 12000.0, in the field's unit
-raw["intruders"]["dist_to_own_nm"][i]        # intruder i: row i of obs["intruders"]
-raw["intruders"]["acid"][i]                  # its callsign
-context.raw_action["alt_delta_ft"]           # what the action field was set to, ft
+context.obs["ownship"]["alt_ft"]                  # 12000.0, in the field's unit
+context.obs["intruders"]["dist_to_own_nm"][i]     # intruder i: row i of the observation's
+context.obs["intruders"]["acid"][i]               # its callsign
+context.state["ownship"]["alt_ft"]                # a state field: computed, never observed
+context.action["alt_delta_ft"]                    # what the action field was set to, ft
 ```
 
-State fields are read the same way, but no agent observes them: list them in
-`EnvConfig.state_fields` / `intruder_state_fields`, and hooks read them by name,
-in raw values. Use them for what a reward, a done condition or an info needs but
-the policy must not depend on, whether actor or critic:
+A batched hook has the same three, stacked over agents (`batch.obs`,
+`batch.state`, `batch.action`), and `batch.policy_obs` for the observations as
+the policy sees them. Outside a hook, `env.raw_observation(agent)`,
+`env.raw_state(agent)` and `env.raw_action(agent)` give one agent's.
+
+State fields are listed in `EnvConfig.state_fields` / `intruder_state_fields`.
+No agent observes them, actor or critic: they are for what a reward, a done
+condition or an info needs but the policy must not depend on.
 
 ```python
 config = EnvConfig(
     obs_fields=[obs.CasKts()],
-    state_fields=[obs.AltFt()],                      # computed, never observed
+    state_fields=[obs.AltFt()],
     intruder_state_fields=[obs.DistToOwnNm()],
 )
-context.state["ownship"]["alt_ft"]           # in a hook; env.raw_state(agent) outside
-context.state["intruders"]["dist_to_own_nm"][i]
-batch.state["ownship"]["alt_ft"]             # (n_agents,), in a batched hook
 ```
 
 ```{eval-rst}
@@ -108,15 +110,15 @@ class MyEnv(BlueskyEnv):
         return np.array([progress(context), -effort(action)])   # two components
 
     def cost_batch(self, batch):                # (n_agents, 2): one column per constraint
-        dist = batch.raw_obs["intruders"]["dist_to_own_nm"]
+        dist = batch.obs["intruders"]["dist_to_own_nm"]
         return np.stack([(dist < 5.0).any(axis=1), (dist < 10.0).sum(axis=1)], axis=1)
 ```
 
 ```python
 class MyEnv(BlueskyEnv):
     def reward_batch(self, batch):              # one value per batch.acids
-        alt_err = batch.raw_obs["ownship"]["active_route_waypoint_alt_diff_ft"]   # (n_agents,)
-        close = batch.raw_obs["intruders"]["dist_to_own_nm"] < 5.0                 # (n_agents, n_intruders)
+        alt_err = batch.obs["ownship"]["active_route_waypoint_alt_diff_ft"]   # (n_agents,)
+        close = batch.obs["intruders"]["dist_to_own_nm"] < 5.0                 # (n_agents, n_intruders)
         return -np.abs(alt_err) / 1000.0 - close.sum(axis=1)
 ```
 

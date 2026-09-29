@@ -563,7 +563,7 @@ def _hook_default(fn) -> str | None:
 _HOOK_SCAFFOLDS: dict[str, str] = {
     "reward_batch": (
         "# Every agent's reward at once, one per batch.acids, in that order.\n"
-        "# batch.raw_obs[\"ownship\"][name] is (n_agents,); batch.raw_obs[\"intruders\"]\n"
+        "# batch.obs[\"ownship\"][name] is (n_agents,); batch.obs[\"intruders\"]\n"
         "# [name] is (n_agents, n_intruders). batch.terminated / .truncated are set.\n"
         "# Replaces reward: a design defines one of the two.\n"
         "return [0.0] * len(batch)"

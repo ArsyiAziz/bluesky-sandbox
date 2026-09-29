@@ -16,7 +16,7 @@ from test_batched_hooks import _actions, _make, _spawn
 
 
 def _alt(context):
-    return context.raw_obs["ownship"]["alt_ft"]
+    return context.obs["ownship"]["alt_ft"]
 
 
 class _VectorPerAgent(BlueskyEnv):
@@ -29,11 +29,11 @@ class _VectorPerAgent(BlueskyEnv):
 
 class _VectorBatched(BlueskyEnv):
     def reward_batch(self, batch):
-        alt = batch.raw_obs["ownship"]["alt_ft"]
+        alt = batch.obs["ownship"]["alt_ft"]
         return np.stack([alt / 1_000.0, -np.ones_like(alt)], axis=1)
 
     def cost_batch(self, batch):
-        alt = batch.raw_obs["ownship"]["alt_ft"]
+        alt = batch.obs["ownship"]["alt_ft"]
         return np.stack([alt > 12_000.0, np.full_like(alt, 0.5)], axis=1)
 
 

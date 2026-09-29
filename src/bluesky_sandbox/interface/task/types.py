@@ -272,13 +272,19 @@ class DesignKeys:
 class AgentStepContext:
     """Agent-bound task/development context for the current step.
 
-    ``raw_obs`` is this aircraft's observation in raw values, by part and field
-    name - ``raw_obs["ownship"]["alt_ft"]``, ``raw_obs["intruders"]
-    ["dist_to_own_nm"][i]`` for intruder row ``i``, ``raw_obs["intruders"]
-    ["acid"][i]`` its callsign. ``state`` is its state fields the same way:
-    computed every step like the observation, but seen by no agent.
-    ``raw_action`` is the action it was given this step, as the value each
-    action field was set to. All read the values the step already computed.
+    Three mappings, by name and in raw values - each field's own unit, not
+    what the policy sees:
+
+    - ``obs``: this aircraft's observation, by part and field name -
+      ``obs["ownship"]["alt_ft"]``, ``obs["intruders"]["dist_to_own_nm"][i]``
+      for intruder row ``i``, ``obs["intruders"]["acid"][i]`` its callsign.
+    - ``state``: its state fields the same way - computed every step like the
+      observation, but seen by no agent. A value a hook needs and no agent
+      observes goes here.
+    - ``action``: the action it was given this step, as the value each action
+      field was set to.
+
+    All read the values the step already computed.
     """
 
     acid: str
@@ -288,20 +294,16 @@ class AgentStepContext:
     query_state: Any = field(default=None, repr=False)
     airspace: RegionResult | None = field(default=None, repr=False)
     separation: SeparationContext = field(default_factory=SeparationContext)
-    raw_obs: Annotated[
-        Mapping[str, Mapping[str, Any]], DesignKeys("observation")
-    ] = field(default_factory=dict, repr=False)
+    obs: Annotated[Mapping[str, Mapping[str, Any]], DesignKeys("observation")] = (
+        field(default_factory=dict, repr=False)
+    )
     state: Annotated[Mapping[str, Mapping[str, Any]], DesignKeys("state")] = field(
         default_factory=dict, repr=False
     )
-    raw_action: Annotated[Mapping[str, Any], DesignKeys("action")] = field(
+    action: Annotated[Mapping[str, Any], DesignKeys("action")] = field(
         default_factory=dict, repr=False
     )
-    # The step's shared raw values (core.step_values.StepValues), when the
-    # environment built this context; own_value / intruder_values read them.
-    _step_values: Any = field(default=None, repr=False)
     _query_result_cache: dict[str, Any] = field(default_factory=dict, repr=False)
-    _obs_value_cache: dict[int, Any] = field(default_factory=dict, repr=False)
 
     def queryable(self, name: Annotated[str, DesignKeys("queryable")]) -> Any:
         try:
@@ -335,51 +337,6 @@ class AgentStepContext:
             result = queryable.result_type.for_aircraft(queryable, self.acidx)
         self._query_result_cache[name] = result
         return result
-
-    def own_value(self, field: Any) -> Any:
-        """Raw (un-normalized) value of an ownship obs ``field`` for this agent.
-
-        Reads the field's own getter, bypassing the policy's normalizers/ordering
-        - use this in cost/reward code instead of slicing the observation vector.
-        Computed lazily and cached for the step.
-        """
-        if self._step_values is not None:
-            value = np.asarray(self._step_values.values(field)[self.acidx])
-            return value.item() if value.ndim == 0 else value
-        key = id(field)
-        cached = self._obs_value_cache.get(key)
-        if cached is not None:
-            return cached
-        value = field.get(self.acidx)
-        self._obs_value_cache[key] = value
-        return value
-
-    def intruder_values(self, field: Any) -> np.ndarray:
-        """Raw (un-normalized) values of a pair obs ``field`` over **all** other
-        live aircraft (global - independent of the policy's intruder selection).
-
-        Computed lazily and cached for the step, so repeated reads of the same
-        field are free. Returns an empty array when the agent is alone.
-        """
-        others = tuple(i for i in range(bs.traf.ntraf) if i != self.acidx)
-        if self._step_values is not None:
-            if not others:
-                return np.empty(0, dtype=np.float64)
-            row = self._step_values.pair_row(
-                field, self.acidx, lambda: np.array([self.acidx], dtype=np.intp)
-            )
-            return np.asarray(row, dtype=np.float64)[list(others)]
-        key = id(field)
-        cached = self._obs_value_cache.get(key)
-        if cached is not None:
-            return cached
-        values = (
-            np.empty(0, dtype=np.float64)
-            if not others
-            else np.asarray(field.get_pairs(self.acidx, others), dtype=np.float64)
-        )
-        self._obs_value_cache[key] = values
-        return values
 
 
 class BaseAgentInfo(TypedDict):

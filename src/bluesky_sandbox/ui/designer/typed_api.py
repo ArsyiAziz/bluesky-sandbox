@@ -5,7 +5,7 @@ has ``DesignKeys`` members - the step context, the step batch - a subclass typed
 for this design. Its members that hold design keys become ``TypedDict``s of
 those keys; a method taking a key gets one overload per key, returning what that
 key gives. The hooks and task-info functions are annotated with them, so
-``context.raw_obs["ownship"]["alt_ft"]`` completes, hovers and is checked in any
+``context.obs["ownship"]["alt_ft"]`` completes, hovers and is checked in any
 editor that reads annotations. Nothing here runs: the annotations are strings,
 and the objects a hook receives are the library's own.
 

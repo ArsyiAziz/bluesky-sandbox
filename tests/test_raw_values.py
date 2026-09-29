@@ -1,6 +1,6 @@
 """Raw observation and action values, read by name, computed once per step.
 
-``context.raw_obs`` / ``env.raw_observation(agent)`` give an aircraft's
+``context.obs`` / ``env.raw_observation(agent)`` give an aircraft's
 observation in each field's own unit - ``raw["ownship"]["alt_ft"]``,
 ``raw["intruders"]["dist_to_own_nm"][i]`` for intruder row ``i`` - and
 ``raw_action`` the value each action field was set to. They read the arrays the
@@ -49,8 +49,8 @@ class _RecordingEnv(BlueskyEnv):
 
     def reward(self, _obs, _action, _terminated, _truncated, context, _info, _rng):
         self.seen[context.acid] = (
-            context.raw_obs["ownship"]["alt_ft"],
-            dict(context.raw_action),
+            context.obs["ownship"]["alt_ft"],
+            dict(context.action),
         )
         return 0.0
 

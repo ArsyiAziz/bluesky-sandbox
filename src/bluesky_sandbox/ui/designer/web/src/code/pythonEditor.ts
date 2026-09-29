@@ -157,7 +157,7 @@ class SemanticTokens {
 }
 
 // --------------------------------------------------------------- markers --
-// A design key that is not one: `raw_obs["ownship"]["alt_fx"]`. Only keys the
+// A design key that is not one: `obs["ownship"]["alt_fx"]`. Only keys the
 // design fixes are checked - their sets are closed; `info["task"]` is yours.
 function keyProblems(resolver: Resolver, lines: string[]): any[] {
   const markers: any[] = [];
