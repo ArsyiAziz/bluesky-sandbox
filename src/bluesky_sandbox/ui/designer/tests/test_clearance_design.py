@@ -14,8 +14,16 @@ from .test_designer import _example_design_spec
 def _with_clearance() -> S.DesignSpec:
     spec = _example_design_spec()
     heading, speed = spec.env.action_fields
-    heading.clearance = {"duration": [0, 600], "lock": "duration", "observe": True}
-    speed.clearance = {"duration": None, "lock": None, "observe": False}
+    heading.clearance = {
+        "duration": [0, 600],
+        "lock": "duration",
+        "duration_normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {"clipped": True},
+        },
+    }
+    speed.clearance = {"duration": None, "lock": None}
     return spec
 
 
@@ -38,14 +46,17 @@ def test_a_clearance_builds_into_its_parts():
     ]
     masks = [f for f in config.action_fields if isinstance(f, act.ActionMask)]
     assert masks[0].lock_for_duration and not masks[1].lock_for_duration
+    assert type(config.action_fields[1].normalizer).__name__ == "MinMaxNormalizer"
+    # Nothing added to the observation.
     names = [f.meta.name for f in config.obs_fields]
-    assert names[-2:] == ["action_locked", "clearance_time_left_s"]
+    assert "action_locked" not in names and "clearance_time_left_s" not in names
 
 
 def test_a_clearance_is_generated_as_one():
     files = codegen.generate_task(_with_clearance(), "Cleared")
     config = next(t for p, t in files.items() if p.endswith("config.py"))
     assert (
-        "act.Clearance(act.HdgDeg(), duration=(0.0, 600.0), lock='duration')" in config
+        "act.Clearance(act.HdgDeg(), duration=(0.0, 600.0), lock='duration', "
+        "duration_normalizer=MinMaxNormalizer(clipped=True))" in config
     )
-    assert "act.Clearance(act.SpdKts(" in config and "observe=False)" in config
+    assert "act.Clearance(act.SpdKts(" in config

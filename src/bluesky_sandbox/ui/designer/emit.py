@@ -387,8 +387,9 @@ class _Emitter:
                 parts.append(f"duration=({float(duration[0])!r}, {float(duration[1])!r})")
             if ref.clearance.get("lock") is not None:
                 parts.append(f"lock={ref.clearance['lock']!r}")
-            if not ref.clearance.get("observe", True):
-                parts.append("observe=False")
+            if ref.clearance.get("duration_normalizer") is not None:
+                normalizer = self.field_kwarg(ref.clearance["duration_normalizer"])
+                parts.append(f"duration_normalizer={normalizer}")
             expr = f"act.Clearance({', '.join(parts)})"
         return expr
 

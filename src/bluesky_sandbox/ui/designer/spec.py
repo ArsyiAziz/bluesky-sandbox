@@ -840,7 +840,7 @@ class FieldRef:
 
     ``clearance``, on an action, makes it an ``actions.Clearance``:
     ``{"duration": [low, high] | None, "lock": "duration" | "captured" | None,
-    "observe": bool}``.
+    "duration_normalizer": normalizer spec | None}``.
     """
 
     name: str

@@ -315,7 +315,9 @@ def resolve_action_field(ref: FieldRef) -> ActionField | Clearance:
             field_obj,
             duration=None if duration is None else tuple(duration),
             lock=ref.clearance.get("lock"),
-            observe=bool(ref.clearance.get("observe", True)),
+            duration_normalizer=_resolve_normalizer(
+                ref.clearance.get("duration_normalizer")
+            ),
         )
     except (TypeError, ValueError) as e:
         raise BuildError(f"clearance on {ref.name!r}: {e}") from e

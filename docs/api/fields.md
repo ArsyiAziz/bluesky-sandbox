@@ -194,7 +194,21 @@ action_fields = [
 - **The mask** (`ActionMask`): a step the policy says nothing, the aircraft flies on what it was last given - its route on LNAV+VNAV, or the clearance.
 - **`duration=(low, high)`** (`ClearanceDuration`): the policy chooses how long, in seconds; when it runs out, own navigation takes the axis back - fully (LNAV+VNAV, and any RTA) once no axis is under a clearance. An explored clearance can never strand an aircraft.
 - **`lock`**: `"duration"` accepts nothing else on the axis - resuming included - until it runs out, so a vector is flown, not just turned; `"captured"` only until the command is flown.
-- **`observe`** (on by default) adds whether the axis is locked (`ActionLocked`) and the time left (`ClearanceTimeLeftS`) to the ownship observation.
+- **`duration_normalizer`** scales the duration in the action space, like any action's normalizer.
+
+What the policy observes of a clearance is the design's choice, like any observation - add `obs.ActionLocked(target=...)` (whether the axis is locked) and `obs.ClearanceTimeLeftS(target=...)` (time left) with the normalizers you want:
+
+```python
+obs_fields = [
+    ...,
+    obs.ActionLocked(target=actions.ActiveRouteWaypointHdgDeltaDeg),
+    obs.ClearanceTimeLeftS(
+        target=actions.ActiveRouteWaypointHdgDeltaDeg,
+        high=600,
+        normalizer=MinMaxNormalizer(clipped=True),
+    ),
+]
+```
 
 `obs.ApLnavOn` / `obs.ApLnavVnavOn` tell the policy whether it flies its own navigation. With a mask configured, `info["action_applied"]` says which values took effect. The parts can be declared by hand too:
 

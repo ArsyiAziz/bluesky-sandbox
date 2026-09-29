@@ -598,6 +598,7 @@ function FieldConfigModal({
 
             {kind === "action" && (
               <ClearanceControls
+                normalizers={normalizers}
                 value={field.clearance ?? null}
                 onChange={(clearance) => {
                   const next = { ...field };
@@ -1091,12 +1092,15 @@ function updateCustomFieldSource(
 // An action as a clearance (actions.Clearance): the policy gives it when it
 // decides to - its mask - for a duration it chooses, after which own navigation
 // takes the axis back; the lock sets how long nothing else is accepted on the
-// axis. The environment adds the observations (locked, time left).
+// axis. What the policy observes of it (ActionLocked, ClearanceTimeLeftS) is
+// added like any other observation.
 function ClearanceControls({
   value,
+  normalizers,
   onChange,
 }: {
   value: SpecDict | null;
+  normalizers: FieldOption[];
   onChange: (value: SpecDict | null) => void;
 }) {
   const duration: [number, number] | null = Array.isArray(value?.duration)
@@ -1104,14 +1108,18 @@ function ClearanceControls({
     : null;
   const set = (patch: SpecDict) => {
     const next: SpecDict = { ...(value ?? {}), ...patch };
-    if (next.lock === "duration" && !Array.isArray(next.duration)) next.lock = null;
+    if (!Array.isArray(next.duration)) {
+      if (next.lock === "duration") next.lock = null;
+      delete next.duration_normalizer;
+    }
     onChange(next);
   };
+  const normalizer: SpecDict | null = value?.duration_normalizer ?? null;
   return (
     <>
       <div className="sub-label">clearance</div>
       <label className="radio modal-check" title="the policy decides when to give it; otherwise the aircraft flies on">
-        <input type="checkbox" checked={value != null} onChange={(e) => onChange(e.target.checked ? { duration: null, lock: null, observe: true } : null)} />
+        <input type="checkbox" checked={value != null} onChange={(e) => onChange(e.target.checked ? { duration: null, lock: null } : null)} />
         a clearance: given only when the policy decides
       </label>
       {value != null && (
@@ -1127,13 +1135,33 @@ function ClearanceControls({
           {duration && (
             <>
               <label className="numfield inline">
-                <span>shortest</span>
+                <span>shortest s</span>
                 <input type="number" min={0} step={10} value={duration[0]} onChange={(e) => set({ duration: [Math.max(0, Number(e.target.value)), duration[1]] })} />
               </label>
               <label className="numfield inline">
-                <span>longest</span>
+                <span>longest s</span>
                 <input type="number" min={0} step={10} value={duration[1]} onChange={(e) => set({ duration: [duration[0], Math.max(duration[0], Number(e.target.value))] })} />
               </label>
+              <label className="numfield inline">
+                <span>duration normalizer</span>
+                <Picker
+                  searchable={false}
+                  placeholder="Raw"
+                  value={normalizer?.name ?? ""}
+                  onChange={(v) => set({ duration_normalizer: v ? { type: "normalizer", name: v, kwargs: {} } : null })}
+                  options={[
+                    { value: "", label: "Raw" },
+                    ...normalizers.map((n) => ({ value: n.name, description: n.doc })),
+                  ]}
+                />
+              </label>
+              {normalizer && (
+                <NormalizerParams
+                  option={normalizers.find((n) => n.name === normalizer.name)}
+                  value={normalizer}
+                  onChange={(v) => set({ duration_normalizer: v })}
+                />
+              )}
             </>
           )}
           <label className="numfield inline">
@@ -1152,10 +1180,10 @@ function ClearanceControls({
               ]}
             />
           </label>
-          <label className="radio modal-check" title="add whether the axis is locked and the time left to the ownship observation">
-            <input type="checkbox" checked={value.observe !== false} onChange={(e) => set({ observe: e.target.checked })} />
-            observe it (locked, time left)
-          </label>
+          <div className="muted small">
+            To let the policy see it, add ActionLocked and ClearanceTimeLeftS to
+            the observation, with this action as their target.
+          </div>
         </>
       )}
     </>

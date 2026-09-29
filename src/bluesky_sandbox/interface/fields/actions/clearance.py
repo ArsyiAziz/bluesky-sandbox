@@ -11,9 +11,12 @@ One :class:`Clearance` per action declares everything that makes it one, and
   after which own navigation takes the axis back;
 * with ``lock``, how long nothing else is accepted on its axis: ``"duration"``,
   the whole clearance (a vector is flown, not just turned), or ``"captured"``,
-  until the aircraft has flown the command;
-* with ``observe``, the observations that keep the state Markov: whether the
-  axis is locked, and the time left on the clearance.
+  until the aircraft has flown the command.
+
+What the policy observes of it is the design's choice, like any observation:
+``observations.ActionLocked`` (whether the axis is locked) and
+``observations.ClearanceTimeLeftS`` (the time left), each with its own
+normalizer.
 
 ::
 
@@ -42,13 +45,14 @@ Lock = Literal["duration", "captured"]
 class Clearance:
     """``action`` as a clearance: given when the policy decides, held for
     ``duration`` seconds (a ``(low, high)`` range the policy chooses in; ``None``
-    - until changed or resumed), with its axis locked per ``lock``, and its state
-    observed unless ``observe`` is off."""
+    - until changed or resumed), with its axis locked per ``lock``.
+    ``duration_normalizer`` scales the duration in the action space, as any
+    action's normalizer does."""
 
     action: ActionField
     duration: tuple[float, float] | None = None
     lock: Lock | None = None
-    observe: bool = True
+    duration_normalizer: Any | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.action, ActionField) or isinstance(
@@ -71,6 +75,8 @@ class Clearance:
             object.__setattr__(self, "duration", (low, high))
         if self.lock == "duration" and self.duration is None:
             raise ValueError("a Clearance locked for its duration needs a duration.")
+        if self.duration_normalizer is not None and self.duration is None:
+            raise ValueError("a Clearance's duration_normalizer needs a duration.")
 
     @property
     def name(self) -> str:
@@ -81,7 +87,14 @@ class Clearance:
         fields: list[ActionField] = [self.action]
         if self.duration is not None:
             low, high = self.duration
-            fields.append(ClearanceDuration(target=self.name, low=low, high=high))
+            fields.append(
+                ClearanceDuration(
+                    target=self.name,
+                    low=low,
+                    high=high,
+                    normalizer=self.duration_normalizer,
+                )
+            )
         fields.append(
             ActionMask(
                 target=self.name,
@@ -91,33 +104,14 @@ class Clearance:
         )
         return fields
 
-    def observation_fields(self) -> list[Any]:
-        """What the policy needs to see of it: its lock, and its time left."""
-        if not self.observe:
-            return []
-        from .. import observations  # noqa: PLC0415 - observations import actions
 
-        fields: list[Any] = []
-        if self.lock is not None:
-            fields.append(observations.ActionLocked(target=self.name))
-        if self.duration is not None:
-            fields.append(
-                observations.ClearanceTimeLeftS(target=self.name, high=self.duration[1])
-            )
-        return fields
-
-
-def expand_clearances(
-    action_fields: list[Any], obs_fields: list[Any]
-) -> tuple[list[Any], list[Any]]:
+def expand_clearances(action_fields: list[Any]) -> list[Any]:
     """``action_fields`` with each :class:`Clearance` expanded in place into its
-    parts, and ``obs_fields`` with each one's observations appended."""
+    parts: the action, its duration if timed, and its mask."""
     actions: list[Any] = []
-    observed: list[Any] = []
     for field in action_fields:
         if isinstance(field, Clearance):
             actions.extend(field.action_fields())
-            observed.extend(field.observation_fields())
         else:
             actions.append(field)
-    return actions, [*obs_fields, *observed]
+    return actions
