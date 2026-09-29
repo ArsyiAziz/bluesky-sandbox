@@ -9,12 +9,19 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any
 
+import bluesky as bs
+from bluesky.tools.aero import ft, kts
+from bluesky.tools.geo import kwikqdrdist
+
+from .._route import _active_route_waypoint
 from .._state import (
     _ActionMaskBacked,
     action_lock,
     action_masks,
+    clearance_expiries,
     record_action_mask,
     set_action_lock,
+    set_clearance_expiry,
 )
 from ..base import (
     ActionField,
@@ -28,8 +35,11 @@ from ..base import (
 __all__ = [
     "AXIS_ERRORS",
     "ActionMask",
+    "ClearanceDuration",
     "action_name",
     "check_action_masks",
+    "end_clearances",
+    "expire_clearances",
     "lock_holds",
 ]
 
@@ -152,11 +162,117 @@ def axis_error(idx: int, axis: ControlAxis) -> float:
     return abs(float(getattr(observations, AXIS_ERRORS[axis])().get(idx)))
 
 
+@dataclass(frozen=True)
+class ClearanceDuration(ActionField):
+    """How long a clearance of ``target`` lasts, in seconds: a TEMPORARY
+    clearance.
+
+    Decided with the clearance - its value only takes effect on a step its
+    target is applied, and ``info["action_applied"]`` marks it exactly as the
+    target. When it runs out, the aircraft resumes own navigation on that axis:
+    once no axis is under a clearance, LNAV and VNAV come back on (and with
+    them any RTA); while another still is, the expired axis returns to its
+    route value - the heading to the active fix, the fix's level, its speed
+    (gate or arrival time). A new clearance of the target restarts the clock;
+    a switch that takes the axis over (resuming LNAV+VNAV) ends it.
+
+    So an explored clearance can never strand an aircraft: every deviation
+    comes back by itself. :class:`~bluesky_sandbox.interface.fields.observations.
+    ClearanceTimeLeftS` shows the time left.
+    """
+
+    meta = ActionMeta("clearance_duration", Unit.S)
+    target: Annotated[
+        str | type[ActionField] | ActionField,
+        "the temporary clearance: its name, its class or an instance",
+    ] = ""
+    low: Annotated[float, "shortest clearance, s"] = 60.0
+    high: Annotated[float, "longest clearance, s"] = 600.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "target", action_name(self.target))
+        super().__post_init__()
+        if self.low > self.high:
+            raise ValueError(
+                f"ClearanceDuration needs low <= high, got {self.low}, {self.high}"
+            )
+
+    def set(self, idx: int, value: float) -> None:
+        """Nothing on its own: the dispatcher starts the clock when the target
+        is applied (:meth:`start`)."""
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return float(self.low), float(self.high)
+
+    def start(self, idx: int, axis: ControlAxis, value: float) -> None:
+        """The target was just applied on ``axis``: run it for ``value`` s,
+        within the range - one at or below 0 runs out on the next step."""
+        duration = max(0.0, min(max(float(value), float(self.low)), float(self.high)))
+        set_clearance_expiry(idx, self.target, axis, float(bs.sim.simt) + duration)
+
+
+#: The axes a temporary clearance can be on: the ones own navigation flies.
+RESUMABLE_AXES = (ControlAxis.HEADING, ControlAxis.ALTITUDE, ControlAxis.SPEED)
+
+
+def end_clearances(idx: int, axes: Iterable[ControlAxis]) -> None:
+    """End the aircraft at ``idx``'s running clearances on ``axes`` - own
+    navigation has taken them back - with no resume of their own."""
+    axes = set(axes)
+    for target, (axis, _expires) in clearance_expiries(idx).items():
+        if axis in axes:
+            set_clearance_expiry(idx, target)
+
+
+def expire_clearances() -> None:
+    """Resume own navigation wherever a temporary clearance has run out.
+
+    Called by the environment each step, before the new actions: an expired
+    clearance's lock is released, and the axis resumes - fully (LNAV+VNAV) once
+    no axis of the aircraft is under a clearance, else to its route value.
+    """
+    now = float(bs.sim.simt)
+    for idx, acid in enumerate(list(bs.traf.id)):
+        running = clearance_expiries(idx)
+        if not running:
+            continue
+        expired = {t: axis for t, (axis, at) in running.items() if at <= now}
+        if not expired:
+            continue
+        for target in expired:
+            set_clearance_expiry(idx, target)
+            set_action_lock(idx, target)
+        if len(expired) == len(running):
+            bs.stack.stack(f"LNAV {acid} ON")
+            bs.stack.stack(f"VNAV {acid} ON")
+            continue
+        for axis in expired.values():
+            _resume_axis(idx, acid, axis)
+
+
+def _resume_axis(idx: int, acid: str, axis: ControlAxis) -> None:
+    """Return one axis to its route value while another is still cleared."""
+    fix = _active_route_waypoint(idx)
+    if fix is None:
+        return
+    lat, lon, alt_m, spd_ms = fix
+    if axis is ControlAxis.HEADING:
+        qdr, _dist = kwikqdrdist(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), lat, lon)
+        bs.stack.stack(f"HDG {acid} {float(qdr) % 360.0:.2f}")
+    elif axis is ControlAxis.ALTITUDE and alt_m is not None:
+        bs.stack.stack(f"ALT {acid} {alt_m / ft:.1f}")
+    elif axis is ControlAxis.SPEED and spd_ms is not None:
+        bs.stack.stack(f"SPD {acid} {spd_ms / kts:.1f}")
+
+
 def check_action_masks(action_fields: Iterable[Any]) -> None:
     """Refuse masks that name no action of the config, or one ambiguously:
     each :class:`ActionMask` targets exactly one of ``action_fields``, and no
-    action is masked twice."""
+    action is masked twice. Each :class:`ClearanceDuration` times exactly one
+    masked action on an axis own navigation flies, and none twice."""
     action_fields = list(action_fields)
+    durations = [f for f in action_fields if isinstance(f, ClearanceDuration)]
+    action_fields = [f for f in action_fields if not isinstance(f, ClearanceDuration)]
     masks = [f for f in action_fields if isinstance(f, ActionMask)]
     names = [f.meta.name for f in action_fields if not isinstance(f, ActionMask)]
     targets = [mask.target for mask in masks]
@@ -180,6 +296,21 @@ def check_action_masks(action_fields: Iterable[Any]) -> None:
     if twice:
         raise ValueError(f"more than one ActionMask masks {twice}.")
     axes = {f.meta.name: f.meta.control_axis for f in action_fields}
+    timed = [d.target for d in durations]
+    for target in timed:
+        if target not in targets:
+            raise ValueError(
+                f"ClearanceDuration target {target!r} has no ActionMask: a "
+                f"duration times a clearance; the masked actions are {targets}."
+            )
+        if axes.get(target) not in RESUMABLE_AXES:
+            raise ValueError(
+                f"ClearanceDuration target {target!r} commands no axis own "
+                f"navigation flies ({', '.join(a.value for a in RESUMABLE_AXES)})."
+            )
+    twice = sorted({t for t in timed if timed.count(t) > 1})
+    if twice:
+        raise ValueError(f"more than one ClearanceDuration times {twice}.")
     for mask in masks:
         if mask.lock_until_captured and axes[mask.target] not in AXIS_ERRORS:
             raise ValueError(

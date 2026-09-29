@@ -41,6 +41,7 @@ from .kinematics import (
 )
 from .mask import (
     ActionMask,
+    ClearanceDuration,
 )
 from .route import (
     ActiveRouteWaypointAltDeltaFt,
@@ -81,4 +82,5 @@ __all__ = [
     "AutopilotLnavVnav",
     "CommBroadcast",
     "ActionMask",
+    "ClearanceDuration",
 ]

@@ -45,7 +45,11 @@ from bluesky_sandbox.core.step_values import (
 )
 from bluesky_sandbox.interface.fields._common import reset_field_state
 from bluesky_sandbox.interface.fields._state import set_action_space_bounds
-from bluesky_sandbox.interface.fields.actions.mask import ActionMask
+from bluesky_sandbox.interface.fields.actions.mask import (
+    ActionMask,
+    ClearanceDuration,
+    expire_clearances,
+)
 from bluesky_sandbox.interface.fields.base import StepContext
 from bluesky_sandbox.interface.task import (
     AgentStepContext,
@@ -349,6 +353,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
         # substeps per env step, so walking every configured field each substep
         # to call a no-op would be the expensive way to do nothing.
         self._stateful_fields = tuple(self._collect_stateful_fields())
+        self._timed_clearances = any(
+            isinstance(f, ClearanceDuration) for f in self.config.action_fields
+        )
         # The airspace's wind, built once from the config's scalar settings.
         # Single source of truth: the runtime applies it, spawn clearance
         # predicts against it, and nothing re-derives a vector from
@@ -493,6 +500,10 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._traffic_monitor.begin_step()
         self._query_state_monitor.begin_step()
         self._hooks.on_before_step()
+        # Temporary clearances that ran out resume own navigation before the
+        # new actions, so a clearance given this step takes over from it.
+        if self._timed_clearances:
+            expire_clearances()
         live_index = self._live_agent_index()
         applied: dict[Callsign, list[bool]] = {}
 

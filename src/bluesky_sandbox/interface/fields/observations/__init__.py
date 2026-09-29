@@ -49,6 +49,7 @@ from .conflict import (
 )
 from .episode import (
     ActionLocked,
+    ClearanceTimeLeftS,
     PrevActionMasked,
     PrevActionNorm,
     TimeInEnvS,
@@ -246,6 +247,7 @@ __all__ = [
     "ConflictRisk",
     "TimeInEnvS",
     "ActionLocked",
+    "ClearanceTimeLeftS",
     "PrevActionMasked",
     "PrevActionNorm",
     "LaggedObs",

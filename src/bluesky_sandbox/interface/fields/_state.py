@@ -121,6 +121,7 @@ class _ActionMaskBacked:
     def on_aircraft_removed(self, acid: str) -> None:
         _ACTION_MASKS.forget(acid)
         _ACTION_LOCKS.forget(acid)
+        _CLEARANCE_EXPIRY.forget(acid)
 
 
 # Each aircraft's most recent *normalized* action. The environment writes it when actions are applied (one BlueSky sim
@@ -259,3 +260,27 @@ def arrival_time(idx: int, route_index: int) -> float | None:
     times = _ARRIVAL_TIMES.read_one(idx)
     return times[route_index] if 0 <= route_index < len(times) else None
 
+
+
+# Each aircraft's temporary clearances, by target name: the axis each commands
+# and the sim time it expires at. Set when a target with a ClearanceDuration is
+# applied; expire_clearances resumes own navigation when they run out.
+_CLEARANCE_EXPIRY = AircraftMemory(default={})
+
+
+def clearance_expiries(idx: int) -> dict[str, tuple[Any, float]]:
+    """The aircraft at ``idx``'s running clearances: target -> (axis, expiry s)."""
+    return dict(_CLEARANCE_EXPIRY.read_one(idx))
+
+
+def set_clearance_expiry(
+    idx: int, target: str, axis: Any = None, expires_s: float | None = None
+) -> None:
+    """Start (or restart) ``target``'s clearance for the aircraft at ``idx``,
+    expiring at sim time ``expires_s``; with no ``axis``, end it."""
+    running = dict(_CLEARANCE_EXPIRY.read_one(idx))
+    if axis is None:
+        running.pop(target, None)
+    else:
+        running[target] = (axis, float(expires_s))
+    _CLEARANCE_EXPIRY.write(idx, running)

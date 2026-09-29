@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Annotated, Any
 
+import bluesky as bs
 import numpy as np
 
 from .. import _state
@@ -16,6 +17,7 @@ from .._state import (
     _LastActionBacked,
     _TimeInEnvBacked,
     action_masks,
+    clearance_expiries,
 )
 from ..actions.mask import action_name, lock_holds
 from ..base import ActionField, ObsField, ObsMeta, ObsQuantity, Unit
@@ -225,3 +227,42 @@ class ActionLocked(_BroadcastObs, _ActionMaskBacked, ObsField):
 
     def _expected(self, idx: int) -> Any:
         return 1.0 if lock_holds(idx, self.target) else 0.0
+
+
+@dataclass(frozen=True)
+class ClearanceTimeLeftS(_BroadcastObs, _ActionMaskBacked, ObsField):
+    """Seconds left on the running temporary clearance of ``target``, 0 when
+    none (see :class:`~bluesky_sandbox.interface.fields.actions.ClearanceDuration`).
+
+    With it the policy knows a deviation is running and when own navigation
+    takes the axis back. ``target`` names the action as its duration does.
+    """
+
+    meta = ObsMeta("clearance_time_left_s", Unit.S, ObsQuantity.TIME)
+    target: Annotated[
+        str | type[ActionField] | ActionField,
+        "the timed action: its name, its class or an instance",
+    ] = ""
+    low: Annotated[float, "lower bound, s"] = 0.0
+    high: Annotated[float, "upper bound, s: the longest clearance"] = 600.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "target", action_name(self.target))
+        super().__post_init__()
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return self._configured_bounds()
+
+    def _left(self, idx: int) -> float:
+        running = clearance_expiries(idx).get(self.target)
+        if running is None:
+            return 0.0
+        return max(0.0, running[1] - float(bs.sim.simt))
+
+    def _values(self, indices: Any) -> Any:
+        return np.array(
+            [self._left(int(i)) for i in _indices_array(indices)], dtype=np.float64
+        )
+
+    def _expected(self, idx: int) -> Any:
+        return self._left(idx)

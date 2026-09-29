@@ -195,6 +195,8 @@ action_fields = [
 
 A target arrival time is a speed constraint on its fix, only a derived one: where the fix has no speed gate, its speed is the one that still meets the time from where the aircraft is - faster when late, slower when early. Every reader of a fix's speed agrees: a route-relative speed action's zero is "on schedule", so a speed deviation ends with one clearance of 0, and `ActiveRouteWaypointSpdDiffKts` reads the speed off schedule. Early beyond the minimum speed, only a vector loses the rest.
 
+A `ClearanceDuration(target=...)` makes a clearance temporary: its value, in seconds (`low`-`high`, 60-600 by default), is decided with the clearance and applied exactly when its target is. When it runs out, own navigation takes the axis back - fully (LNAV+VNAV, and with them any RTA) once no axis is under a clearance, else to the route value - so an explored clearance never strands an aircraft. A new clearance restarts the clock; resuming LNAV+VNAV ends it. `obs.ClearanceTimeLeftS` shows the time left.
+
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.interface.fields.actions.mask
    :members: ActionMask

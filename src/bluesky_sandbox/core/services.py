@@ -13,7 +13,11 @@ from gymnasium.spaces import Box, Dict, MultiBinary, Sequence
 
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.aircraft_table import AircraftTable, Column
-from bluesky_sandbox.interface.fields.actions.mask import ActionMask
+from bluesky_sandbox.interface.fields.actions.mask import (
+    ActionMask,
+    ClearanceDuration,
+    end_clearances,
+)
 from bluesky_sandbox.interface.fields.base import (
     ActionKind,
     PairObsField,
@@ -232,7 +236,9 @@ class ActionDispatcher:
         too, which keeps its state even when a switch turned on requires it - and
         so is one on an axis a switch turned on suppresses. A mask locking until
         captured skips everything commanding its target's axis while the last
-        clearance on it is still being flown.
+        clearance on it is still being flown. A :class:`ClearanceDuration` is
+        applied exactly when its target is, and starts that clearance's clock;
+        a switch turned on ends the clearances on the axes it takes over.
         """
         masks = [
             (field, value) for field, value in values if isinstance(field, ActionMask)
@@ -306,6 +312,22 @@ class ActionDispatcher:
                 for i, (field, _v) in enumerate(values)
             ):
                 mask.target_applied(idx, axis_of.get(mask.target))
+
+        # Own navigation taking axes back ends their temporary clearances; a
+        # target applied this step starts (or restarts) its own.
+        if suppressed_axes:
+            end_clearances(idx, suppressed_axes)
+        target_applied = {
+            field.meta.name: applied[i]
+            for i, (field, _value) in enumerate(values)
+            if not isinstance(field, (ActionMask, ClearanceDuration))
+        }
+        for i, (field, value) in enumerate(values):
+            if not isinstance(field, ClearanceDuration):
+                continue
+            applied[i] = target_applied.get(field.target, False)
+            if applied[i]:
+                field.start(idx, axis_of.get(field.target), value)
         return applied
 
 
