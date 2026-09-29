@@ -119,6 +119,19 @@ def _ceiling_ft_cached(model: str, actype: str) -> float | None:
     return None if ceiling_ft is None else float(ceiling_ft)
 
 
+def _flyable_ceiling_ft(actype: str) -> float | None:
+    """The highest altitude a type can be flown to: its certified ceiling,
+    capped by what the simulator enforces (``perf.hmax``) under OpenAP, whose
+    limit table that is (:func:`_sim_limit_table`)."""
+    ceilings = [_ceiling_ft_for_type(actype)]
+    if active_performance_model() == "openap":
+        row = _sim_limits(actype)
+        if row is not None and "hmax" in row:
+            ceilings.append(float(row["hmax"]) / ft)
+    known = [c for c in ceilings if c is not None]
+    return min(known) if known else None
+
+
 def _vmax_cas_kt(actype: str, alt_ft: float) -> float | None:
     """CAS upper limit (kt) at ``alt_ft`` from VMO/MMO, or ``None`` if unavailable.
 
@@ -149,8 +162,14 @@ def feasible_alt_for_type(
     alt_min_ft: float | None = None,
     alt_max_ft: float | None = None,
 ) -> float:
-    """Draw a feasible spawn altitude for an aircraft type before creation."""
-    ceiling_ft = _ceiling_ft_for_type(actype)
+    """Draw a feasible spawn altitude for an aircraft type before creation.
+
+    Capped at the altitude the type can actually be flown to
+    (:func:`_flyable_ceiling_ft`), not its certified ceiling: BlueSky clamps
+    the selected altitude to ``perf.hmax``, thousands of feet lower for much of
+    a fleet, so an aircraft spawned between the two can never hold its level.
+    """
+    ceiling_ft = _flyable_ceiling_ft(actype)
     if ceiling_ft is None:
         raise ValueError(
             f"Cannot sample envelope altitude for aircraft type {actype!r}: "
