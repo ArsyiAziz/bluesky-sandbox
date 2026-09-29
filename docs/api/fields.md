@@ -178,6 +178,20 @@ obs_fields = [obs.PrevActionMasked(target=actions.HdgDeg)]
 
 A masked switch keeps its state, even when a switch turned on requires it, and suppresses nothing. With a mask configured, every agent's `info["action_applied"]` says which values of its action took effect, shaped as the action: 1 for each value applied, 0 for each one skipped, whether masked or on an axis a switch suppressed. A custom loss can use it to leave skipped values out of the policy gradient. `PrevActionMasked` shows the policy what it masked last.
 
+#### Vectoring
+
+Masks on the heading, altitude and speed actions turn continuous control into clearances: a masked step says nothing, and the aircraft flies on what it was last given - its route on LNAV, or a heading. `actions.ResumeOwnNav` hands it back to its route (1 turns LNAV on, 0 does nothing), and `obs.ApLnavOn` tells the policy which of the two it is flying. `lock_until_captured=True` makes a clearance a committed unit: once the target is applied, nothing on its axis is accepted until the aircraft has flown it.
+
+```python
+action_fields = [
+    actions.ActiveRouteWaypointHdgDeltaDeg(),
+    actions.ResumeOwnNav(),
+    actions.ActionMask(
+        target=actions.ActiveRouteWaypointHdgDeltaDeg, lock_until_captured=True
+    ),
+]
+```
+
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.interface.fields.actions.mask
    :members: ActionMask

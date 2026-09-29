@@ -28,6 +28,21 @@ def _route_constraint(values: Any, iact: int) -> float | None:
     return None
 
 
+def _route_index(idx: int, offset: int = 0) -> int | None:
+    """The route index of the fix ``offset`` legs from the active one, or
+    ``None`` when there is none there - as :func:`_active_route_waypoint`."""
+    routes = getattr(bs.traf.ap, "route", None) if bs.traf is not None else None
+    if routes is None or idx < 0 or idx >= len(routes):
+        return None
+    try:
+        iact = int(routes[idx].iactwp)
+        nwp = int(routes[idx].nwp or 0)
+    except (TypeError, ValueError):
+        return None
+    target = iact + offset
+    return target if iact >= 0 and 0 <= target < nwp else None
+
+
 def _active_route_waypoint(
     idx: int,
     offset: int = 0,

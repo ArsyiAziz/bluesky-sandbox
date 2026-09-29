@@ -428,6 +428,13 @@ def _resolved_geometry(
                 # Bound the per-aircraft envelope altitude draw to what the
                 # aircraft can climb/descend to before reaching the fix. Only
                 # meaningful alongside an envelope-sampled altitude.
+                # A target arrival time over this fix, for every aircraft whose
+                # route crosses it: nominal plus a slack drawn per aircraft.
+                slack = q.pop("arrival_slack_s", None)
+                if slack is not None:
+                    route_sampling.setdefault(name, {})["arrival_slack_s"] = (
+                        _spec.load_value(slack)
+                    )
                 reachable = q.pop("reachable_from_spawn", False)
                 vs_fraction = q.pop("reachable_vs_fraction", None)
                 if reachable and route_sampling.get(name, {}).get(

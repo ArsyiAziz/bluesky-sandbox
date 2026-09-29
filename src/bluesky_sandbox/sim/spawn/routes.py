@@ -21,6 +21,9 @@ import numpy as np
 #     requires ``alt_ft`` or envelope altitude sampling;
 #   * a sampled waypoint target ``{"waypoint": "<name>", "sample": Bounds, ...}``
 #     - resolved per spawned aircraft into a concrete BlueSky route target;
+#   * any waypoint step may carry ``arrival_slack_s`` - seconds, or a
+#     distribution of them - giving its fix a target arrival time
+#     (:mod:`bluesky_sandbox.sim.arrival`);
 #   * a subroute reference ``{"route": "<name>"}`` expanded inline;
 #   * a branch ``{"choice": [step, ...], "weights": [w, ...]}`` - one branch is
 #     taken (weighted; uniform if ``weights`` omitted). Branches let a procedure
@@ -44,6 +47,7 @@ _WAYPOINT_STEP_KEYS = (
     "envelope_alt_floor_ft",
     "reachable_from_spawn",
     "reachable_vs_fraction",
+    "arrival_slack_s",
 )
 
 

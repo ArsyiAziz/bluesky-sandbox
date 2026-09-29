@@ -108,6 +108,13 @@ class _CommBacked:
         _COMM_MESSAGE.forget(acid)
 
 
+class _ArrivalTimeBacked:
+    """State hooks for the arrival-time fields."""
+
+    def on_aircraft_removed(self, acid: str) -> None:
+        _ARRIVAL_TIMES.forget(acid)
+
+
 class _ActionMaskBacked:
     """State hooks for the action masks and the field that reads them."""
 
@@ -229,3 +236,20 @@ def set_action_lock(idx: int, target: str, locked: bool) -> None:
     else:
         locks.discard(target)
     _ACTION_LOCKS.write(idx, frozenset(locks))
+
+
+# Each aircraft's target arrival time over each fix of its route, by route
+# index, in simulator seconds - None for a fix with none. Assigned at spawn
+# (sim.arrival), read by the ActiveRouteWaypoint arrival fields.
+_ARRIVAL_TIMES = AircraftMemory(default=())
+
+
+def set_arrival_times(idx: int, times: tuple[float | None, ...]) -> None:
+    """Store the aircraft at ``idx``'s arrival time over each route fix."""
+    _ARRIVAL_TIMES.write(idx, tuple(times))
+
+
+def arrival_time(idx: int, route_index: int) -> float | None:
+    """The aircraft at ``idx``'s arrival time over route fix ``route_index``."""
+    times = _ARRIVAL_TIMES.read_one(idx)
+    return times[route_index] if 0 <= route_index < len(times) else None

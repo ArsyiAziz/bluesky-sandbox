@@ -54,6 +54,9 @@ class SpawnQueueItem:
 class ResolvedRoute(NamedTuple):
     names: list[str]
     targets: list[WaypointTarget]
+    #: Each step's arrival-time slack, seconds or a distribution of them;
+    #: ``None`` for a step with no target arrival time.
+    arrival_slacks: tuple = ()
 
 
 class AircraftControlState(Enum):

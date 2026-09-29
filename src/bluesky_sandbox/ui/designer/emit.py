@@ -581,6 +581,8 @@ def _route_sampling_metadata(spec: DesignSpec) -> dict[str, dict[str, Any]]:
             out.setdefault(name, {})["sample_speed_from_envelope"] = True
         if "envelope_alt_floor_ft" in q and name in out:
             out[name]["envelope_alt_floor_ft"] = q["envelope_alt_floor_ft"]
+        if q.get("arrival_slack_s") is not None:
+            out.setdefault(name, {})["arrival_slack_s"] = q["arrival_slack_s"]
         if q.get("reachable_from_spawn") and out.get(name, {}).get(
             "sample_alt_from_envelope"
         ):

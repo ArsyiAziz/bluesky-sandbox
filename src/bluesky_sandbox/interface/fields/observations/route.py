@@ -23,7 +23,8 @@ from .._common import (
     _signed_angle_delta_deg,
     _traf_array,
 )
-from .._route import _active_route_waypoint, _route_along_distance_nm
+from .._route import _active_route_waypoint, _route_along_distance_nm, _route_index
+from .._state import _ArrivalTimeBacked, arrival_time
 from ..base import ObsField, ObsMeta, ObsQuantity, Unit
 
 
@@ -538,3 +539,91 @@ class ActiveRouteWaypointVerticalEteS(_ActiveRouteWaypointField):
         if rate_ms * error_m <= 0.0:  # level, or going the wrong way
             return float(self.high)
         return min(error_m / rate_ms, float(self.high))
+
+
+@dataclass(frozen=True)
+class _ArrivalTimeField(_ArrivalTimeBacked, _ActiveRouteWaypointField):
+    """Reads the target arrival time over the fix at ``route_offset``, assigned
+    at spawn when the route step asks for one (``arrival_slack_s``)."""
+
+    def _time_to_go(self, idx: int) -> float | None:
+        """Seconds until the aircraft is due over the fix, or ``None``."""
+        k = _route_index(idx, self.route_offset)
+        due = None if k is None else arrival_time(idx, k)
+        return None if due is None else due - float(bs.sim.simt)
+
+    def _times_to_go(self, indices: np.ndarray) -> np.ndarray:
+        """:meth:`_time_to_go` for each of ``indices``, NaN for none."""
+        return np.array(
+            [
+                np.nan if (t := self._time_to_go(int(i))) is None else t
+                for i in indices
+            ],
+            dtype=np.float64,
+        )
+
+
+@dataclass(frozen=True)
+class ActiveRouteWaypointHasArrivalTime(_ArrivalTimeField):
+    """1 when the fix at ``route_offset`` has a target arrival time, else 0."""
+
+    meta = ObsMeta(
+        "active_route_waypoint_has_arrival_time", Unit.SWITCH, ObsQuantity.INDICATOR
+    )
+    low: Annotated[float, "no arrival time"] = 0.0
+    high: Annotated[float, "an arrival time"] = 1.0
+
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return (~np.isnan(self._times_to_go(indices))).astype(np.float64)
+
+    def _expected(self, idx: int) -> Any:
+        return 0.0 if self._time_to_go(idx) is None else 1.0
+
+
+@dataclass(frozen=True)
+class ActiveRouteWaypointTimeToGoS(_ArrivalTimeField):
+    """Seconds until the aircraft is due over the fix at ``route_offset``:
+    its target arrival time minus now - negative once overdue, 0 if the fix
+    has none (pair with :class:`ActiveRouteWaypointHasArrivalTime`)."""
+
+    meta = ObsMeta("active_route_waypoint_time_to_go_s", Unit.S, ObsQuantity.TIME)
+    low: Annotated[float, "time to go lower bound, s (overdue)"] = -600.0
+    high: Annotated[
+        float, "time to go upper bound, s; match the task time budget"
+    ] = 3600.0
+
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return np.nan_to_num(self._times_to_go(indices), nan=0.0)
+
+    def _expected(self, idx: int) -> Any:
+        t = self._time_to_go(idx)
+        return 0.0 if t is None else t
+
+
+@dataclass(frozen=True)
+class ActiveRouteWaypointArrivalErrorS(_ArrivalTimeField):
+    """How late the aircraft would be over the fix at ``route_offset`` flying on
+    as it is: its estimated time enroute (:class:`ActiveRouteWaypointEteS`)
+    minus its time to go - positive late, negative early, 0 if the fix has no
+    arrival time.
+
+    The quantity a time-based arrival is steered on: slow down, or stretch the
+    path with a vector, while it is negative; it reads the same whether the
+    aircraft is on its route or on a heading, since the ETE is range over
+    groundspeed.
+    """
+
+    meta = ObsMeta("active_route_waypoint_arrival_error_s", Unit.S, ObsQuantity.TIME)
+    low: Annotated[float, "arrival error lower bound, s (early)"] = -900.0
+    high: Annotated[float, "arrival error upper bound, s (late)"] = 900.0
+
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        ete = ActiveRouteWaypointEteS(route_offset=self.route_offset)._values(indices)
+        return np.nan_to_num(ete - self._times_to_go(indices), nan=0.0)
+
+    def _expected(self, idx: int) -> Any:
+        t = self._time_to_go(idx)
+        if t is None:
+            return 0.0
+        ete = ActiveRouteWaypointEteS(route_offset=self.route_offset)._expected(idx)
+        return float(ete) - t

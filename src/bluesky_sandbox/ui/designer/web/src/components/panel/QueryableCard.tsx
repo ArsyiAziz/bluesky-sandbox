@@ -464,6 +464,25 @@ function WaypointConstraints({ q, onChange }: { q: SpecDict; onChange: (q: SpecD
         Leave unset to auto-derive it from “speed tol kt” there, so a single CAS
         tolerance stays well-defined at any sampled altitude.
       </div>
+      <OptValueField
+        label="arrival slack s"
+        hint="A target arrival time over this fix, for every aircraft whose route crosses it"
+        step={10}
+        value={q.arrival_slack_s}
+        defaultValue={{ type: "range", low: 0, high: 120 }}
+        onChange={(v) => {
+          const next = { ...q };
+          if (v == null) delete next.arrival_slack_s;
+          else next.arrival_slack_s = v;
+          onChange(next);
+        }}
+      />
+      <div className="muted small">
+        Each aircraft is due over the fix at its nominal time from where it
+        spawns - flown at its spawn speed, or its climb or descent at full rate if
+        longer - plus this slack, drawn per aircraft. Never sooner than it can fly
+        flat out. Observed through the ActiveRouteWaypoint arrival fields.
+      </div>
     </div>
   );
 }

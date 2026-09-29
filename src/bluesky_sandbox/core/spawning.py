@@ -32,6 +32,8 @@ import bluesky as bs
 import numpy as np
 from bluesky.tools.aero import ft, kts, nm
 
+from bluesky_sandbox.interface.fields._state import set_arrival_times
+from bluesky_sandbox.sim.arrival import arrival_times
 from bluesky_sandbox.sim.geometry.clearance import (
     inside_separation_zone,
     predicted_conflict,
@@ -482,6 +484,10 @@ class SpawnGenerator:
         return ResolvedRoute(
             names=[route_step_name(step) for step in route],
             targets=targets,
+            arrival_slacks=tuple(
+                step.get("arrival_slack_s") if isinstance(step, dict) else None
+                for step in route
+            ),
         )
 
     def _materialize_spawn(
@@ -544,6 +550,18 @@ class SpawnGenerator:
                 callsign,
                 route.names,
             )
+            if any(slack is not None for slack in route.arrival_slacks):
+                acidx = self.env._runtime.index(callsign)
+                set_arrival_times(
+                    acidx,
+                    arrival_times(
+                        acidx,
+                        route.targets,
+                        route.arrival_slacks,
+                        rng,
+                        self.env._runtime.sim_time,
+                    ),
+                )
         # Hooks see a names-only view (tasks may treat the route as a list of
         # waypoint names); the full step list with any per-step crossing
         # restrictions only reaches ADDWPT above.
