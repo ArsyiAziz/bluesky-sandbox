@@ -186,3 +186,51 @@ def test_the_duration_is_clamped_to_its_range(env):
 def test_a_duration_that_times_no_clearance_is_refused(actions, match):
     with pytest.raises(ValueError, match=match):
         EnvConfig(dt=5.0, obs_fields=[], action_fields=actions)
+
+
+@pytest.fixture(scope="module")
+def committed():
+    actions = list(_ACTIONS)
+    actions[5] = act.ActionMask(target=act.HdgDeg, lock_for_duration=True)
+    env = BlueskyEnv(
+        scenario=_Empty(),
+        config=EnvConfig(
+            dt=5.0,
+            obs_fields=[*_OBS, obs.ActionLocked(target=act.HdgDeg)],
+            action_fields=actions,
+        ),
+    )
+    yield env
+    env.close()
+
+
+def test_a_vector_locked_for_its_duration_is_flown_not_just_turned(committed):
+    agent = _fly(committed)
+    seen, _ = _step(committed, agent, heading=150.0, hdg_s=120.0)
+    assert seen[3] == 1.0  # locked from the start
+    for _ in range(10):  # the turn is long done well before 120 s
+        seen, _ = _step(committed, agent)
+    # Neither a new heading nor resuming own navigation is taken mid-leg.
+    seen, info = _step(committed, agent, heading=90.0)
+    assert info["action_applied"]["continuous"][0] == 0.0 and seen[3] == 1.0
+    seen, info = _step(committed, agent, resume=True)
+    assert info["action_applied"]["binary"][0] == 0.0
+    assert not bs.traf.swlnav[_i()]
+    assert float(bs.traf.ap.trk[_i()]) == pytest.approx(150.0, abs=0.5)
+    for _ in range(12):
+        seen, _ = _step(committed, agent)
+    # Run out: unlocked, and back on own navigation.
+    assert seen[3] == 0.0 and seen[1] == 0.0
+    assert bs.traf.swlnav[_i()]
+
+
+def test_a_lock_for_the_duration_needs_a_duration():
+    with pytest.raises(ValueError, match="no ClearanceDuration times it"):
+        EnvConfig(
+            dt=5.0,
+            obs_fields=[],
+            action_fields=[
+                act.HdgDeg(),
+                act.ActionMask(target=act.HdgDeg, lock_for_duration=True),
+            ],
+        )

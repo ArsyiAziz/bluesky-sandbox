@@ -218,29 +218,38 @@ def action_masks(target: str, indices) -> np.ndarray:
     )
 
 
-# Each aircraft's locked actions, by target name: the axis each commands and
-# the error on it last seen while locked (None until the first reading). A mask
-# locking until captured locks its target when it is applied, and releases it
-# the first step that error does not shrink. Written and read by ActionMask.
+# Each aircraft's locked actions, by target name: the axis each commands, the
+# error on it last seen while locked (None until the first reading), and the sim
+# time a timed lock ends (None for one held until captured). A mask locking
+# until captured releases its lock the first step that error does not shrink;
+# one locking for the clearance's duration, when it runs out. Written and read
+# by ActionMask.
 _ACTION_LOCKS = AircraftMemory(default={})
 
 
-def action_lock(idx: int, target: str) -> tuple[Any, float | None] | None:
-    """``(axis, last_error)`` of ``target``'s lock for the aircraft at ``idx``,
-    or ``None`` when it is not locked."""
+def action_lock(
+    idx: int, target: str
+) -> tuple[Any, float | None, float | None] | None:
+    """``(axis, last_error, until)`` of ``target``'s lock for the aircraft at
+    ``idx``, or ``None`` when it is not locked."""
     return _ACTION_LOCKS.read_one(idx).get(target)
 
 
 def set_action_lock(
-    idx: int, target: str, axis: Any = None, error: float | None = None
+    idx: int,
+    target: str,
+    axis: Any = None,
+    error: float | None = None,
+    until: float | None = None,
 ) -> None:
-    """Lock ``target`` - on ``axis``, the error on it last ``error`` - for the
-    aircraft at ``idx``; with no ``axis``, release it."""
+    """Lock ``target`` - on ``axis``, the error on it last ``error``, until sim
+    time ``until`` if timed - for the aircraft at ``idx``; with no ``axis``,
+    release it."""
     locks = dict(_ACTION_LOCKS.read_one(idx))
     if axis is None:
         locks.pop(target, None)
     else:
-        locks[target] = (axis, error)
+        locks[target] = (axis, error, until)
     _ACTION_LOCKS.write(idx, locks)
 
 

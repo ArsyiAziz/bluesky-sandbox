@@ -97,6 +97,11 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
     flown, or one the aircraft cannot fly any further, such as a level above
     its ceiling - releases it, so no lock outlives its clearance and there is
     no tolerance to choose. A vector cannot be changed or abandoned mid-turn.
+
+    ``lock_for_duration`` holds the lock for the clearance's whole
+    :class:`ClearanceDuration` instead: a vector is not only turned but FLOWN -
+    the leg, until it runs out and own navigation takes it back. Nothing on the
+    axis, resuming own navigation included, is accepted until then.
     """
 
     meta = ActionMeta("action_mask", Unit.SWITCH, mode=ActionMode.SWITCH)
@@ -107,11 +112,18 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
     lock_until_captured: Annotated[
         bool, "once applied, nothing on the target's axis until it is flown"
     ] = False
+    lock_for_duration: Annotated[
+        bool, "once applied, nothing on the target's axis until its duration ends"
+    ] = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "target", action_name(self.target))
         if self.target == self.meta.name:
             raise ValueError("an ActionMask cannot mask another ActionMask.")
+        if self.lock_until_captured and self.lock_for_duration:
+            raise ValueError(
+                "an ActionMask locks until captured or for the duration, not both."
+            )
         super().__post_init__()
 
     def set(self, idx: int, value: float) -> None:
@@ -130,15 +142,22 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
         if not lock_holds(idx, self.target):
             set_action_lock(idx, self.target)
             return False
-        axis = lock[0]
-        set_action_lock(idx, self.target, axis, axis_error(idx, axis))
+        axis, _last, until = lock
+        if until is None:
+            set_action_lock(idx, self.target, axis, axis_error(idx, axis))
         return True
 
-    def target_applied(self, idx: int, axis: ControlAxis | None) -> None:
-        """The target was just applied on ``axis``: lock it while it is flown,
-        if this mask locks and the axis has an error to watch."""
+    def target_applied(
+        self, idx: int, axis: ControlAxis | None, until: float | None = None
+    ) -> None:
+        """The target was just applied on ``axis``: lock it while it is flown
+        (if this mask locks until captured and the axis has an error to watch),
+        or until sim time ``until`` - its clearance's expiry (if it locks for the
+        duration)."""
         if self.lock_until_captured and axis in AXIS_ERRORS:
             set_action_lock(idx, self.target, axis)
+        elif self.lock_for_duration and until is not None:
+            set_action_lock(idx, self.target, axis, until=until)
 
 
 def lock_holds(idx: int, target: str) -> bool:
@@ -150,7 +169,9 @@ def lock_holds(idx: int, target: str) -> bool:
     lock = action_lock(idx, target)
     if lock is None:
         return False
-    axis, last = lock
+    axis, last, until = lock
+    if until is not None:
+        return float(bs.sim.simt) < until
     return last is None or axis_error(idx, axis) < last
 
 
@@ -311,6 +332,12 @@ def check_action_masks(action_fields: Iterable[Any]) -> None:
     twice = sorted({t for t in timed if timed.count(t) > 1})
     if twice:
         raise ValueError(f"more than one ClearanceDuration times {twice}.")
+    for mask in masks:
+        if mask.lock_for_duration and mask.target not in timed:
+            raise ValueError(
+                f"ActionMask on {mask.target!r} locks for the duration, but no "
+                "ClearanceDuration times it."
+            )
     for mask in masks:
         if mask.lock_until_captured and axes[mask.target] not in AXIS_ERRORS:
             raise ValueError(

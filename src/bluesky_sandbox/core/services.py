@@ -13,6 +13,7 @@ from gymnasium.spaces import Box, Dict, MultiBinary, Sequence
 
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.aircraft_table import AircraftTable, Column
+from bluesky_sandbox.interface.fields._state import clearance_expiries
 from bluesky_sandbox.interface.fields.actions.mask import (
     ActionMask,
     ClearanceDuration,
@@ -306,15 +307,9 @@ class ActionDispatcher:
                 field = values[i][0]
                 field.set(idx, field.switch_on_value())
 
-        for mask, _value in masks:
-            if any(
-                applied[i] and field.meta.name == mask.target
-                for i, (field, _v) in enumerate(values)
-            ):
-                mask.target_applied(idx, axis_of.get(mask.target))
-
         # Own navigation taking axes back ends their temporary clearances; a
-        # target applied this step starts (or restarts) its own.
+        # target applied this step starts (or restarts) its own - before its
+        # lock, which may run exactly as long.
         if suppressed_axes:
             end_clearances(idx, suppressed_axes)
         target_applied = {
@@ -328,6 +323,12 @@ class ActionDispatcher:
             applied[i] = target_applied.get(field.target, False)
             if applied[i]:
                 field.start(idx, axis_of.get(field.target), value)
+
+        running = clearance_expiries(idx)
+        for mask, _value in masks:
+            if target_applied.get(mask.target, False):
+                until = running.get(mask.target, (None, None))[1]
+                mask.target_applied(idx, axis_of.get(mask.target), until)
         return applied
 
 
