@@ -532,6 +532,7 @@ from bluesky_sandbox.interface.fields import queryables as qobs
         "wind_kts": repr(env.wind_kts),
         "turbulence_kts": repr(env.turbulence_kts),
         "gust_tau_s": repr(env.gust_tau_s),
+        "fly_arrival_times": repr(env.fly_arrival_times),
         "obs_fields": obs,
         "intruder_obs_fields": intr,
         "critic_obs_fields": critic_obs,

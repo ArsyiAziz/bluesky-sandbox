@@ -299,6 +299,19 @@ class BlueSkyRuntime:
         else:
             bs.stack.stack(f"ADDWPT {callsign} {waypoint_ref}")
 
+    def set_arrival_times(
+        self, callsign: str, times: Sequence[float | None], commit: bool = True
+    ) -> None:
+        """Give each fix of ``callsign``'s route its time as a BlueSky RTA, in
+        route order; ``None`` leaves a fix without one."""
+        idx = self.index(callsign)
+        names = bs.traf.ap.route[idx].wpname
+        for name, time in zip(names, times):
+            if time is not None:
+                bs.stack.stack(f"RTA {callsign} {name} {float(time):.3f}")
+        if commit:
+            simstack.process()
+
     def delete_aircraft(self, acid: str) -> None:
         if acid in bs.traf.id:
             bs.traf.delete(bs.traf.id.index(acid))

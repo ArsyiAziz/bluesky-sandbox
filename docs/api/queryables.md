@@ -23,6 +23,8 @@ Queryables are named scenario entities—such as waypoints, routes, or airspace 
 
 A waypoint can carry `arrival_slack_s` - seconds, or a distribution of them - giving every aircraft whose route crosses it a target arrival time there, assigned at spawn. `obs.ActiveRouteWaypointTimeToGoS`, `obs.ActiveRouteWaypointArrivalErrorS` and `obs.ActiveRouteWaypointHasArrivalTime` read it back, for the active fix or, with `route_offset`, a later one.
 
+With `EnvConfig(fly_arrival_times=True)`, own navigation meets those times: each is handed to BlueSky's RTA, which VNAV turns into a speed - remaining distance over time left, with acceleration and tailwind - within the aircraft's envelope, early and late alike. A speed clearance takes the aircraft off it; resuming LNAV+VNAV hands it back. What speed cannot fix, two fields say in seconds: `obs.ActiveRouteWaypointTimeToAbsorbS`, the earliness left even at minimum speed (only a longer path loses it), and `obs.ActiveRouteWaypointUnrecoverableLateS`, the lateness left even at maximum speed.
+
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.sim.arrival
    :members:

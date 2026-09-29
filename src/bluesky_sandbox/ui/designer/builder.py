@@ -998,6 +998,7 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
             wind_kts=env.wind_kts,
             turbulence_kts=env.turbulence_kts,
             gust_tau_s=env.gust_tau_s,
+            fly_arrival_times=env.fly_arrival_times,
         )
     except BuildError:
         raise

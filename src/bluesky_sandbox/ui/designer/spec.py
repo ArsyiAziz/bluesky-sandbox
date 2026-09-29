@@ -937,6 +937,8 @@ class EnvSpec:
     wind_kts: float = 0.0
     turbulence_kts: float = 0.0
     gust_tau_s: float = 30.0
+    # Own navigation meets each fix's arrival time (BlueSky's RTA).
+    fly_arrival_times: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -987,6 +989,7 @@ class EnvSpec:
             "wind_kts": self.wind_kts,
             "turbulence_kts": self.turbulence_kts,
             "gust_tau_s": self.gust_tau_s,
+            "fly_arrival_times": self.fly_arrival_times,
         }
 
     @classmethod
@@ -1040,6 +1043,7 @@ class EnvSpec:
             wind_kts=d.get("wind_kts", 0.0),
             turbulence_kts=d.get("turbulence_kts", 0.0),
             gust_tau_s=d.get("gust_tau_s", 30.0),
+            fly_arrival_times=bool(d.get("fly_arrival_times", False)),
         )
 
 

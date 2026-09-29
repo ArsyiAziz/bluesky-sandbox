@@ -9,10 +9,10 @@ from typing import Annotated, Any
 
 import bluesky as bs
 import numpy as np
-from bluesky.tools.aero import ft, kts, nm
+from bluesky.tools.aero import ft, kts, nm, vcas2tas
 from bluesky.tools.geo import kwikqdrdist
 
-from bluesky_sandbox.sim.performance.speeds import crossover_speed_state
+from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms, crossover_speed_state
 
 from .._common import (
     _M_TO_FT,
@@ -628,3 +628,75 @@ class ActiveRouteWaypointArrivalErrorS(_ArrivalTimeField):
             return 0.0
         ete = ActiveRouteWaypointEteS(route_offset=self.route_offset)._expected(idx)
         return float(ete) - t
+
+
+@dataclass(frozen=True)
+class _SpeedRangeArrivalField(_ArrivalTimeField):
+    """What the aircraft's speed range can do about its time over the fix at
+    ``route_offset``: the along-route distance left flown at its minimum or its
+    maximum speed, at its current altitude and in the wind it flies in now."""
+
+    low: Annotated[float, "lower bound, s"] = 0.0
+    high: Annotated[float, "upper bound, s"] = 900.0
+
+    def _flat_out_s(self, idx: int, fastest: bool) -> float | None:
+        """Seconds to the fix at the minimum (or maximum) speed, or ``None``."""
+        dist_nm = _route_along_distance_nm(idx, self.route_offset)
+        if dist_nm is None:
+            return None
+        alt = float(bs.traf.alt[idx])
+        cas = float(cas_ceiling_ms(idx)) if fastest else float(bs.traf.perf.vmin[idx])
+        wind = float(bs.traf.gs[idx]) - float(bs.traf.tas[idx])
+        gs = max(float(vcas2tas(cas, alt)) + wind, _MIN_GS_MS)
+        return dist_nm * nm / gs
+
+    def _margin(self, idx: int) -> float:
+        raise NotImplementedError
+
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        return np.array([self._margin(int(i)) for i in indices], dtype=np.float64)
+
+    def _expected(self, idx: int) -> Any:
+        return self._margin(idx)
+
+
+@dataclass(frozen=True)
+class ActiveRouteWaypointTimeToAbsorbS(_SpeedRangeArrivalField):
+    """How early the aircraft would still be over the fix at ``route_offset``
+    flying the rest at its MINIMUM speed: time left minus that flight time, 0
+    when speed alone can lose the earliness (or the fix has no arrival time).
+
+    Above 0, only a longer path - a vector - loses the rest: the timing reason
+    to vector. In seconds, so it means the same for any leg, type or wind.
+    """
+
+    meta = ObsMeta("active_route_waypoint_time_to_absorb_s", Unit.S, ObsQuantity.TIME)
+
+    def _margin(self, idx: int) -> float:
+        time_left = self._time_to_go(idx)
+        slowest = self._flat_out_s(idx, fastest=False)
+        if time_left is None or slowest is None:
+            return 0.0
+        return max(0.0, time_left - slowest)
+
+
+@dataclass(frozen=True)
+class ActiveRouteWaypointUnrecoverableLateS(_SpeedRangeArrivalField):
+    """How late the aircraft would still be over the fix at ``route_offset``
+    flying the rest at its MAXIMUM speed: that flight time minus time left, 0
+    when speed can still make the time (or the fix has no arrival time).
+
+    Above 0, no clearance recovers it - the path is already direct - so the
+    lateness is a cost to avoid adding to, not one to chase.
+    """
+
+    meta = ObsMeta(
+        "active_route_waypoint_unrecoverable_late_s", Unit.S, ObsQuantity.TIME
+    )
+
+    def _margin(self, idx: int) -> float:
+        time_left = self._time_to_go(idx)
+        fastest = self._flat_out_s(idx, fastest=True)
+        if time_left is None or fastest is None:
+            return 0.0
+        return max(0.0, fastest - time_left)

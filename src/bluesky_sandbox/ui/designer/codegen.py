@@ -513,6 +513,7 @@ CONFIG = EnvConfig(
     wind_kts={env_sources["wind_kts"]},
     turbulence_kts={env_sources["turbulence_kts"]},
     gust_tau_s={env_sources["gust_tau_s"]},
+    fly_arrival_times={env_sources["fly_arrival_times"]},
 )
 '''
 

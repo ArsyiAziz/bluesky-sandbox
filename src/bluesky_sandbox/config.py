@@ -295,6 +295,12 @@ class EnvConfig:
     wind_kts: float = 0.0
     turbulence_kts: float = 0.0
     gust_tau_s: float = 30.0
+    # Own navigation meets each fix's target arrival time (``arrival_slack_s``
+    # on the route): the times are handed to BlueSky's RTA, which VNAV turns
+    # into a speed - remaining distance over time left, with acceleration and
+    # tailwind - clamped to the envelope, on fixes with no speed gate. A speed
+    # clearance takes it off (VNAV speed off); resuming LNAV+VNAV hands it back.
+    fly_arrival_times: bool = False
     task_info_providers: list[TaskInfoProvider] = field(default_factory=list)
 
     def bind_env(self, env) -> None:

@@ -552,16 +552,16 @@ class SpawnGenerator:
             )
             if any(slack is not None for slack in route.arrival_slacks):
                 acidx = self.env._runtime.index(callsign)
-                set_arrival_times(
+                times = arrival_times(
                     acidx,
-                    arrival_times(
-                        acidx,
-                        route.targets,
-                        route.arrival_slacks,
-                        rng,
-                        self.env._runtime.sim_time,
-                    ),
+                    route.targets,
+                    route.arrival_slacks,
+                    rng,
+                    self.env._runtime.sim_time,
                 )
+                set_arrival_times(acidx, times)
+                if self.env.config.fly_arrival_times:
+                    self.env._runtime.set_arrival_times(callsign, times)
         # Hooks see a names-only view (tasks may treat the route as a list of
         # waypoint names); the full step list with any per-step crossing
         # restrictions only reaches ADDWPT above.
