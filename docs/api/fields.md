@@ -193,7 +193,7 @@ action_fields = [
 ]
 ```
 
-A temporary deviation - a level or a speed held for a while, then given back - needs a zero that means "back to the plan". The route-relative altitude and speed actions measure from the fix's gate; where the fix has none, `nominal_from_plan=True` measures from the planned value instead of the current one: the spawn level and speed, carried on from each gate the aircraft passes (`bluesky_sandbox.sim.arrival.planned_legs`, the same plan its arrival times are computed from).
+A target arrival time is a speed constraint on its fix, only a derived one: where the fix has no speed gate, its speed is the one that still meets the time from where the aircraft is - faster when late, slower when early. Every reader of a fix's speed agrees: a route-relative speed action's zero is "on schedule", so a speed deviation ends with one clearance of 0, and `ActiveRouteWaypointSpdDiffKts` reads the speed off schedule. Early beyond the minimum speed, only a vector loses the rest.
 
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.interface.fields.actions.mask

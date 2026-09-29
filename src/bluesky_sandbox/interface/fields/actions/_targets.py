@@ -18,8 +18,7 @@ from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms as _cas_ceilin
 from bluesky_sandbox.sim.performance.speeds import crossover_speed_state
 
 from .._common import _M_TO_FT, _MIN_DYNAMIC_SPAN, _MS_TO_KTS
-from .._route import _active_route_waypoint, _route_index
-from .._state import _RoutePlanBacked, route_plan
+from .._route import _active_route_waypoint
 from ..base import ActionField
 
 _FMT = ".6f"
@@ -175,7 +174,6 @@ class _SpeedAxis:
     """Calibrated airspeed: the performance envelope, commanded with ``SPD`` (kts)."""
 
     _route_constraint: ClassVar[int] = 3  # waypoint speed, m/s
-    _plan_value: ClassVar[int] = 1  # planned CAS, m/s
 
     def _envelope_si(self, idx: int) -> tuple[float, float]:
         return float(bs.traf.perf.vmin[idx]), float(bs.traf.perf.vmax[idx])
@@ -202,7 +200,6 @@ class _AltitudeAxis:
     """Altitude: 0 to the performance ceiling, commanded with ``ALT`` (ft)."""
 
     _route_constraint: ClassVar[int] = 2  # waypoint altitude, m
-    _plan_value: ClassVar[int] = 0  # planned level, m
 
     def _envelope_si(self, idx: int) -> tuple[float, float]:
         return 0.0, float(bs.traf.perf.hmax[idx])
@@ -215,30 +212,14 @@ class _AltitudeAxis:
         bs.stack.stack(f"ALT {bs.traf.id[idx]} {target_ft:{_FMT}}")
 
 
-@dataclass(frozen=True)
-class _FromRouteWaypoint(_RoutePlanBacked):
-    """A delta from the active route waypoint's constraint - or, where it has
-    none, from the current value, or with ``nominal_from_plan`` the planned one.
-
-    The plan is what the aircraft flies the leg at unless cleared otherwise
-    (:func:`~bluesky_sandbox.sim.arrival.planned_legs`): its spawn level and
-    speed, carried on from each gate it passes. From the plan, 0 always means
-    "back to the plan", so a temporary deviation - a level or a speed held for
-    a while - ends with one clearance of 0; from the current value, 0 means
-    "stay as you are", and returning takes exactly minus the deviation.
-    """
-
-    nominal_from_plan: Annotated[
-        bool, "where the fix has no gate, 0 is the planned value, not the current one"
-    ] = False
+class _FromRouteWaypoint:
+    """A delta from the active route waypoint's constraint - its gate, or for
+    speed the one its arrival time implies - or, where it has none, from the
+    current value."""
 
     def _nominal(self, idx: int) -> float:
         wp = _active_route_waypoint(idx)
         constraint = None if wp is None else wp[self._route_constraint]
-        if constraint is None and self.nominal_from_plan:
-            k = _route_index(idx)
-            plan = None if k is None else route_plan(idx, k)
-            constraint = None if plan is None else plan[self._plan_value]
         si = self._current_si(idx) if constraint is None else constraint
         return self._convert(si)
 

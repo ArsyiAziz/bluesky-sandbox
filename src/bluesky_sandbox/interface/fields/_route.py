@@ -10,7 +10,10 @@ from typing import Any
 
 import bluesky as bs
 import numpy as np
+from bluesky.tools.aero import nm, vtas2cas
 from bluesky.tools.geo import kwikqdrdist
+
+from ._state import arrival_time
 
 
 def _route_constraint(values: Any, iact: int) -> float | None:
@@ -58,7 +61,12 @@ def _active_route_waypoint(
     convention offset ``0`` already used for a routeless aircraft.
 
     ``alt_m`` and ``spd_ms`` are ``None`` when the waypoint carries no altitude
-    or speed constraint. Shared by the active-route-waypoint observation fields
+    or speed constraint. A target arrival time is a speed constraint too, only
+    a derived one: where the fix has no speed gate but a time to be over it,
+    ``spd_ms`` is the CAS that still meets that time from where the aircraft is
+    (:func:`_scheduled_cas_ms`). So every reader of a fix's speed - the
+    route-relative speed actions, whose zero is then "on schedule", and the
+    speed observations - agrees on it. Shared by the active-route-waypoint observation fields
     and the deviation-from-nominal action fields (which always use ``offset=0``
     - actions command the leg actually being flown, never a future one) so
     both read the same target.
@@ -84,12 +92,28 @@ def _active_route_waypoint(
         return None
     if not (np.isfinite(lat) and np.isfinite(lon)):
         return None
-    return (
-        lat,
-        lon,
-        _route_constraint(route.wpalt, target),
-        _route_constraint(route.wpspd, target),
-    )
+    speed = _route_constraint(route.wpspd, target)
+    if speed is None:
+        speed = _scheduled_cas_ms(idx, target, offset)
+    return (lat, lon, _route_constraint(route.wpalt, target), speed)
+
+
+def _scheduled_cas_ms(idx: int, route_index: int, offset: int) -> float | None:
+    """The CAS that gets the aircraft at ``idx`` over route fix ``route_index``
+    at its target arrival time, or ``None`` when it has none: the along-route
+    distance left over the time to go, in the wind the aircraft flies in now.
+    Overdue, its maximum. Late, that is faster; early, slower - and below its
+    minimum speed, only a longer path loses the rest."""
+    due = arrival_time(idx, route_index)
+    dist_nm = None if due is None else _route_along_distance_nm(idx, offset)
+    if dist_nm is None:
+        return None
+    time_to_go = due - float(bs.sim.simt)
+    if time_to_go <= 0.0:
+        return float(bs.traf.perf.vmax[idx])
+    gs_needed = dist_nm * nm / time_to_go
+    tas_needed = gs_needed + float(bs.traf.tas[idx]) - float(bs.traf.gs[idx])
+    return float(vtas2cas(max(tas_needed, 0.0), float(bs.traf.alt[idx])))
 
 
 def _route_along_distance_nm(idx: int, offset: int) -> float | None:

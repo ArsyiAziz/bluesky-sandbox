@@ -97,8 +97,9 @@ class ActiveRouteWaypointSpdDeltaKts(
     """Command CAS relative to the active route waypoint's speed constraint.
 
     Commands ``waypoint_speed + value`` (knots); ``value == 0`` targets the
-    waypoint's speed constraint. Falls back to current CAS when the waypoint
-    has no speed constraint. The result is clamped to the aircraft's
+    waypoint's speed constraint - its gate, or where it has a target arrival
+    time instead, the speed that meets it: 0 is then "on schedule". Falls back
+    to current CAS when the waypoint has neither. The result is clamped to the aircraft's
     performance speed envelope.
 
     ``low=None`` and ``high=None`` mean the offset bounds are resolved at
