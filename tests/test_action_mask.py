@@ -326,9 +326,20 @@ def test_without_a_mask_the_info_is_as_before():
 # ---- in the designer ------------------------------------------------------- #
 
 
-def test_the_designer_offers_a_mask_with_its_target_to_type_in():
+def test_the_designer_offers_the_designs_actions_for_a_target():
+    # A parameter typed as an action is marked, so the designer lists the
+    # design's own actions for it.
     (mask,) = [f for f in catalog.action_fields() if f["name"] == "ActionMask"]
     assert mask["kind"] == "binary"
-    assert [p for p in mask["params"] if p["name"] == "target"][0]["default"] == ""
+    (target,) = [p for p in mask["params"] if p["name"] == "target"]
+    assert target["default"] == "" and target["refers"] == "action"
     (seen,) = [f for f in catalog.obs_fields() if f["name"] == "PrevActionMasked"]
-    assert "target" in [p["name"] for p in seen["params"]]
+    (target,) = [p for p in seen["params"] if p["name"] == "target"]
+    assert target["refers"] == "action"
+    # Nothing else names an action.
+    marked = [
+        f["name"]
+        for f in catalog.action_fields() + catalog.obs_fields()
+        if any("refers" in p for p in f["params"])
+    ]
+    assert sorted(marked) == ["ActionMask", "PrevActionMasked"]

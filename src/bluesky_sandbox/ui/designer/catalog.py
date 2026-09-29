@@ -173,6 +173,30 @@ def _optional_scalar(hint: Any) -> type | None:
     return None
 
 
+#: What a parameter can name, by the type it is annotated with: a parameter
+#: that takes one of these (its class or an instance) is offered the design's
+#: own - ``ActionMask.target`` the design's actions.
+_REFERABLE: dict[type, str] = {ActionField: "action"}
+
+
+def _refers(hint: Any) -> str | None:
+    """What a parameter annotated ``hint`` names, from :data:`_REFERABLE`."""
+    if hint is None:
+        return None
+    if hasattr(hint, "__metadata__"):  # unwrap Annotated[T, ...]
+        hint = get_args(hint)[0]
+    options = get_args(hint) if get_origin(hint) in (Union, types.UnionType) else (hint,)
+    for option in options:
+        if get_origin(option) is type:  # type[X]
+            option = get_args(option)[0]
+        if not inspect.isclass(option):
+            continue
+        for base, kind in _REFERABLE.items():
+            if issubclass(option, base):
+                return kind
+    return None
+
+
 def _field_params(cls) -> list[dict[str, Any]]:
     """Simple-typed constructor params of a field (e.g. ``low`` / ``high``).
 
@@ -187,6 +211,9 @@ def _field_params(cls) -> list[dict[str, Any]]:
         hints = {}
     def _append(name: str, annotation: Any, default: Any) -> None:
         entry = {"name": name, "type": _type_name(annotation), "default": default}
+        refers = _refers(hints.get(name))
+        if refers is not None:
+            entry["refers"] = refers
         if isinstance(default, (int, float, str, bool)):
             out.append(entry)
         elif default is None and _optional_scalar(hints.get(name, annotation)) is not None:

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type SpecDict } from "../api";
 import { clone, gcOrphanBounds, scaffoldClass, stripClass } from "../specHelpers";
 import { Section } from "./panel/Section";
-import { FieldList } from "./panel/FieldList";
+import { FieldList, namedActions } from "./panel/FieldList";
 import { Picker } from "./panel/Picker";
 import { useRefresh } from "../refresh";
 
@@ -46,6 +46,8 @@ export default function SpacesEditor({
 
   const env = spec.env ?? {};
   const scaffolds = catalog?.scaffolds;
+  // What a field's referring parameter can name: this design's own actions.
+  const references = { action: namedActions(env.action_fields ?? [], catalog?.action_fields ?? []) };
 
   // Add a scaffolded custom field: append a class to custom_fields.py and a ref.
   const addScaffold = (kind: "obs" | "action", listKey: string) => {
@@ -96,6 +98,7 @@ export default function SpacesEditor({
             onChange={(fl) => edit((s) => (s.env.obs_fields = fl))}
             onRemove={(i) => removeField("obs_fields", i)}
             scaffolds={scaffolds}
+            references={references}
             onAddScaffold={() => addScaffold("obs", "obs_fields")}
           />
           <div className="intruder-block">
@@ -120,6 +123,7 @@ export default function SpacesEditor({
                 onChange={(fl) => edit((s) => (s.env.intruder_obs_fields = fl))}
                 onRemove={(i) => removeField("intruder_obs_fields", i)}
                 scaffolds={scaffolds}
+                references={references}
                 onAddScaffold={() => addScaffold("obs", "intruder_obs_fields")}
                 allowRelative
               />
@@ -186,6 +190,7 @@ export default function SpacesEditor({
                 onChange={(fl) => edit((s) => (s.env.critic_obs_fields = fl))}
                 onRemove={(i) => removeField("critic_obs_fields", i)}
                 scaffolds={scaffolds}
+                references={references}
                 onAddScaffold={() => addScaffold("obs", "critic_obs_fields")}
               />
             )}
@@ -212,6 +217,7 @@ export default function SpacesEditor({
                 onChange={(fl) => edit((s) => (s.env.critic_intruder_obs_fields = fl))}
                 onRemove={(i) => removeField("critic_intruder_obs_fields", i)}
                 scaffolds={scaffolds}
+                references={references}
                 onAddScaffold={() => addScaffold("obs", "critic_intruder_obs_fields")}
                 allowRelative
               />
@@ -233,6 +239,7 @@ export default function SpacesEditor({
             onChange={(fl) => edit((s) => (s.env.action_fields = fl))}
             onRemove={(i) => removeField("action_fields", i)}
             scaffolds={scaffolds}
+            references={references}
             onAddScaffold={() => addScaffold("action", "action_fields")}
           />
           <p className="strategy-note muted small">{actionStrategy(env, catalog)}</p>

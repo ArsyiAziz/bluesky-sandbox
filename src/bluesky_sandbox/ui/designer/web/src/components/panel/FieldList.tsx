@@ -19,7 +19,7 @@ export interface FieldOption {
   // Whether the constructor takes a normalizer (a switch action does not).
   normalizable?: boolean;
   pair_only?: boolean;
-  params?: { name: string; type: string; default: any }[];
+  params?: FieldParam[];
   queryable_spec?: QueryableFieldSpec | null;
   profile?: {
     module?: string;
@@ -30,6 +30,27 @@ export interface FieldOption {
     source?: string;
     trail?: TrailEntry[];
   };
+}
+
+// A constructor parameter. `refers` says what it names - "action": one of the
+// design's actions - so it is picked from the design's own (`references`).
+type FieldParam = { name: string; type: string; default: any; refers?: string };
+
+// A choice a referring parameter can take.
+export type Choice = { value: string; label?: string };
+
+// The design's configured actions another field can name, each by its meta
+// name, read from the catalog: not a custom field (its name is unknown here),
+// nor one that itself names an action.
+export function namedActions(fields: SpecDict[], options: FieldOption[]): Choice[] {
+  const out: Choice[] = [];
+  for (const f of fields) {
+    const option = options.find((o) => o.name === f.field);
+    const name = option?.profile?.meta?.name;
+    if (!name || option?.params?.some((p) => p.refers) || out.some((c) => c.value === name)) continue;
+    out.push({ value: name, label: `${name} · ${f.field}` });
+  }
+  return out;
 }
 
 // One function the field's value is computed with (see ui/designer/trail.py).
@@ -68,6 +89,7 @@ export function FieldList({
   onAddScaffold,
   scaffolds,
   allowRelative,
+  references = {},
 }: {
   label: string;
   fields: SpecDict[];
@@ -84,6 +106,8 @@ export function FieldList({
   // When set (intruder list), offer a second picker that turns any ownship
   // observation into an intruder-relative pair field via `.relative_to_own()`.
   allowRelative?: boolean;
+  // What a referring parameter can name, by what it refers to (see FieldParam).
+  references?: Record<string, Choice[]>;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   // A row being dragged, and the gap it would drop into (0 is before the first).
@@ -129,7 +153,7 @@ export function FieldList({
     onChange(fields.map((f, j) => (j === i ? field : f)));
 
   const addField = (name: string) => {
-    const kwargs = defaultKwargsForField(optByName(name), queryables);
+    const kwargs = defaultKwargsForField(optByName(name), queryables, references);
     onChange([...fields, Object.keys(kwargs).length ? { field: name, kwargs } : { field: name }]);
   };
 
@@ -266,6 +290,7 @@ export function FieldList({
           scaffolds={scaffolds}
           kwargs={fields[editing].kwargs ?? {}}
           allowRelative={allowRelative}
+          references={references}
           onChange={(kw) => setKwargs(editing, kw)}
           onFieldChange={(nextField) => setField(editing, nextField)}
           onClose={() => setEditing(null)}
@@ -351,6 +376,7 @@ function FieldConfigModal({
   scaffolds,
   kwargs,
   allowRelative,
+  references,
   onChange,
   onFieldChange,
   onClose,
@@ -365,6 +391,7 @@ function FieldConfigModal({
   scaffolds?: Scaffolds;
   kwargs: SpecDict;
   allowRelative?: boolean;
+  references: Record<string, Choice[]>;
   onChange: (kwargs: SpecDict) => void;
   onFieldChange: (field: SpecDict) => void;
   onClose: () => void;
@@ -520,6 +547,7 @@ function FieldConfigModal({
                   <ParamInput
                     key={p.name}
                     param={p}
+                    choices={p.refers ? references[p.refers] ?? [] : undefined}
                     value={kwargs[p.name]}
                     onChange={(value) => {
                       const next = { ...kwargs };
@@ -782,9 +810,19 @@ function missingQueryableReason(spec: QueryableFieldSpec): string {
   return req.length ? `no compatible ${kind} (${req.join(", ")})` : `no compatible ${kind}`;
 }
 
-function defaultKwargsForField(option: FieldOption | undefined, queryables: Record<string, SpecDict>): SpecDict {
+function defaultKwargsForField(
+  option: FieldOption | undefined,
+  queryables: Record<string, SpecDict>,
+  references: Record<string, Choice[]>,
+): SpecDict {
+  // A parameter naming one of the design's own starts on the first of them.
+  const named: SpecDict = {};
+  for (const p of option?.params ?? []) {
+    const first = p.refers ? references[p.refers]?.[0] : undefined;
+    if (first) named[p.name] = first.value;
+  }
   const spec = option?.queryable_spec ?? option?.profile?.queryable_spec ?? null;
-  if (!spec) return {};
+  if (!spec) return named;
   const cardinality = spec.cardinality ?? "single";
   const compatible = compatibleQueryables(spec, queryables);
   if (cardinality !== "single") {
@@ -792,18 +830,42 @@ function defaultKwargsForField(option: FieldOption | undefined, queryables: Reco
       ? { query_names: compatible.map((q) => q.name) }
       : {};
   }
-  return compatible.length ? { query_name: compatible[0].name } : {};
+  return compatible.length ? { ...named, query_name: compatible[0].name } : named;
 }
 
 function ParamInput({
   param,
+  choices,
   value,
   onChange,
 }: {
-  param: { name: string; type: string; default: any };
+  param: FieldParam;
+  // Set for a referring parameter: what it can name in this design.
+  choices?: Choice[];
   value: any;
   onChange: (value: any | undefined) => void;
 }) {
+  if (choices) {
+    // A value no longer in the design stays listed, so it is visible to fix.
+    const stale = value && !choices.some((c) => c.value === value);
+    const none = choices.length ? `select ${param.refers}` : `no ${param.refers} in this design`;
+    return (
+      <label className="numfield inline">
+        <span>{param.name}</span>
+        <Picker
+          disabled={choices.length === 0 && !stale}
+          placeholder={none}
+          value={value ?? ""}
+          onChange={(v) => onChange(v || undefined)}
+          options={[
+            { value: "", label: none },
+            ...choices,
+            ...(stale ? [{ value: String(value), label: `${value} (not in this design)` }] : []),
+          ]}
+        />
+      </label>
+    );
+  }
   if (typeof param.default === "boolean") {
     return (
       <label className="radio modal-check">
@@ -834,7 +896,7 @@ function ParamInput({
   );
 }
 
-const CUSTOM_FIELD_PARAMS = [
+const CUSTOM_FIELD_PARAMS: FieldParam[] = [
   { name: "low", type: "float", default: null },
   { name: "high", type: "float", default: null },
 ];
