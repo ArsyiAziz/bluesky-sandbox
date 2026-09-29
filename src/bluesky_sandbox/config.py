@@ -8,6 +8,7 @@ import numpy as np
 
 from bluesky_sandbox.interface.fields import actions
 from bluesky_sandbox.interface.fields import observations as obs
+from bluesky_sandbox.interface.fields.actions.clearance import expand_clearances
 from bluesky_sandbox.interface.fields.actions.mask import check_action_masks
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
@@ -202,7 +203,10 @@ class EnvConfig:
         ``context.state["intruders"]["dist_to_own_nm"][i]`` for intruder row ``i``,
         in the observation's intruder order.
     action_fields:
-        Ordered action field objects that form each agent's action vector.
+        Ordered action field objects that form each agent's action vector. An
+        ``actions.Clearance`` is expanded here into the parts it declares - the
+        action, its mask and its duration - and its observations appended to
+        ``obs_fields``.
     allowed_aircraft:
         Whitelist of ICAO aircraft-type designators that agents may fly.
     dt:
@@ -326,6 +330,11 @@ class EnvConfig:
             )
 
     def __post_init__(self) -> None:
+        # Each Clearance becomes the parts it declares - the action, its mask,
+        # its duration - with its observations appended to the ownship block.
+        self.action_fields, self.obs_fields = expand_clearances(
+            list(self.action_fields), list(self.obs_fields)
+        )
         # Before any field validation: ``field.stacked(depth=n)`` puts a LIST in
         # the entry it replaces, so flatten it into real channels first.
         self.obs_fields = _flatten_obs_fields(self.obs_fields)

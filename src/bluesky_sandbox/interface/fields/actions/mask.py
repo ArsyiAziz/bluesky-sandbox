@@ -207,7 +207,7 @@ class ClearanceDuration(ActionField):
         str | type[ActionField] | ActionField,
         "the temporary clearance: its name, its class or an instance",
     ] = ""
-    low: Annotated[float, "shortest clearance, s"] = 60.0
+    low: Annotated[float, "shortest clearance, s"] = 0.0
     high: Annotated[float, "longest clearance, s"] = 600.0
 
     def __post_init__(self) -> None:

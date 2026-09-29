@@ -178,24 +178,25 @@ obs_fields = [obs.PrevActionMasked(target=actions.HdgDeg)]
 
 A masked switch keeps its state, even when a switch turned on requires it, and suppresses nothing. With a mask configured, every agent's `info["action_applied"]` says which values of its action took effect, shaped as the action: 1 for each value applied, 0 for each one skipped, whether masked or on an axis a switch suppressed. A custom loss can use it to leave skipped values out of the policy gradient. `PrevActionMasked` shows the policy what it masked last.
 
-#### Vectoring
+#### Clearances
 
-Masks on the heading, altitude and speed actions turn continuous control into clearances: a masked step says nothing, and the aircraft flies on what it was last given - its route on LNAV and VNAV, or a heading, level or speed. A masked `actions.AutopilotLnavVnav` resumes own navigation when unmasked at 1, and `obs.ApLnavOn` / `obs.ApLnavVnavOn` tell the policy which it is flying. `obs.PrevActionMasked` shows what the policy masked last, and `obs.ActionLocked` whether a clearance on an axis would be refused right now - read by the same rule the dispatcher refuses by. `lock_until_captured=True` makes a clearance a committed unit: once the target is applied, nothing on its axis is accepted while the aircraft is still flying it - while its autopilot error keeps shrinking. The first step it does not, flown or stalled, releases the lock.
+`actions.Clearance` makes an action a clearance - given when the policy decides to, for as long as it decides - in one declaration. `EnvConfig` expands it into the parts it runs on:
 
 ```python
 action_fields = [
-    actions.ActiveRouteWaypointHdgDeltaDeg(),
-    actions.AutopilotLnavVnav(),
-    actions.ActionMask(
-        target=actions.ActiveRouteWaypointHdgDeltaDeg, lock_until_captured=True
+    actions.Clearance(
+        actions.ActiveRouteWaypointHdgDeltaDeg(), duration=(0, 600), lock="duration"
     ),
-    actions.ActionMask(target=actions.AutopilotLnavVnav),
+    actions.Clearance(actions.AutopilotLnavVnav()),  # resume own navigation
 ]
 ```
 
-A target arrival time is a speed constraint on its fix, only a derived one: where the fix has no speed gate, its speed is the one that still meets the time from where the aircraft is - faster when late, slower when early. Every reader of a fix's speed agrees: a route-relative speed action's zero is "on schedule", so a speed deviation ends with one clearance of 0, and `ActiveRouteWaypointSpdDiffKts` reads the speed off schedule. Early beyond the minimum speed, only a vector loses the rest.
+- **The mask** (`ActionMask`): a step the policy says nothing, the aircraft flies on what it was last given - its route on LNAV+VNAV, or the clearance.
+- **`duration=(low, high)`** (`ClearanceDuration`): the policy chooses how long, in seconds; when it runs out, own navigation takes the axis back - fully (LNAV+VNAV, and any RTA) once no axis is under a clearance. An explored clearance can never strand an aircraft.
+- **`lock`**: `"duration"` accepts nothing else on the axis - resuming included - until it runs out, so a vector is flown, not just turned; `"captured"` only until the command is flown.
+- **`observe`** (on by default) adds whether the axis is locked (`ActionLocked`) and the time left (`ClearanceTimeLeftS`) to the ownship observation.
 
-A `ClearanceDuration(target=...)` makes a clearance temporary: its value, in seconds (`low`-`high`, 60-600 by default), is decided with the clearance and applied exactly when its target is. When it runs out, own navigation takes the axis back - fully (LNAV+VNAV, and with them any RTA) once no axis is under a clearance, else to the route value - so an explored clearance never strands an aircraft. A new clearance restarts the clock; resuming LNAV+VNAV ends it. `obs.ClearanceTimeLeftS` shows the time left.
+`obs.ApLnavOn` / `obs.ApLnavVnavOn` tell the policy whether it flies its own navigation. With a mask configured, `info["action_applied"]` says which values took effect. The parts can be declared by hand too:
 
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.interface.fields.actions.mask

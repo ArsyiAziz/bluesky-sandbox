@@ -39,6 +39,9 @@ from .kinematics import (
     SpdKts,
     SpdMs,
 )
+from .clearance import (
+    Clearance,
+)
 from .mask import (
     ActionMask,
     ClearanceDuration,
@@ -83,4 +86,5 @@ __all__ = [
     "CommBroadcast",
     "ActionMask",
     "ClearanceDuration",
+    "Clearance",
 ]

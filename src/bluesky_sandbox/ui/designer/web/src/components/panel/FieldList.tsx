@@ -323,6 +323,12 @@ export function FieldList({
 function fieldParams(f: SpecDict): string {
   const kw: SpecDict = f.kwargs ?? {};
   const parts: string[] = [];
+  if (f.clearance) {
+    const c = f.clearance;
+    const dur = Array.isArray(c.duration) ? ` ${c.duration[0]}-${c.duration[1]} s` : "";
+    const lock = c.lock ? `, lock ${c.lock === "duration" ? "for duration" : "until captured"}` : "";
+    parts.push(`clearance${dur}${lock}`);
+  }
   if (kw.query_name) parts.push(String(kw.query_name));
   if (Array.isArray(kw.query_names) && kw.query_names.length) parts.push(kw.query_names.join(","));
   for (const [k, v] of Object.entries(kw)) {
@@ -589,6 +595,18 @@ function FieldConfigModal({
               />
             )}
             </>)}
+
+            {kind === "action" && (
+              <ClearanceControls
+                value={field.clearance ?? null}
+                onChange={(clearance) => {
+                  const next = { ...field };
+                  if (clearance) next.clearance = clearance;
+                  else delete next.clearance;
+                  onFieldChange(next);
+                }}
+              />
+            )}
           </div>
 
           <div className="modal-pane">
@@ -1067,4 +1085,79 @@ function updateCustomFieldSource(
   const lines = existing.split("\n");
   const next = [...lines.slice(0, block.start), ...replacement.split("\n"), ...lines.slice(block.end)].join("\n");
   return { ...code, [fileName]: next.endsWith("\n") ? next : `${next}\n` };
+}
+
+
+// An action as a clearance (actions.Clearance): the policy gives it when it
+// decides to - its mask - for a duration it chooses, after which own navigation
+// takes the axis back; the lock sets how long nothing else is accepted on the
+// axis. The environment adds the observations (locked, time left).
+function ClearanceControls({
+  value,
+  onChange,
+}: {
+  value: SpecDict | null;
+  onChange: (value: SpecDict | null) => void;
+}) {
+  const duration: [number, number] | null = Array.isArray(value?.duration)
+    ? [Number(value!.duration[0]), Number(value!.duration[1])]
+    : null;
+  const set = (patch: SpecDict) => {
+    const next: SpecDict = { ...(value ?? {}), ...patch };
+    if (next.lock === "duration" && !Array.isArray(next.duration)) next.lock = null;
+    onChange(next);
+  };
+  return (
+    <>
+      <div className="sub-label">clearance</div>
+      <label className="radio modal-check" title="the policy decides when to give it; otherwise the aircraft flies on">
+        <input type="checkbox" checked={value != null} onChange={(e) => onChange(e.target.checked ? { duration: null, lock: null, observe: true } : null)} />
+        a clearance: given only when the policy decides
+      </label>
+      {value != null && (
+        <>
+          <label className="radio modal-check" title="after it, own navigation takes the axis back">
+            <input
+              type="checkbox"
+              checked={duration != null}
+              onChange={(e) => set({ duration: e.target.checked ? [0, 600] : null })}
+            />
+            temporary: lasts a duration the policy chooses
+          </label>
+          {duration && (
+            <>
+              <label className="numfield inline">
+                <span>shortest</span>
+                <input type="number" min={0} step={10} value={duration[0]} onChange={(e) => set({ duration: [Math.max(0, Number(e.target.value)), duration[1]] })} />
+              </label>
+              <label className="numfield inline">
+                <span>longest</span>
+                <input type="number" min={0} step={10} value={duration[1]} onChange={(e) => set({ duration: [duration[0], Math.max(duration[0], Number(e.target.value))] })} />
+              </label>
+            </>
+          )}
+          <label className="numfield inline">
+            <span>lock</span>
+            <Picker
+              searchable={false}
+              placeholder="none"
+              value={value.lock ?? ""}
+              onChange={(v) => set({ lock: v || null })}
+              options={[
+                { value: "", label: "none", description: "another clearance may follow at any step" },
+                { value: "captured", label: "until captured", description: "nothing on the axis until the command is flown" },
+                ...(duration
+                  ? [{ value: "duration", label: "for the duration", description: "nothing on the axis - resume included - until it runs out" }]
+                  : []),
+              ]}
+            />
+          </label>
+          <label className="radio modal-check" title="add whether the axis is locked and the time left to the ownship observation">
+            <input type="checkbox" checked={value.observe !== false} onChange={(e) => set({ observe: e.target.checked })} />
+            observe it (locked, time left)
+          </label>
+        </>
+      )}
+    </>
+  );
 }

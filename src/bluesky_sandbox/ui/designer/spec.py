@@ -837,12 +837,17 @@ class FieldRef:
     ``transform`` optionally names a no-/kw-arg method to call on the
     constructed field, with ``transform_kwargs``. This supports the documented
     intruder pattern ``obs.AltFt().relative_to_own()`` -> a ``PairObsField``.
+
+    ``clearance``, on an action, makes it an ``actions.Clearance``:
+    ``{"duration": [low, high] | None, "lock": "duration" | "captured" | None,
+    "observe": bool}``.
     """
 
     name: str
     kwargs: dict[str, Any] = field(default_factory=dict)
     transform: str | None = None
     transform_kwargs: dict[str, Any] = field(default_factory=dict)
+    clearance: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"field": self.name}
@@ -852,15 +857,19 @@ class FieldRef:
             out["transform"] = self.transform
             if self.transform_kwargs:
                 out["transform_kwargs"] = dict(self.transform_kwargs)
+        if self.clearance is not None:
+            out["clearance"] = dict(self.clearance)
         return out
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> FieldRef:
+        clearance = d.get("clearance")
         return cls(
             name=d["field"],
             kwargs=dict(d.get("kwargs", {})),
             transform=d.get("transform"),
             transform_kwargs=dict(d.get("transform_kwargs", {})),
+            clearance=None if clearance is None else dict(clearance),
         )
 
 

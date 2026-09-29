@@ -31,6 +31,7 @@ from typing import Any
 from bluesky_sandbox.config import EnvConfig, apply_performance_model
 from bluesky_sandbox.env import BATCHABLE_HOOKS
 from bluesky_sandbox.interface.fields import actions as _actions
+from bluesky_sandbox.interface.fields.actions import Clearance
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
@@ -302,11 +303,22 @@ def resolve_obs_field(
     return field_obj
 
 
-def resolve_action_field(ref: FieldRef) -> ActionField:
+def resolve_action_field(ref: FieldRef) -> ActionField | Clearance:
     field_obj = _resolve_field(ref, (_actions,), "action")
     if not isinstance(field_obj, ActionField):
         raise BuildError(f"{ref.name!r} did not resolve to an ActionField.")
-    return field_obj
+    if ref.clearance is None:
+        return field_obj
+    duration = ref.clearance.get("duration")
+    try:
+        return Clearance(
+            field_obj,
+            duration=None if duration is None else tuple(duration),
+            lock=ref.clearance.get("lock"),
+            observe=bool(ref.clearance.get("observe", True)),
+        )
+    except (TypeError, ValueError) as e:
+        raise BuildError(f"clearance on {ref.name!r}: {e}") from e
 
 
 # The scenario itself lives in the core API (bluesky_sandbox.sim.scenario) so that

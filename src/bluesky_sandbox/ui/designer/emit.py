@@ -380,6 +380,16 @@ class _Emitter:
         if ref.transform:
             tkw = ", ".join(f"{k}={self.field_kwarg(v)}" for k, v in ref.transform_kwargs.items())
             expr += f".{ref.transform}({tkw})"
+        if ref.clearance is not None and module_alias == "act":
+            duration = ref.clearance.get("duration")
+            parts = [expr]
+            if duration is not None:
+                parts.append(f"duration=({float(duration[0])!r}, {float(duration[1])!r})")
+            if ref.clearance.get("lock") is not None:
+                parts.append(f"lock={ref.clearance['lock']!r}")
+            if not ref.clearance.get("observe", True):
+                parts.append("observe=False")
+            expr = f"act.Clearance({', '.join(parts)})"
         return expr
 
     def field_kwarg(self, value: Any) -> str:
