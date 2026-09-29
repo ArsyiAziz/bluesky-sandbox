@@ -16,7 +16,7 @@ import pytest
 from bluesky.tools.aero import ft, kts
 
 from bluesky_sandbox.config import EnvConfig
-from bluesky_sandbox.core.layout import action_applied
+from bluesky_sandbox.core.layout import action_applied, flatten_action, unflatten_action
 from bluesky_sandbox.core.services import ActionDispatcher
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as act
@@ -343,3 +343,14 @@ def test_the_designer_offers_the_designs_actions_for_a_target():
         if any("refers" in p for p in f["params"])
     ]
     assert sorted(marked) == ["ActionLocked", "ActionMask", "PrevActionMasked"]
+
+
+def test_a_flat_action_unflattens_to_the_parts_and_back():
+    config = _config([act.HdgDeg(), act.AltFt(), act.ActionMask(target=act.HdgDeg)])
+    flat = np.array([45.0, 12_000.0, 1.0], dtype=np.float32)
+    parts = unflatten_action(config, flat)
+    np.testing.assert_array_equal(parts["continuous"], [45.0, 12_000.0])
+    np.testing.assert_array_equal(parts["binary"], [1])
+    np.testing.assert_array_equal(flatten_action(config, parts), flat)
+    continuous = _config([act.HdgDeg(), act.AltFt()])
+    np.testing.assert_array_equal(unflatten_action(continuous, flat[:2]), flat[:2])

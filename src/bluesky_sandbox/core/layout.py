@@ -36,6 +36,7 @@ __all__ = [
     "observation_layout",
     "observation_parts",
     "state_parts",
+    "unflatten_action",
     "zero_action",
 ]
 
@@ -165,6 +166,33 @@ def action_applied(config: EnvConfig, applied: Sequence[bool] | None = None) -> 
     if set(arrays) <= {ActionKind.CONTINUOUS}:
         return arrays.get(ActionKind.CONTINUOUS, np.zeros(0, dtype=np.float32))
     return {kind.value: values for kind, values in arrays.items()}
+
+
+def unflatten_action(config: EnvConfig, flat: Any) -> Any:
+    """The inverse of :func:`flatten_action`: one vector, fields in config
+    order, as the action space takes it - itself for a ``Box``, a dict of the
+    parts for a ``Dict``. For a trainer that keeps every action as one vector."""
+    flat = np.asarray(flat, dtype=np.float32).reshape(-1)
+    parts = _action_parts(config.action_fields)
+    width = sum(_field_output_size(f) for f in config.action_fields)
+    if flat.size != width:
+        raise ValueError(f"action has {flat.size} values; its fields take {width}.")
+    if set(parts) <= {ActionKind.CONTINUOUS}:
+        return flat
+    out: dict[ActionKind, list[np.ndarray]] = {kind: [] for kind in parts}
+    start = 0
+    for field in config.action_fields:
+        stop = start + _field_output_size(field)
+        out[field.kind].append(flat[start:stop])
+        start = stop
+    return {
+        kind.value: (
+            np.concatenate(values)
+            if kind is ActionKind.CONTINUOUS
+            else np.rint(np.concatenate(values)).astype(np.int8)
+        )
+        for kind, values in out.items()
+    }
 
 
 def zero_action(space: Space) -> Any:
