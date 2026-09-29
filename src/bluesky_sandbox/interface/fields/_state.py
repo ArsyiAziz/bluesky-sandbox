@@ -271,25 +271,49 @@ def arrival_time(idx: int, route_index: int) -> float | None:
 
 
 
-# Each aircraft's temporary clearances, by target name: the axis each commands
-# and the sim time it expires at. Set when a target with a ClearanceDuration is
-# applied; expire_clearances resumes own navigation when they run out.
+# Each aircraft's temporary clearances, by target name: the axis each commands,
+# the sim time it expires at, and - for one counted from capture - the hold it
+# runs for once flown and the axis error last seen while it is still being flown
+# (the expiry None until then). Set when a target with a ClearanceDuration is
+# applied; expire_clearances starts a captured one's clock and resumes own
+# navigation when they run out.
 _CLEARANCE_EXPIRY = AircraftMemory(default={})
 
 
-def clearance_expiries(idx: int) -> dict[str, tuple[Any, float]]:
-    """The aircraft at ``idx``'s running clearances: target -> (axis, expiry s)."""
-    return dict(_CLEARANCE_EXPIRY.read_one(idx))
+def clearance_expiries(idx: int) -> dict[str, tuple[Any, float | None]]:
+    """The aircraft at ``idx``'s running clearances: target -> (axis, expiry s),
+    the expiry ``None`` for one still being flown before its hold starts."""
+    return {t: entry[:2] for t, entry in _CLEARANCE_EXPIRY.read_one(idx).items()}
+
+
+def clearance_holds(idx: int) -> dict[str, tuple[Any, float, float | None]]:
+    """The aircraft at ``idx``'s clearances still being flown before their hold
+    starts: target -> (axis, hold s, axis error last seen)."""
+    return {
+        t: (axis, hold, error)
+        for t, (axis, expires, hold, error) in _CLEARANCE_EXPIRY.read_one(idx).items()
+        if expires is None
+    }
 
 
 def set_clearance_expiry(
-    idx: int, target: str, axis: Any = None, expires_s: float | None = None
+    idx: int,
+    target: str,
+    axis: Any = None,
+    expires_s: float | None = None,
+    *,
+    hold_s: float | None = None,
+    error: float | None = None,
 ) -> None:
     """Start (or restart) ``target``'s clearance for the aircraft at ``idx``,
-    expiring at sim time ``expires_s``; with no ``axis``, end it."""
+    expiring at sim time ``expires_s`` - or, with ``hold_s`` and no expiry,
+    running for ``hold_s`` once captured, the axis error last ``error``; with no
+    ``axis``, end it."""
     running = dict(_CLEARANCE_EXPIRY.read_one(idx))
     if axis is None:
         running.pop(target, None)
+    elif expires_s is None:
+        running[target] = (axis, None, float(hold_s), error)
     else:
-        running[target] = (axis, float(expires_s))
+        running[target] = (axis, float(expires_s), hold_s, None)
     _CLEARANCE_EXPIRY.write(idx, running)

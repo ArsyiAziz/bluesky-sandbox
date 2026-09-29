@@ -60,3 +60,16 @@ def test_a_clearance_is_generated_as_one():
         "duration_normalizer=MinMaxNormalizer(clipped=True))" in config
     )
     assert "act.Clearance(act.SpdKts(" in config
+
+
+def test_a_clearance_counted_from_capture_is_built_and_generated():
+    spec = _with_clearance()
+    spec.env.action_fields[0].clearance["duration_from"] = "captured"
+    config = build_design_config(spec)
+    assert config.action_fields[1].from_capture
+    assert not build_design_config(_with_clearance()).action_fields[1].from_capture
+    files = codegen.generate_task(spec, "Cleared")
+    text = next(t for p, t in files.items() if p.endswith("config.py"))
+    assert "duration_from='captured')" in text
+    again = S.DesignSpec.from_dict(spec.to_dict())
+    assert again.env.action_fields[0].clearance["duration_from"] == "captured"

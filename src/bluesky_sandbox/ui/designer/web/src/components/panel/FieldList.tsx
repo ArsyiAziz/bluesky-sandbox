@@ -1111,6 +1111,7 @@ function ClearanceControls({
     if (!Array.isArray(next.duration)) {
       if (next.lock === "duration") next.lock = null;
       delete next.duration_normalizer;
+      delete next.duration_from;
     }
     onChange(next);
   };
@@ -1162,6 +1163,19 @@ function ClearanceControls({
                   onChange={(v) => set({ duration_normalizer: v })}
                 />
               )}
+              <label className="numfield inline">
+                <span>counted from</span>
+                <Picker
+                  searchable={false}
+                  placeholder="given"
+                  value={value.duration_from ?? "issued"}
+                  onChange={(v) => set({ duration_from: v === "issued" ? null : v })}
+                  options={[
+                    { value: "issued", label: "given", description: "the duration starts when the clearance is given" },
+                    { value: "captured", label: "flown", description: "the duration is a hold that starts once the aircraft has flown the command" },
+                  ]}
+                />
+              </label>
             </>
           )}
           <label className="numfield inline">

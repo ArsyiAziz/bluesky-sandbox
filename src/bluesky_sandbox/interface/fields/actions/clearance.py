@@ -8,7 +8,9 @@ One :class:`Clearance` per action declares everything that makes it one, and
 * an :class:`~.mask.ActionMask` - the policy says nothing unless it clears it,
   and the aircraft flies on what it was last given;
 * with ``duration``, a :class:`~.mask.ClearanceDuration` - how long it lasts,
-  after which own navigation takes the axis back;
+  after which own navigation takes the axis back; counted from when it is given,
+  or - ``duration_from="captured"`` - from when the aircraft has flown it, so
+  every clearance is flown in full and then held;
 * with ``lock``, how long nothing else is accepted on its axis: ``"duration"``,
   the whole clearance (a vector is flown, not just turned), or ``"captured"``,
   until the aircraft has flown the command.
@@ -39,6 +41,7 @@ from .mask import ActionMask, ClearanceDuration
 __all__ = ["Clearance", "expand_clearances"]
 
 Lock = Literal["duration", "captured"]
+DurationFrom = Literal["issued", "captured"]
 
 
 @dataclass(frozen=True)
@@ -47,12 +50,15 @@ class Clearance:
     ``duration`` seconds (a ``(low, high)`` range the policy chooses in; ``None``
     - until changed or resumed), with its axis locked per ``lock``.
     ``duration_normalizer`` scales the duration in the action space, as any
-    action's normalizer does."""
+    action's normalizer does. ``duration_from`` is when the duration starts:
+    when the clearance is given (``"issued"``), or once the aircraft has
+    captured it (``"captured"``) - the duration is then the hold after it."""
 
     action: ActionField
     duration: tuple[float, float] | None = None
     lock: Lock | None = None
     duration_normalizer: Any | None = None
+    duration_from: DurationFrom = "issued"
 
     def __post_init__(self) -> None:
         if not isinstance(self.action, ActionField) or isinstance(
@@ -77,6 +83,13 @@ class Clearance:
             raise ValueError("a Clearance locked for its duration needs a duration.")
         if self.duration_normalizer is not None and self.duration is None:
             raise ValueError("a Clearance's duration_normalizer needs a duration.")
+        if self.duration_from not in ("issued", "captured"):
+            raise ValueError(
+                f"Clearance duration_from must be 'issued' or 'captured', got "
+                f"{self.duration_from!r}."
+            )
+        if self.duration_from == "captured" and self.duration is None:
+            raise ValueError("a Clearance counted from capture needs a duration.")
 
     @property
     def name(self) -> str:
@@ -93,6 +106,7 @@ class Clearance:
                     low=low,
                     high=high,
                     normalizer=self.duration_normalizer,
+                    from_capture=self.duration_from == "captured",
                 )
             )
         fields.append(

@@ -390,6 +390,8 @@ class _Emitter:
             if ref.clearance.get("duration_normalizer") is not None:
                 normalizer = self.field_kwarg(ref.clearance["duration_normalizer"])
                 parts.append(f"duration_normalizer={normalizer}")
+            if ref.clearance.get("duration_from") not in (None, "issued"):
+                parts.append(f"duration_from={ref.clearance['duration_from']!r}")
             expr = f"act.Clearance({', '.join(parts)})"
         return expr
 

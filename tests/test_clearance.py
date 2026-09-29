@@ -76,6 +76,8 @@ def test_expanding_twice_changes_nothing():
             ValueError,
             "duration_normalizer needs a duration",
         ),
+        ({"duration_from": "captured"}, ValueError, "counted from capture needs"),
+        ({"duration": (0, 60), "duration_from": "later"}, ValueError, "must be"),
     ],
     ids=[
         "lock without duration",
@@ -83,6 +85,8 @@ def test_expanding_twice_changes_nothing():
         "reversed",
         "negative",
         "normalizer without duration",
+        "captured without duration",
+        "unknown start",
     ],
 )
 def test_a_clearance_that_cannot_be_made_is_refused(kwargs, error, match):
@@ -100,3 +104,19 @@ def test_a_clearance_wraps_an_action_and_only_one():
 def test_a_duration_on_an_axis_own_navigation_does_not_fly_is_refused():
     with pytest.raises(ValueError, match="commands no axis"):
         _config([act.Clearance(act.CommBroadcast(), duration=(0, 60))])
+
+
+def test_a_clearance_counted_from_capture_times_its_hold():
+    config = _config(
+        [act.Clearance(act.HdgDeg(), duration=(60, 600), duration_from="captured")]
+    )
+    (duration,) = [
+        f for f in config.action_fields if isinstance(f, act.ClearanceDuration)
+    ]
+    assert duration.from_capture and (duration.low, duration.high) == (60.0, 600.0)
+    (issued,) = [
+        f
+        for f in _config([act.Clearance(act.HdgDeg(), duration=(0, 60))]).action_fields
+        if isinstance(f, act.ClearanceDuration)
+    ]
+    assert not issued.from_capture

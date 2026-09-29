@@ -318,6 +318,7 @@ def resolve_action_field(ref: FieldRef) -> ActionField | Clearance:
             duration_normalizer=_resolve_normalizer(
                 ref.clearance.get("duration_normalizer")
             ),
+            duration_from=ref.clearance.get("duration_from") or "issued",
         )
     except (TypeError, ValueError) as e:
         raise BuildError(f"clearance on {ref.name!r}: {e}") from e

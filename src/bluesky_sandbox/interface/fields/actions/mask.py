@@ -5,6 +5,7 @@ step.
 from __future__ import annotations
 
 import inspect
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any
@@ -19,6 +20,7 @@ from .._state import (
     action_lock,
     action_masks,
     clearance_expiries,
+    clearance_holds,
     record_action_mask,
     set_action_lock,
     set_clearance_expiry,
@@ -41,6 +43,7 @@ __all__ = [
     "end_clearances",
     "expire_clearances",
     "lock_holds",
+    "start_holds",
 ]
 
 #: What a clearance on each axis leaves to fly, for a mask locking until
@@ -156,8 +159,13 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
         duration)."""
         if self.lock_until_captured and axis in AXIS_ERRORS:
             set_action_lock(idx, self.target, axis)
-        elif self.lock_for_duration and until is not None:
-            set_action_lock(idx, self.target, axis, until=until)
+        elif self.lock_for_duration:
+            # A clearance counted from capture has no expiry until it is flown:
+            # locked until then, and :func:`expire_clearances` dates the lock
+            # once its clock starts.
+            set_action_lock(
+                idx, self.target, axis, until=math.inf if until is None else until
+            )
 
 
 def lock_holds(idx: int, target: str) -> bool:
@@ -200,6 +208,14 @@ class ClearanceDuration(ActionField):
     So an explored clearance can never strand an aircraft: every deviation
     comes back by itself. :class:`~bluesky_sandbox.interface.fields.observations.
     ClearanceTimeLeftS` shows the time left.
+
+    ``from_capture`` counts the duration from when the clearance is FLOWN rather
+    than given: the clock starts once the aircraft has captured the command -
+    the first step its autopilot error on the axis (:data:`AXIS_ERRORS`) stops
+    shrinking, as a lock until captured releases - and the duration is the hold
+    after it. So every clearance is flown in full and held at least ``low``
+    seconds, whatever its size: there is no instantaneous one, such as 30 kt
+    for a few seconds. Until captured, the time left is the whole hold.
     """
 
     meta = ActionMeta("clearance_duration", Unit.S)
@@ -209,6 +225,9 @@ class ClearanceDuration(ActionField):
     ] = ""
     low: Annotated[float, "shortest clearance, s"] = 0.0
     high: Annotated[float, "longest clearance, s"] = 600.0
+    from_capture: Annotated[
+        bool, "count the duration from when the command is flown, not given"
+    ] = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "target", action_name(self.target))
@@ -227,9 +246,13 @@ class ClearanceDuration(ActionField):
 
     def start(self, idx: int, axis: ControlAxis, value: float) -> None:
         """The target was just applied on ``axis``: run it for ``value`` s,
-        within the range - one at or below 0 runs out on the next step."""
+        within the range - one at or below 0 runs out on the next step - from
+        now, or from its capture (``from_capture``)."""
         duration = max(0.0, min(max(float(value), float(self.low)), float(self.high)))
-        set_clearance_expiry(idx, self.target, axis, float(bs.sim.simt) + duration)
+        if self.from_capture:
+            set_clearance_expiry(idx, self.target, axis, hold_s=duration)
+        else:
+            set_clearance_expiry(idx, self.target, axis, float(bs.sim.simt) + duration)
 
 
 #: The axes a temporary clearance can be on: the ones own navigation flies.
@@ -248,16 +271,23 @@ def end_clearances(idx: int, axes: Iterable[ControlAxis]) -> None:
 def expire_clearances() -> None:
     """Resume own navigation wherever a temporary clearance has run out.
 
-    Called by the environment each step, before the new actions: an expired
-    clearance's lock is released, and the axis resumes - fully (LNAV+VNAV) once
-    no axis of the aircraft is under a clearance, else to its route value.
+    Called by the environment each step, before the new actions: a clearance
+    counted from capture that has been flown starts its clock (:func:`start_holds`);
+    an expired clearance's lock is released, and the axis resumes - fully
+    (LNAV+VNAV) once no axis of the aircraft is under a clearance, else to its
+    route value.
     """
     now = float(bs.sim.simt)
     for idx, acid in enumerate(list(bs.traf.id)):
         running = clearance_expiries(idx)
         if not running:
             continue
-        expired = {t: axis for t, (axis, at) in running.items() if at <= now}
+        if any(at is None for _axis, at in running.values()):
+            start_holds(idx, now)
+            running = clearance_expiries(idx)
+        expired = {
+            t: axis for t, (axis, at) in running.items() if at is not None and at <= now
+        }
         if not expired:
             continue
         for target in expired:
@@ -269,6 +299,21 @@ def expire_clearances() -> None:
             continue
         for axis in expired.values():
             _resume_axis(idx, acid, axis)
+
+
+def start_holds(idx: int, now: float) -> None:
+    """Start the clock of each of the aircraft at ``idx``'s clearances counted
+    from capture that it has now flown: its axis error has not shrunk since it
+    was last read. One still being flown notes the error it read."""
+    for target, (axis, hold, last) in clearance_holds(idx).items():
+        error = axis_error(idx, axis)
+        if last is None or error < last:
+            set_clearance_expiry(idx, target, axis, hold_s=hold, error=error)
+            continue
+        set_clearance_expiry(idx, target, axis, now + hold)
+        lock = action_lock(idx, target)
+        if lock is not None and lock[2] is not None:
+            set_action_lock(idx, target, axis, until=now + hold)
 
 
 def _resume_axis(idx: int, acid: str, axis: ControlAxis) -> None:

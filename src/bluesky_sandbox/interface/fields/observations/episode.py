@@ -18,6 +18,7 @@ from .._state import (
     _TimeInEnvBacked,
     action_masks,
     clearance_expiries,
+    clearance_holds,
 )
 from ..actions.mask import action_name, lock_holds
 from ..base import ActionField, ObsField, ObsMeta, ObsQuantity, Unit
@@ -235,7 +236,8 @@ class ClearanceTimeLeftS(_BroadcastObs, _ActionMaskBacked, ObsField):
     none (see :class:`~bluesky_sandbox.interface.fields.actions.ClearanceDuration`).
 
     With it the policy knows a deviation is running and when own navigation
-    takes the axis back. ``target`` names the action as its duration does.
+    takes the axis back. A clearance counted from capture shows its whole hold
+    while it is still being flown. ``target`` names the action as its duration does.
     """
 
     meta = ObsMeta("clearance_time_left_s", Unit.S, ObsQuantity.TIME)
@@ -257,6 +259,9 @@ class ClearanceTimeLeftS(_BroadcastObs, _ActionMaskBacked, ObsField):
         running = clearance_expiries(idx).get(self.target)
         if running is None:
             return 0.0
+        if running[1] is None:
+            # Still being flown: the whole hold is to come.
+            return clearance_holds(idx)[self.target][1]
         return max(0.0, running[1] - float(bs.sim.simt))
 
     def _values(self, indices: Any) -> Any:

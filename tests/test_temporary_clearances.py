@@ -234,3 +234,92 @@ def test_a_lock_for_the_duration_needs_a_duration():
                 act.ActionMask(target=act.HdgDeg, lock_for_duration=True),
             ],
         )
+
+
+def _captured_env(lock: bool) -> BlueskyEnv:
+    """The heading's duration counted from capture: a hold after the turn."""
+    actions = list(_ACTIONS)
+    actions[2] = act.ClearanceDuration(
+        target=act.HdgDeg, low=60.0, high=600.0, from_capture=True
+    )
+    if lock:
+        actions[5] = act.ActionMask(target=act.HdgDeg, lock_for_duration=True)
+    return BlueskyEnv(
+        scenario=_Empty(),
+        config=EnvConfig(
+            dt=5.0,
+            obs_fields=[*_OBS, obs.ActionLocked(target=act.HdgDeg)],
+            action_fields=actions,
+        ),
+    )
+
+
+@pytest.fixture(scope="module")
+def captured():
+    env = _captured_env(lock=False)
+    yield env
+    env.close()
+
+
+def _turning() -> bool:
+    return abs(float(obs.ApHdgErrorDeg().get(_i()))) > 1.0
+
+
+def test_a_hold_counted_from_capture_starts_once_the_turn_is_flown(captured):
+    agent = _fly(captured)
+    seen, _ = _step(captured, agent, heading=270.0, hdg_s=60.0)  # a U-turn
+    steps = 1
+    while _turning():
+        assert seen[1] == 60.0  # the whole hold, still to come
+        seen, _ = _step(captured, agent)
+        steps += 1
+    assert steps * 5.0 > 30.0  # a turn this size takes a while to fly
+    # Captured: the hold now runs down, and own navigation only takes the
+    # aircraft back a full hold after the turn, not 60 s after the clearance.
+    for _ in range(3):
+        seen, _ = _step(captured, agent)
+    assert 0.0 < seen[1] < 60.0
+    assert not bs.traf.swlnav[_i()]
+    while seen[1] > 0.0:
+        seen, _ = _step(captured, agent)
+        steps += 1
+    assert steps * 5.0 >= 60.0 + 30.0
+    _step(captured, agent)  # run out: resumed before the next actions
+    assert bs.traf.swlnav[_i()] and bs.traf.swvnav[_i()]
+
+
+def test_a_small_turn_is_held_as_long_as_a_big_one(captured):
+    agent = _fly(captured)
+    seen, _ = _step(captured, agent, heading=100.0, hdg_s=60.0)
+    for _ in range(4):
+        seen, _ = _step(captured, agent)
+    # Ten degrees are flown within a step or two: the hold is running.
+    assert 35.0 <= seen[1] < 60.0
+    assert not bs.traf.swlnav[_i()]
+
+
+def test_a_new_clearance_mid_turn_restarts_the_wait_for_capture(captured):
+    agent = _fly(captured)
+    _step(captured, agent, heading=270.0, hdg_s=60.0)
+    seen, _ = _step(captured, agent, heading=200.0, hdg_s=120.0)
+    assert seen[1] == 120.0
+    assert _turning()
+
+
+def test_a_lock_for_the_duration_holds_through_the_turn_and_the_hold():
+    env = _captured_env(lock=True)
+    try:
+        agent = _fly(env)
+        seen, _ = _step(env, agent, heading=270.0, hdg_s=60.0)
+        assert seen[3] == 1.0
+        steps = 1
+        while seen[1] > 0.0:
+            assert seen[3] == 1.0
+            seen, info = _step(env, agent, heading=90.0)  # refused throughout
+            assert info["action_applied"]["continuous"][0] == 0.0
+            steps += 1
+        assert steps * 5.0 >= 60.0 + 30.0
+        seen, _ = _step(env, agent)
+        assert seen[3] == 0.0 and bs.traf.swlnav[_i()]
+    finally:
+        env.close()

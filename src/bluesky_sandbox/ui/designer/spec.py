@@ -840,7 +840,9 @@ class FieldRef:
 
     ``clearance``, on an action, makes it an ``actions.Clearance``:
     ``{"duration": [low, high] | None, "lock": "duration" | "captured" | None,
-    "duration_normalizer": normalizer spec | None}``.
+    "duration_normalizer": normalizer spec | None,
+    "duration_from": "issued" | "captured" | None}`` - a missing
+    ``duration_from`` counts from when it is given.
     """
 
     name: str
