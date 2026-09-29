@@ -134,6 +134,37 @@ class AutopilotLnavVnav(_AutopilotSwitch):
 
 
 @dataclass(frozen=True)
+class ResumeOwnNav(SwitchActionMixin, ActionField):
+    """Resume own navigation: 1 turns LNAV back on, so the aircraft flies its
+    route again from its active waypoint; 0 does nothing.
+
+    The clearance that ends a vector. Unlike :class:`AutopilotLnav`, a 0 never
+    turns LNAV off - the policy says "resume" when it means to and nothing
+    otherwise - so it can sit at 0 every step. Turned on, it suppresses the
+    heading actions that step: a vector and a resume given together resume. An
+    aircraft already on LNAV, or with no active waypoint, is sent nothing.
+    """
+
+    meta = ActionMeta(
+        "resume_own_nav",
+        Unit.SWITCH,
+        control_axis=ControlAxis.AUTOPILOT,
+        mode=ActionMode.SWITCH,
+        suppresses_when_on=(ControlAxis.HEADING,),
+    )
+
+    def set(self, idx: int, value: float) -> None:
+        if not self.switch_command(value) or self.current_switch_state(idx):
+            return
+        if int(getattr(bs.traf.ap.route[idx], "iactwp", -1)) < 0:
+            return
+        bs.stack.stack(f"LNAV {bs.traf.id[idx]} ON")
+
+    def current_switch_state(self, idx: int) -> bool:
+        return bool(bs.traf.swlnav[idx])
+
+
+@dataclass(frozen=True)
 class ApHdgDeltaDeg(ActionField):
     """Set autopilot selected heading relative to current track."""
 

@@ -9,16 +9,32 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from .._state import _ActionMaskBacked, action_masks, record_action_mask
+from .._state import (
+    _ActionMaskBacked,
+    action_locked,
+    action_masks,
+    record_action_mask,
+    set_action_lock,
+)
 from ..base import (
     ActionField,
     ActionMeta,
     ActionMode,
+    ControlAxis,
     SwitchActionMixin,
     Unit,
 )
 
-__all__ = ["ActionMask", "action_name", "check_action_masks"]
+__all__ = ["CAPTURE", "ActionMask", "action_name", "check_action_masks"]
+
+#: How a clearance on each axis counts as flown, for a mask locking until
+#: captured: the autopilot error observation measuring it - its selection
+#: against the aircraft - and the default tolerance, in that field's unit.
+CAPTURE: dict[ControlAxis, tuple[str, float]] = {
+    ControlAxis.HEADING: ("ApHdgErrorDeg", 2.0),
+    ControlAxis.ALTITUDE: ("ApAltErrorFt", 100.0),
+    ControlAxis.SPEED: ("ApCasErrorKts", 2.0),
+}
 
 
 def action_name(target: Any) -> str:
@@ -56,6 +72,12 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
     ``info["action_applied"]`` says which values of each action took effect, and
     :class:`~bluesky_sandbox.interface.fields.observations.PrevActionMasked`
     shows the policy what it masked last.
+
+    ``lock_until_captured`` makes a clearance a committed unit: once the target
+    is applied, it - and every other action commanding its axis, such as a
+    switch that takes that axis over - is skipped until the aircraft has flown
+    it, its autopilot error on that axis within ``capture_tolerance``
+    (:data:`CAPTURE`). A vector cannot be changed or abandoned mid-turn.
     """
 
     meta = ActionMeta("action_mask", Unit.SWITCH, mode=ActionMode.SWITCH)
@@ -63,6 +85,12 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
         str | type[ActionField] | ActionField,
         "the action masked: its name, its class or an instance",
     ] = ""
+    lock_until_captured: Annotated[
+        bool, "once applied, nothing on the target's axis until it is flown"
+    ] = False
+    capture_tolerance: Annotated[
+        float | None, "how close counts as flown, in deg / ft / kt; None = default"
+    ] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "target", action_name(self.target))
@@ -75,6 +103,34 @@ class ActionMask(_ActionMaskBacked, SwitchActionMixin, ActionField):
 
     def current_switch_state(self, idx: int) -> bool:
         return bool(action_masks(self.target, [idx])[0])
+
+    def locked(self, idx: int, axis: ControlAxis | None) -> bool:
+        """Whether the target's axis is locked for the aircraft at ``idx``: its
+        last clearance not yet flown. A lock found flown is released."""
+        if (
+            not self.lock_until_captured
+            or axis not in CAPTURE
+            or not action_locked(idx, self.target)
+        ):
+            return False
+        if _captured(idx, axis, self.capture_tolerance):
+            set_action_lock(idx, self.target, False)
+            return False
+        return True
+
+    def target_applied(self, idx: int) -> None:
+        """The target was just applied: lock it until flown, if this locks."""
+        if self.lock_until_captured:
+            set_action_lock(idx, self.target, True)
+
+
+def _captured(idx: int, axis: ControlAxis | None, tolerance: float | None) -> bool:
+    """Whether the aircraft has flown its clearance on ``axis``."""
+    from .. import observations  # noqa: PLC0415 - observations import this module
+
+    name, default = CAPTURE[axis]
+    error = float(getattr(observations, name)().get(idx))
+    return abs(error) <= (default if tolerance is None else float(tolerance))
 
 
 def check_action_masks(action_fields: Iterable[Any]) -> None:
@@ -104,3 +160,11 @@ def check_action_masks(action_fields: Iterable[Any]) -> None:
     twice = sorted({t for t in targets if targets.count(t) > 1})
     if twice:
         raise ValueError(f"more than one ActionMask masks {twice}.")
+    axes = {f.meta.name: f.meta.control_axis for f in action_fields}
+    for mask in masks:
+        if mask.lock_until_captured and axes[mask.target] not in CAPTURE:
+            raise ValueError(
+                f"ActionMask on {mask.target!r} locks until captured, but that "
+                f"action commands no axis a capture is measured on "
+                f"({', '.join(a.value for a in CAPTURE)})."
+            )

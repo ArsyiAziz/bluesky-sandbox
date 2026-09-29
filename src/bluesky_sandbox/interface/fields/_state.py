@@ -113,6 +113,7 @@ class _ActionMaskBacked:
 
     def on_aircraft_removed(self, acid: str) -> None:
         _ACTION_MASKS.forget(acid)
+        _ACTION_LOCKS.forget(acid)
 
 
 # Each aircraft's most recent *normalized* action. The environment writes it when actions are applied (one BlueSky sim
@@ -207,3 +208,24 @@ def action_masks(target: str, indices) -> np.ndarray:
     return np.array(
         [m.get(target, False) for m in _ACTION_MASKS.read(indices)], dtype=bool
     )
+
+
+# Each aircraft's locked actions, by target name: a mask locking until captured
+# locks its target when it is applied, and releases it once the aircraft has
+# flown it. Written and read by ActionMask.
+_ACTION_LOCKS = AircraftMemory(default=frozenset())
+
+
+def action_locked(idx: int, target: str) -> bool:
+    """Whether ``target`` is locked for the aircraft at ``idx``."""
+    return target in _ACTION_LOCKS.read_one(idx)
+
+
+def set_action_lock(idx: int, target: str, locked: bool) -> None:
+    """Lock ``target`` for the aircraft at ``idx``, or release it."""
+    locks = set(_ACTION_LOCKS.read_one(idx))
+    if locked:
+        locks.add(target)
+    else:
+        locks.discard(target)
+    _ACTION_LOCKS.write(idx, frozenset(locks))

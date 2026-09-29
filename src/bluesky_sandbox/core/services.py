@@ -165,6 +165,16 @@ def _denormalize_action_value(field, values, idx: int):
     return normalizer.denormalize(field, values.tolist(), idx)
 
 
+def _commands(field, axes: set) -> bool:
+    """Whether ``field`` commands one of ``axes``: its own axis, or - a switch -
+    one it takes over when turned on. A mask commands none."""
+    if isinstance(field, ActionMask) or not axes:
+        return False
+    return field.meta.control_axis in axes or bool(
+        set(field.meta.suppresses_when_on) & axes
+    )
+
+
 class ActionDispatcher:
     """Apply configured action fields in dependency-aware order."""
 
@@ -220,14 +230,28 @@ class ActionDispatcher:
 
         An action an :class:`ActionMask` set to 1 names is skipped - a switch
         too, which keeps its state even when a switch turned on requires it - and
-        so is one on an axis a switch turned on suppresses.
+        so is one on an axis a switch turned on suppresses. A mask locking until
+        captured skips everything commanding its target's axis while the last
+        clearance on it is still being flown.
         """
-        masked = {
-            field.target
-            for field, value in values
-            if isinstance(field, ActionMask) and field.switch_command(value)
+        masks = [
+            (field, value) for field, value in values if isinstance(field, ActionMask)
+        ]
+        masked = {mask.target for mask, value in masks if mask.switch_command(value)}
+        axis_of = {
+            field.meta.name: field.meta.control_axis
+            for field, _value in values
+            if not isinstance(field, ActionMask)
         }
-        applied = [field.meta.name not in masked for field, _value in values]
+        locked_axes = {
+            axis_of.get(mask.target)
+            for mask, _value in masks
+            if mask.locked(idx, axis_of.get(mask.target))
+        }
+        applied = [
+            field.meta.name not in masked and not _commands(field, locked_axes)
+            for field, _value in values
+        ]
         # Each switch applied, by position: masks share a name, so a name
         # cannot key them.
         switch_on = {
@@ -277,6 +301,13 @@ class ActionDispatcher:
             if on:
                 field = values[i][0]
                 field.set(idx, field.switch_on_value())
+
+        for mask, _value in masks:
+            if any(
+                applied[i] and field.meta.name == mask.target
+                for i, (field, _v) in enumerate(values)
+            ):
+                mask.target_applied(idx)
         return applied
 
 

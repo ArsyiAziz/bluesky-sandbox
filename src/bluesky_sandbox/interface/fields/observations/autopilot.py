@@ -147,6 +147,25 @@ class ApAltM(_InMeters, _ApAltitude):
 
 
 @dataclass(frozen=True)
+class ApLnavOn(_BroadcastObs, ObsField):
+    """Whether LNAV is enabled: the aircraft flies its own route, rather than a
+    heading it was given."""
+
+    meta = ObsMeta("ap_lnav_on", Unit.SWITCH, ObsQuantity.AUTOPILOT)
+    low: Annotated[float, "autopilot switch off"] = 0.0
+    high: Annotated[float, "autopilot switch on"] = 1.0
+
+    def _values(self, indices: Any) -> Any:
+        return np.asarray(bs.traf.swlnav[_indices_array(indices)], dtype=bool)
+
+    def _expected(self, idx: int) -> Any:
+        return float(bool(bs.traf.swlnav[idx]))
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return self._configured_bounds()
+
+
+@dataclass(frozen=True)
 class ApLnavVnavOn(_BroadcastObs, ObsField):
     """Whether both LNAV and VNAV are enabled."""
 

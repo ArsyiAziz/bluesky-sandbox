@@ -30,6 +30,7 @@ from .autopilot import (
     ApCasMs,
     ApHdgDeg,
     ApHdgErrorDeg,
+    ApLnavOn,
     ApLnavVnavOn,
 )
 from .comm import (
@@ -177,6 +178,7 @@ __all__ = [
     "ApCasMs",
     "ApAltFt",
     "ApAltM",
+    "ApLnavOn",
     "ApLnavVnavOn",
     "ApHdgErrorDeg",
     "ApCasErrorKts",
