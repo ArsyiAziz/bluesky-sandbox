@@ -9,7 +9,7 @@ import bluesky as bs
 import numpy as np
 from bluesky.tools.aero import ft, kts
 from bluesky.tools.geo import qdrdist
-from gymnasium.spaces import Box, Dict, MultiBinary, Sequence
+from gymnasium.spaces import Box, Dict, MultiBinary, MultiDiscrete, Sequence
 
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.aircraft_table import AircraftTable, Column
@@ -23,6 +23,7 @@ from bluesky_sandbox.interface.fields.base import (
     ActionKind,
     PairObsField,
     SwitchActionMixin,
+    action_kind,
 )
 from bluesky_sandbox.interface.task import (
     SeparationContext,
@@ -81,7 +82,7 @@ def _action_parts(fields) -> dict[ActionKind, list]:
     """The action fields in each part of the action space, in config order."""
     parts: dict[ActionKind, list] = {}
     for field in fields:
-        parts.setdefault(field.kind, []).append(field)
+        parts.setdefault(action_kind(field), []).append(field)
     return parts
 
 
@@ -376,9 +377,10 @@ class ObservationAssembler:
         return Dict(spaces)
 
     def action_space(self, agent):
-        """A ``Box`` while every action is continuous; with any binary action, a
-        ``Dict`` of the parts: ``continuous`` a ``Box``, ``binary`` a
-        ``MultiBinary`` - each holding its actions in config order."""
+        """A ``Box`` while every action is continuous; otherwise a ``Dict`` of the
+        parts: ``continuous`` a ``Box``, ``binary`` a ``MultiBinary``,
+        ``discrete`` a ``MultiDiscrete`` (one entry per choice action, its number
+        of choices) - each holding its actions in config order."""
         config = self._config()
         idx = None if agent is None else bs.traf.id.index(agent)
         parts = _action_parts(config.action_fields)
@@ -390,6 +392,10 @@ class ObservationAssembler:
             if kind is ActionKind.CONTINUOUS:
                 low, high = self.field_output_bounds(idx, fields)
                 spaces[kind.value] = Box(low=low, high=high, dtype=np.float32)
+            elif kind is ActionKind.DISCRETE:
+                spaces[kind.value] = MultiDiscrete(
+                    [_field_normalizer(field).n_choices for field in fields]
+                )
             else:
                 width = sum(_field_output_size(field) for field in fields)
                 spaces[kind.value] = MultiBinary(width)

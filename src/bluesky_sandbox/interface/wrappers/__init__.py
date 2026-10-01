@@ -13,6 +13,7 @@ from .observations import (
     Normalizer,
     PowerNormalizer,
     SignedPowerNormalizer,
+    StepNormalizer,
     SymmetricNormalizer,
 )
 
@@ -32,6 +33,7 @@ __all__ = [
     "Recording",
     "SignedPowerNormalizer",
     "StableIDsParallelWrapper",
+    "StepNormalizer",
     "SymmetricNormalizer",
     "TimeLimitWrapper",
 ]

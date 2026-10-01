@@ -5,6 +5,7 @@ from .normalizer import (
     Normalizer,
     PowerNormalizer,
     SignedPowerNormalizer,
+    StepNormalizer,
     SymmetricNormalizer,
 )
 from .pad import IntruderPaddingWrapper
@@ -17,5 +18,6 @@ __all__ = [
     "Normalizer",
     "PowerNormalizer",
     "SignedPowerNormalizer",
+    "StepNormalizer",
     "SymmetricNormalizer",
 ]

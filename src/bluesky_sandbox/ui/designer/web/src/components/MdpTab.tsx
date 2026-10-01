@@ -8,13 +8,35 @@ import { normalizerColor } from "../normColors";
 import { useEpisodeSample } from "../episode";
 import { useRefresh } from "../refresh";
 
-type Curve = { x: number[]; series: number[][]; x_label: string; y_label: string };
+// ``discrete``: an action's choices - x each choice, y what it gives; with
+// ``labels``, each choice's value named (a switch's off / on).
+type Curve = {
+  x: number[];
+  series: number[][];
+  x_label: string;
+  y_label: string;
+  discrete?: boolean;
+  labels?: string[];
+};
+
+const signed = (k: number) => (k > 0 ? `+${number(k)}` : number(k));
+
+// What a discrete action's choices map to, in one line: "0 → off · 1 → on", or
+// "20 choices: −10 … +10 steps → −10,000 … +10,000 ft".
+function choicesText(c: Curve, unit: string): string {
+  const ys = c.series[0] ?? [];
+  if (c.labels) return c.x.map((x, i) => `${number(x)} → ${c.labels![i]}`).join(" · ");
+  const last = c.x.length - 1;
+  const u = unit ? ` ${unit}` : "";
+  return `${c.x.length} choices: ${signed(c.x[0])} … ${signed(c.x[last])} steps → ${signed(ys[0])} … ${signed(ys[last])}${u}`;
+}
 type Field = {
   name: string;
   class: string;
   doc: string;
   columns: [number, number];
   binary: boolean;
+  discrete?: boolean;
   lag: { steps: number; of: string | null; inner: string } | null;
   raw: { width: number; unit: string; low: number | null; high: number | null; per_aircraft: boolean };
   normalizer: { name: string; params: Record<string, unknown> } | null;
@@ -49,12 +71,14 @@ function number(v: number | null | undefined, open = "∞"): string {
 
 const range = (low: number | null, high: number | null) => `[${number(low, "−∞")}, ${number(high)}]`;
 const rawText = (f: Field) =>
-  f.binary
-    ? "{0, 1}"
+  f.curve?.discrete
+    ? choicesText(f.curve, f.raw.unit)
     : `${f.raw.per_aircraft ? "per aircraft" : range(f.raw.low, f.raw.high)}${f.raw.unit ? ` ${f.raw.unit}` : ""}`;
 const outputText = (f: Field) =>
   f.binary
     ? "{0, 1}"
+    : f.discrete
+    ? `a choice: {0, …, ${number(f.output.high[0])}}`
     : !f.normalizer && f.raw.per_aircraft
     ? "per aircraft"
     : f.output.low.length > 1
@@ -284,7 +308,7 @@ function Detail({
   const unit = f.raw.unit ? ` (${f.raw.unit})` : "";
   let lines: Line[] = [];
   let labels = { x: f.curve?.x_label ?? "", y: f.curve?.y_label ?? "" };
-  if (f.curve && aircraft.length) {
+  if (f.curve && aircraft.length && !f.curve.discrete) {
     // The curve is sampled over the position in the range: scale it onto
     // each aircraft's own range, on whichever axis is the raw value.
     const onX = role === "observation" || f.curve.x_label !== "policy's value";
@@ -345,7 +369,12 @@ function Detail({
           </>
         )}
       </dl>
-      {lines.length > 0 ? (
+      {f.curve?.discrete ? (
+        <figure className="mdp-plot">
+          <ChoicesPlot curve={f.curve} unit={f.raw.unit} color={color} />
+          {f.curve_note && <figcaption className="muted small">{f.curve_note}</figcaption>}
+        </figure>
+      ) : lines.length > 0 ? (
         <figure className="mdp-plot">
           <Plot lines={lines} ends={ends} color={color} xLabel={labels.x} yLabel={labels.y} />
           {aircraft.length > 0 && (
@@ -399,16 +428,24 @@ function Sparkline({ curve, color }: { curve: Curve; color: string }) {
   const sy = (y: number) => H - 2 - ((y - lo) / (hi - lo)) * (H - 4);
   return (
     <svg width={W} height={H} aria-hidden="true">
-      {curve.series.map((series, i) => (
-        <polyline
-          key={i}
-          points={series.map((y, j) => `${sx(curve.x[j])},${sy(y)}`).join(" ")}
-          fill="none"
-          stroke={color}
-          strokeWidth={1.5}
-          strokeDasharray={i === 0 ? undefined : "3 2"}
-        />
-      ))}
+      {curve.series.map((series, i) =>
+        curve.discrete ? (
+          <g key={i}>
+            {series.map((y, j) => (
+              <line key={j} x1={sx(curve.x[j])} x2={sx(curve.x[j])} y1={sy(Math.max(lo, Math.min(0, hi)))} y2={sy(y)} stroke={color} strokeWidth={1.2} />
+            ))}
+          </g>
+        ) : (
+          <polyline
+            key={i}
+            points={series.map((y, j) => `${sx(curve.x[j])},${sy(y)}`).join(" ")}
+            fill="none"
+            stroke={color}
+            strokeWidth={1.5}
+            strokeDasharray={i === 0 ? undefined : "3 2"}
+          />
+        ),
+      )}
     </svg>
   );
 }
@@ -562,6 +599,107 @@ function Plot({
               .filter((l) => !l.dashed || lines.length <= 2)
               .map((l) => `${l.label && labeled.length > 1 ? `${l.label} ` : ""}${number(at(l, hoverX))}`)
               .join(", ")}
+          </span>
+        )}
+      </div>
+    </>
+  );
+}
+
+// A discrete action's choices (a step normalizer): one stem per choice, from
+// "no change" to the command it gives, x in steps and y in the field's unit. A
+// 0 that is not a choice is a hollow mark. Hover reads a choice.
+function ChoicesPlot({ curve, unit, color }: { curve: Curve; unit: string; color: string }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const ks = curve.x;
+  const ys = curve.series[0] ?? [];
+  const W = 420;
+  const H = 200;
+  const M = { l: 60, r: 14, t: 12, b: 34 };
+  const kLo = Math.min(...ks, 0);
+  const kHi = Math.max(...ks, 0);
+  let lo = Math.min(...ys, 0);
+  let hi = Math.max(...ys, 0);
+  if (hi - lo < 1e-9) {
+    lo -= 1;
+    hi += 1;
+  }
+  const pad = (hi - lo) * 0.08;
+  lo -= pad;
+  hi += pad;
+  const sx = (k: number) => M.l + ((k - kLo) / (kHi - kLo || 1)) * (W - M.l - M.r);
+  const sy = (y: number) => H - M.b - ((y - lo) / (hi - lo)) * (H - M.t - M.b);
+  const zeroIsChoice = ks.includes(0);
+  const every = Math.max(1, Math.ceil(ks.length / 10));
+  const kTicks = ks.filter((_, i) => i % every === 0 || i === ks.length - 1);
+  const named = curve.labels;
+  const unitText = unit && !named ? ` ${unit}` : "";
+  const valueText = (i: number) => (named ? named[i] : `${number(ys[i])}${unitText}`);
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - r.left) * (W / r.width);
+    let best = 0;
+    for (let i = 1; i < ks.length; i++) if (Math.abs(sx(ks[i]) - x) < Math.abs(sx(ks[best]) - x)) best = i;
+    setHover(best);
+  };
+  return (
+    <>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width={W}
+        height={H}
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
+        role="img"
+        aria-label={`${ks.length} choices: steps to command`}
+      >
+        <line className="mdp-axis" x1={M.l} x2={W - M.r} y1={H - M.b} y2={H - M.b} />
+        <line className="mdp-axis" x1={M.l} x2={M.l} y1={M.t} y2={H - M.b} />
+        {(named ? ys : niceTicks(lo, hi, 4)).map((y, i) => (
+          <g key={`y${i}`}>
+            <line className="mdp-grid" x1={M.l} x2={W - M.r} y1={sy(y)} y2={sy(y)} />
+            <text className="mdp-tick" x={M.l - 6} y={sy(y) + 4} textAnchor="end">
+              {named ? named[i] : number(y)}
+            </text>
+          </g>
+        ))}
+        <line className="mdp-axis" x1={M.l} x2={W - M.r} y1={sy(0)} y2={sy(0)} />
+        {kTicks.map((k) => (
+          <text key={`k${k}`} className="mdp-tick" x={sx(k)} y={H - M.b + 14} textAnchor="middle">
+            {named ? number(k) : signed(k)}
+          </text>
+        ))}
+        <text className="mdp-tick" x={(M.l + W - M.r) / 2} y={H - 4} textAnchor="middle">
+          {named ? "choice" : "steps"}
+        </text>
+        <text className="mdp-tick" x={12} y={(M.t + H - M.b) / 2} textAnchor="middle"
+          transform={`rotate(-90 12 ${(M.t + H - M.b) / 2})`}>
+          {named ? curve.y_label : `command${unitText}`}
+        </text>
+        {ks.map((k, i) => (
+          <g key={i} opacity={hover === null || hover === i ? 1 : 0.45}>
+            <line x1={sx(k)} x2={sx(k)} y1={sy(0)} y2={sy(ys[i])} stroke={color} strokeWidth={hover === i ? 2.5 : 1.5} />
+            <circle cx={sx(k)} cy={sy(ys[i])} r={hover === i ? 4.5 : 3} fill={color} />
+          </g>
+        ))}
+        {!named && !zeroIsChoice && kLo < 0 && kHi > 0 && (
+          <circle cx={sx(0)} cy={sy(0)} r={3.5} fill="var(--bg)" stroke={color} strokeWidth={1.5}>
+            <title>0 steps (no change) is not a choice</title>
+          </circle>
+        )}
+      </svg>
+      <div className="small mdp-readout">
+        {hover === null ? (
+          <span className="muted">
+            {ks.length} choices{named || zeroIsChoice ? "" : " - 0 (no change) is not one"}; hover to read
+          </span>
+        ) : named ? (
+          <span>
+            choice {number(ks[hover])} → {valueText(hover)}
+          </span>
+        ) : (
+          <span>
+            choice {hover}: {signed(ks[hover])} steps → {valueText(hover)}
           </span>
         )}
       </div>

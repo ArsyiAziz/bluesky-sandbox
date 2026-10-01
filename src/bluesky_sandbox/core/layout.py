@@ -2,7 +2,7 @@
 
 A layout names the columns of each part of a space: ``ownship``,
 ``intruders`` (one row per intruder) and the ``critic_*`` blocks of an
-observation; ``continuous`` and ``binary`` of an action. A space with a single
+observation; ``continuous``, ``binary`` and ``discrete`` of an action. A space with a single
 part is that part's space alone - an observation with only ownship fields is
 its ``Box``, as is an action with only continuous fields - but its layout is
 still keyed by the part.
@@ -20,10 +20,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
-from gymnasium.spaces import Box, Dict, MultiBinary, Space
+from gymnasium.spaces import Box, Dict, MultiBinary, MultiDiscrete, Space
 
 from bluesky_sandbox.config import EnvConfig
-from bluesky_sandbox.interface.fields.base import ActionKind
+from bluesky_sandbox.interface.fields.base import ActionKind, action_kind
 
 from .services import _action_parts, _field_output_size
 from .slot import Slot, unique_names
@@ -83,7 +83,8 @@ def observation_layout(config: EnvConfig) -> dict[str, list[Slot]]:
 
 
 def action_layout(config: EnvConfig) -> dict[str, list[Slot]]:
-    """The columns of each action part: ``continuous`` and ``binary``."""
+    """The columns of each action part: ``continuous``, ``binary``,
+    ``discrete``."""
     return {
         kind.value: slots(fields)
         for kind, fields in _action_parts(config.action_fields).items()
@@ -130,9 +131,10 @@ def flatten_action(config: EnvConfig, action: Any) -> np.ndarray:
     out = []
     for field in config.action_fields:
         width = _field_output_size(field)
-        start = cursors[field.kind]
-        out.append(arrays[field.kind][start : start + width])
-        cursors[field.kind] = start + width
+        kind = action_kind(field)
+        start = cursors[kind]
+        out.append(arrays[kind][start : start + width])
+        cursors[kind] = start + width
     return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
 
 
@@ -156,7 +158,7 @@ def action_applied(config: EnvConfig, applied: Sequence[bool] | None = None) -> 
         kind: [] for kind in _action_parts(fields)
     }
     for field, flag in zip(fields, applied):
-        parts[field.kind].append(
+        parts[action_kind(field)].append(
             np.full(_field_output_size(field), float(flag), dtype=np.float32)
         )
     arrays = {
@@ -183,13 +185,14 @@ def unflatten_action(config: EnvConfig, flat: Any) -> Any:
     start = 0
     for field in config.action_fields:
         stop = start + _field_output_size(field)
-        out[field.kind].append(flat[start:stop])
+        out[action_kind(field)].append(flat[start:stop])
         start = stop
+    integer = {ActionKind.BINARY: np.int8, ActionKind.DISCRETE: np.int64}
     return {
         kind.value: (
             np.concatenate(values)
             if kind is ActionKind.CONTINUOUS
-            else np.rint(np.concatenate(values)).astype(np.int8)
+            else np.rint(np.concatenate(values)).astype(integer[kind])
         )
         for kind, values in out.items()
     }
@@ -199,6 +202,6 @@ def zero_action(space: Space) -> Any:
     """An all-zero action for ``space``: a vector, or a dict of the parts."""
     if isinstance(space, Dict):
         return {key: zero_action(part) for key, part in space.spaces.items()}
-    if isinstance(space, (Box, MultiBinary)):
+    if isinstance(space, (Box, MultiBinary, MultiDiscrete)):
         return np.zeros(space.shape, dtype=space.dtype)
     raise TypeError(f"no zero action for {space!r}")

@@ -34,7 +34,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from bluesky_sandbox.interface.fields.base import ActionKind
+from bluesky_sandbox.interface.fields.base import ActionKind, action_kind
 
 from . import setup_code
 from .builder import (
@@ -593,13 +593,13 @@ def sb3_notes(spec: DesignSpec) -> list[dict[str, str]]:
     except Exception:  # a broken design says so elsewhere
         return []
     notes: list[dict[str, str]] = []
-    kinds = {getattr(f, "kind", None) for f in config.action_fields}
-    if ActionKind.BINARY in kinds:
+    kinds = {action_kind(f) for f in config.action_fields}
+    if kinds - {ActionKind.CONTINUOUS}:
         notes.append({
             "level": "error",
-            "message": "A switch (0/1) action makes the action space a Dict of a continuous and a "
-            "binary part; SB3's algorithms do not train Dict action spaces. Drop the switch "
-            "actions, or use the RL template.",
+            "message": "A switch (0/1) or a choice (step) action makes the action space a Dict "
+            "of its parts; SB3's algorithms do not train Dict action spaces. Use only "
+            "continuous actions, or the RL template.",
         })
     if defines_cost(spec.env):
         notes.append({

@@ -37,7 +37,10 @@ def test_each_observation_part_lists_its_fields_in_column_order():
 
 def test_a_raw_field_has_no_normalizer_and_lands_in_its_own_range():
     lat = _fields(mdp_summary(_example_design_spec())["observation"][0])["lat_deg"]
-    assert lat["normalizer"] is None and lat["curve"] is None
+    assert lat["normalizer"] is None
+    # Drawn as it is passed, over its own range.
+    assert lat["curve"]["x"][0] == -90.0 and lat["curve"]["x"][-1] == 90.0
+    assert lat["curve"]["series"][0] == lat["curve"]["x"]
     assert (lat["raw"]["low"], lat["raw"]["high"], lat["raw"]["unit"]) == (
         -90.0,
         90.0,

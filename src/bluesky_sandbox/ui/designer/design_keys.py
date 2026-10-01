@@ -18,7 +18,7 @@ import numpy as np
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.layout import observation_parts, state_parts
 from bluesky_sandbox.core.step_values import ACID, unique_names_of
-from bluesky_sandbox.interface.fields.base import ActionKind
+from bluesky_sandbox.interface.fields.base import ActionKind, action_kind
 from bluesky_sandbox.interface.task import DesignKeys
 
 __all__ = ["Key", "design_keys"]
@@ -78,7 +78,13 @@ def _action(batched: bool, config: EnvConfig, _support: Any) -> list[Key]:
     fields = list(config.action_fields)
     keys = []
     for name, f in zip(unique_names_of(fields), fields):
-        values = "0 or 1" if f.kind is ActionKind.BINARY else _unit(f)
+        kind = action_kind(f)
+        if kind is ActionKind.BINARY:
+            values = "0 or 1"
+        elif kind is ActionKind.DISCRETE:
+            values = f"a choice, 0..{f.normalizer.n_choices - 1}"
+        else:
+            values = _unit(f)
         shape = "ndarray (n_agents,)" if batched else "float"
         keys.append(
             Key(

@@ -53,6 +53,13 @@ class Normalizer(ABC):
     #: custom normalizer answers the question without an isinstance check.
     is_circular: bool = False
 
+    #: True when this normalizer makes an action a CHOICE among a few values:
+    #: the action is an index, ``0 .. n_choices - 1``, in the ``discrete``
+    #: (``MultiDiscrete``) part of the action space, and :meth:`denormalize`
+    #: takes that index. Declared on the base so a layout asks without an
+    #: isinstance check.
+    discrete: bool = False
+
     #: Whether this strategy holds the normalized value to
     #: :attr:`normalized_interval`. Declared on the base so :meth:`_clip` and
     #: :meth:`_action_scalar` are safe for strategies with no notion of
@@ -498,6 +505,115 @@ class CircularNormalizer(Normalizer):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+class StepNormalizer(Normalizer):
+    """Whole steps, as a choice: the action is a DISCRETE choice among
+    ``k * step`` (in the field's own unit), for ``k`` from ``-steps_each_way``
+    to ``+steps_each_way`` - that many steps down, and that many up.
+
+    The action is the index of a step in :meth:`steps` (``0 .. n_choices - 1``)
+    and sits in the ``discrete`` part of the action space, a ``MultiDiscrete``:
+    a policy picks one, as from any discrete space.
+
+    ``StepNormalizer(1000, 10, include_zero=False)`` on a level change: the
+    choices are -10..-1 and +1..+10 levels of 1,000 ft - twenty in all, index 0
+    being 10 levels down.
+
+    ``include_zero``: whether ``k = 0`` - 0 steps, "change nothing" - is one of
+    the choices. Leave it out for a clearance: a call that changes nothing
+    says nothing.
+
+    ``step`` may be left unset (``None``) where something sets it before use: a
+    designer design's grid gives each step action its quantity's step. Used
+    with no step, it is an error.
+
+    Discretizes any scalar field the way air traffic control does - turns in
+    10 deg, levels in 1,000 ft, speeds in 10 kt: a delta counts its steps from
+    its nominal (0 flies on), an absolute field from zero. What the field can
+    command still holds, dynamically: a step is clipped to the action's
+    :meth:`~bluesky_sandbox.interface.fields.base.ActionField.reach` - for a
+    delta its full asymmetric range - so a step the aircraft cannot take now
+    becomes the largest one it can. To put the resulting TARGETS on a grid
+    (flight levels), give the action a ``command_step``.
+    """
+
+    discrete = True
+
+    def __init__(
+        self,
+        step: float | None = None,
+        steps_each_way: int = 10,
+        *,
+        include_zero: bool = True,
+    ) -> None:
+        if step is not None and not float(step) > 0.0:
+            raise ValueError(f"StepNormalizer step must be > 0, got {step!r}")
+        if int(steps_each_way) != steps_each_way or steps_each_way < 1:
+            raise ValueError(
+                "StepNormalizer steps_each_way must be a whole number >= 1, got "
+                f"{steps_each_way!r}"
+            )
+        self.step = None if step is None else float(step)
+        self.steps_each_way = int(steps_each_way)
+        self.include_zero = bool(include_zero)
+
+    def _step(self) -> float:
+        if self.step is None:
+            raise ValueError(
+                "StepNormalizer has no step: give it one, or set the design's grid "
+                "for this action's quantity"
+            )
+        return self.step
+
+    def steps(self) -> list[int]:
+        """Each choice's number of steps ``k``, in index order."""
+        n = self.steps_each_way
+        return [k for k in range(-n, n + 1) if self.include_zero or k != 0]
+
+    @property
+    def n_choices(self) -> int:
+        """How many choices: the size of this action's ``MultiDiscrete`` entry."""
+        return len(self.steps())
+
+    def output_bounds(self, field):
+        return [0.0], [float(self.n_choices - 1)]
+
+    def _reachable(self, field: ActionField, idx: int) -> tuple[int, int]:
+        """The whole steps within the action's reach now (and steps_each_way)."""
+        low, high = field.reach(idx)
+        n = self.steps_each_way
+        step = self._step()
+        k_low = max(-n, math.ceil(low / step - 1e-9))
+        k_high = min(n, math.floor(high / step + 1e-9))
+        return k_low, k_high
+
+    def denormalize(self, field, value, idx):
+        """The command for choice ``value`` (an index into :meth:`steps`)."""
+        if isinstance(value, Sequence):
+            if len(value) != 1:
+                raise ValueError(
+                    f"StepNormalizer expected one choice for {field.meta.name!r}, "
+                    f"got {len(value)}."
+                )
+            value = value[0]
+        steps = self.steps()
+        k = steps[min(max(int(round(float(value))), 0), len(steps) - 1)]
+        k_low, k_high = self._reachable(field, idx)
+        if k_low > k_high:  # no whole step fits the reach: the value nearest it
+            low, high = field.reach(idx)
+            return min(max(0.0, float(low)), float(high))
+        return float(min(max(k, k_low), k_high)) * self._step()
+
+    def normalize(self, field, value, idx):
+        """The choice nearest ``value`` (in the field's unit), as its index."""
+        steps = np.asarray(self.steps(), dtype=np.float64)
+        return [float(np.abs(steps * self._step() - float(value)).argmin())]
+
+    def normalize_many(self, field, values, idx):
+        steps = np.asarray(self.steps(), dtype=np.float64) * self._step()
+        values = np.asarray(values, dtype=np.float64).reshape(-1, 1)
+        return np.abs(values - steps[None]).argmin(-1).reshape(-1, 1).astype(np.float32)
+
 
 def _validated_interval(low, high, owner: str) -> tuple[float, float]:
     """Check a caller-supplied normalized range before it reaches arithmetic.

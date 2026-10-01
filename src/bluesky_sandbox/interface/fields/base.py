@@ -150,10 +150,21 @@ class ActionMode(StrEnum):
 
 class ActionKind(StrEnum):
     """What values an action takes, which sets the part of the action space
-    it is in: ``continuous`` a range, ``binary`` 0 or 1."""
+    it is in: ``continuous`` a range, ``binary`` 0 or 1, ``discrete`` one of a
+    few choices (an index: a ``MultiDiscrete`` entry)."""
 
     CONTINUOUS = "continuous"
     BINARY = "binary"
+    DISCRETE = "discrete"
+
+
+def action_kind(field: Any) -> ActionKind:
+    """The part of the action space ``field`` is in: ``discrete`` when its
+    normalizer makes it a choice among a few values (a ``StepNormalizer``),
+    else its class's :attr:`ActionField.kind`."""
+    if getattr(getattr(field, "normalizer", None), "discrete", False):
+        return ActionKind.DISCRETE
+    return field.kind
 
 
 def _validate_bounds(
@@ -784,6 +795,14 @@ class ActionField(_BoundedField, ABC):
     meta: ClassVar[ActionMeta]
     #: The part of the action space this action is in.
     kind: ClassVar[ActionKind] = ActionKind.CONTINUOUS
+
+    def reach(self, idx: int) -> tuple[float, float]:
+        """The values this action can take for the aircraft at ``idx`` now, in
+        its own unit: its bounds, unless they are narrower than what it can
+        command - a delta's bounds are symmetric about its nominal so a scaled
+        0 stays "no change"; its reach is not. What a normalizer that keeps 0
+        fixed by construction (whole steps) clips to."""
+        return self.bounds(idx)
 
     def __post_init__(self) -> None:
         super().__post_init__()

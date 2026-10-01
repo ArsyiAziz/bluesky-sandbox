@@ -20,7 +20,7 @@ import numpy as np
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.layout import action_layout, observation_parts, slots
 from bluesky_sandbox.core.services import _action_parts, _field_normalizer
-from bluesky_sandbox.interface.fields.base import ActionKind
+from bluesky_sandbox.interface.fields.base import ActionKind, action_kind
 from bluesky_sandbox.interface.fields.observations import LaggedObs, LaggedPair
 
 from .builder import build_design_config
@@ -93,13 +93,29 @@ def _field(
         "doc": (inspect.getdoc(type(field)) or "").split("\n\n", 1)[0],
         "columns": [slot.columns.start, slot.columns.stop],
         # A binary action takes the set {0, 1}; everything else a range.
-        "binary": getattr(field, "kind", None) is ActionKind.BINARY,
+        "binary": role == "action" and action_kind(field) is ActionKind.BINARY,
+        # A choice among a few values: the action is an index (MultiDiscrete).
+        "discrete": role == "action" and action_kind(field) is ActionKind.DISCRETE,
         "lag": _lag(field, part, part_slots),
         "raw": raw,
         "normalizer": None,
         "output": _output(field, normalizer, raw),
         "curve": None,
     }
+    if role == "action" and action_kind(field) is ActionKind.BINARY:
+        # A switch is a choice too: off or on.
+        out["curve"] = {
+            "x": [0.0, 1.0],
+            "series": [[0.0, 1.0]],
+            "x_label": "choice",
+            "y_label": "switch",
+            "discrete": True,
+            "labels": ["off", "on"],
+        }
+    if normalizer is None and out["curve"] is None and raw["width"] == 1:
+        # Raw: the value is passed as is - drawn too, so every field shows what
+        # the policy gets from it.
+        out["curve"] = _identity(raw, role)
     if normalizer is not None:
         out["normalizer"] = {
             "name": type(normalizer).__name__,
@@ -109,6 +125,12 @@ def _field(
             out["curve"] = _curve(field, normalizer, raw, role)
         except Exception as error:  # a mapping it cannot sample is still listed
             out["curve_note"] = str(error)
+        else:
+            if out["curve"].get("discrete"):
+                out["curve_note"] = (
+                    f"{len(out['curve']['x'])} choices; a step an aircraft cannot "
+                    "take now is clipped to the largest one it can"
+                )
     return out
 
 
@@ -182,6 +204,8 @@ def _curve(
     """The mapping sampled: raw -> normalized for an observation, the policy's
     value -> the field's value for an action. A field whose range is each
     aircraft's own is sampled over its position in that range."""
+    if role == "action" and getattr(normalizer, "discrete", False):
+        return _choices(field, normalizer)
     unit_axis = raw["per_aircraft"]
     low, high = (0.0, 1.0) if unit_axis else (raw["low"], raw["high"])
     field = _Ranged(field, low, high)
@@ -213,15 +237,60 @@ def _curve(
     }
 
 
+def _identity(raw: dict[str, Any], role: str) -> dict[str, Any]:
+    """A raw field's mapping: the value as is - over its range, or over the
+    position in each aircraft's own."""
+    unit_axis = raw["per_aircraft"]
+    low, high = (0.0, 1.0) if unit_axis else (raw["low"], raw["high"])
+    xs = list(np.linspace(low, high, _SAMPLES))
+    if role == "observation":
+        labels = (
+            "position in range (low → high)" if unit_axis else "raw",
+            "policy sees (as is)",
+        )
+    else:
+        labels = (
+            "policy's value",
+            "position in range (low → high)" if unit_axis else "command (as is)",
+        )
+    return {
+        "x": [round(float(x), 6) for x in xs],
+        "series": [[round(float(x), 6) for x in xs]],
+        "x_label": labels[0],
+        "y_label": labels[1],
+    }
+
+
+def _choices(field: Any, normalizer: Any) -> dict[str, Any]:
+    """A discrete action (a choice, e.g. whole steps): each choice's number of
+    steps, and the command it gives - before any aircraft's reach clips it - as
+    points, not a curve."""
+    unbounded = _Ranged(field, -1e12, 1e12)
+    steps = normalizer.steps()
+    commands = [
+        float(normalizer.denormalize(unbounded, [i], 0)) for i in range(len(steps))
+    ]
+    return {
+        "x": [float(k) for k in steps],
+        "series": [[round(c, 6) for c in commands]],
+        "x_label": "steps (choice)",
+        "y_label": "command",
+        "discrete": True,
+    }
+
+
 class _Ranged:
-    """``field`` with a given range: what a normalizer scales against, and
-    nothing else changed."""
+    """``field`` with a given range: what a normalizer scales against - its
+    bounds and its reach - and nothing else changed."""
 
     def __init__(self, field: Any, low: float, high: float) -> None:
         self._field = field
         self._range = (low, high)
 
     def bounds(self, idx: int) -> tuple[float, float]:
+        return self._range
+
+    def reach(self, idx: int) -> tuple[float, float]:
         return self._range
 
     def __getattr__(self, name: str) -> Any:

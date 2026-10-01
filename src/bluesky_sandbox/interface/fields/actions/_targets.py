@@ -8,6 +8,7 @@ absolute (:class:`_AbsoluteTarget`) or a delta from a nominal
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Annotated, ClassVar
 
@@ -64,6 +65,13 @@ class _TargetAction(ActionField):
     action is absolute or a delta. Where they leave nothing reachable - an
     aircraft already below the floor - the floor wins, so the command is never
     below it.
+
+    ``command_step`` puts the target on a grid, the way air traffic control
+    assigns them: flight levels (1,000 ft), speeds in 10 kt. A delta then
+    counts from the grid point nearest the nominal, so "+1,000 ft" from
+    23,344 ft is 24,000 ft - a level, not 24,344 ft. Paired with a
+    :class:`~bluesky_sandbox.interface.wrappers.observations.normalizer.StepNormalizer`
+    of the same step, every value an action takes is a whole number of levels.
     """
 
     _scale: ClassVar[float] = 1.0
@@ -75,9 +83,19 @@ class _TargetAction(ActionField):
         float | None,
         "highest target ever commanded, in this action's unit; None = none",
     ] = None
+    command_step: Annotated[
+        float | None,
+        "grid the target is put on, in this action's unit (e.g. 1000 ft: flight "
+        "levels); None = none",
+    ] = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.command_step is not None and not self.command_step > 0.0:
+            raise ValueError(
+                f"{type(self).__name__} command_step must be > 0.0 or None, got "
+                f"{self.command_step}"
+            )
         for name in ("command_floor", "command_ceiling"):
             value = getattr(self, name)
             if value is not None and value < 0.0:
@@ -128,6 +146,25 @@ class _TargetAction(ActionField):
         """What a zero delta means: the current value, unless overridden."""
         return self._convert(self._current_si(idx))
 
+    def _snap(self, value: float) -> float:
+        """``value`` on the ``command_step`` grid (unchanged without one)."""
+        if self.command_step is None:
+            return float(value)
+        step = float(self.command_step)
+        return round(float(value) / step) * step
+
+    def _target(self, target: float, low: float, high: float) -> float:
+        """``target`` within ``[low, high]`` - on the grid point nearest it
+        that is, where the grid has one there."""
+        if self.command_step is None:
+            return _clip(target, low, high)
+        step = float(self.command_step)
+        grid_low = math.ceil(low / step - 1e-9) * step
+        grid_high = math.floor(high / step + 1e-9) * step
+        if grid_low > grid_high:  # no level fits: the nearest reachable value
+            return _clip(target, low, high)
+        return _clip(self._snap(target), grid_low, grid_high)
+
 
 @dataclass(frozen=True)
 class _AbsoluteTarget(_TargetAction):
@@ -135,7 +172,7 @@ class _AbsoluteTarget(_TargetAction):
 
     def set(self, idx: int, value: float) -> None:
         low, high = self.bounds(idx)
-        self._command(idx, _clip(value, low, high))
+        self._command(idx, self._target(value, low, high))
 
     def bounds(self, idx: int) -> tuple[float, float]:
         low, high = self._dynamic_or_configured_bounds(
@@ -146,12 +183,28 @@ class _AbsoluteTarget(_TargetAction):
 
 @dataclass(frozen=True)
 class _DeltaTarget(_TargetAction):
-    """The action value is added to a nominal (``_nominal``) to make the target."""
+    """The action value is added to a nominal (``_nominal``) to make the target
+    - with a ``command_step``, to the grid point nearest the nominal."""
+
+    def _anchor(self, idx: int) -> float:
+        """What the delta counts from: the nominal, on the grid if there is one."""
+        return self._snap(self._nominal(idx))
 
     def set(self, idx: int, value: float) -> None:
         low, high = self._commandable(idx)
-        target = self._nominal(idx) + value
-        self._command(idx, min(max(target, low), high))
+        self._command(idx, self._target(self._anchor(idx) + value, low, high))
+
+    def reach(self, idx: int) -> tuple[float, float]:
+        """Every delta that can be commanded now - asymmetric, unlike
+        :meth:`bounds`: near its ceiling an aircraft can still descend all the
+        way. Configured bounds still hold."""
+        low, high = self._commandable(idx)
+        anchor = self._anchor(idx)
+        low, high = low - anchor, high - anchor
+        if self.bounds_overridden:
+            b_low, b_high = self.bounds(idx)
+            low, high = max(low, b_low), min(high, b_high)
+        return low, high
 
     def bounds(self, idx: int) -> tuple[float, float]:
         def resolve() -> tuple[float, float]:
@@ -160,7 +213,7 @@ class _DeltaTarget(_TargetAction):
             # nominal. A nominal outside that - an aircraft above its ceiling or
             # below the floor - anchors at the nearest limit, and every value
             # commands that limit.
-            nominal = self._nominal(idx)
+            nominal = self._anchor(idx)
             low, high = self._commandable(idx)
             anchor = min(max(nominal, low), high)
             delta_low, delta_high = _reachable_delta(low, high, anchor)

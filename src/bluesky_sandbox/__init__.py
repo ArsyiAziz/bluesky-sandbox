@@ -76,6 +76,7 @@ from bluesky_sandbox.interface.wrappers import (
     CircularNormalizer,
     MinMaxNormalizer,
     Normalizer,
+    StepNormalizer,
     SymmetricNormalizer,
 )
 from bluesky_sandbox.sim.bounds import (
@@ -191,6 +192,7 @@ __all__ = [
     "SpawnRegion",
     "StepBatch",
     "StepEvent",
+    "StepNormalizer",
     "StepTime",
     "SwitchActionMixin",
     "SymmetricNormalizer",
