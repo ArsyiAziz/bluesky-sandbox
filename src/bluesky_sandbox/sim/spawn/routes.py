@@ -45,6 +45,8 @@ _WAYPOINT_STEP_KEYS = (
     "sample_alt_from_envelope",
     "sample_speed_from_envelope",
     "envelope_alt_floor_ft",
+    "alt_step_ft",
+    "alt_from_start",
     "reachable_from_spawn",
     "reachable_vs_fraction",
     "arrival_slack_s",
@@ -80,7 +82,13 @@ def _validate_waypoint_step(step: dict) -> str:
             f"route waypoint step {step!r} has unknown keys {sorted(extra)}; "
             f"allowed: {list(_WAYPOINT_STEP_KEYS)}."
         )
-    for key in ("speed_kts", "alt_ft", "envelope_alt_floor_ft", "reachable_vs_fraction"):
+    for key in (
+        "speed_kts",
+        "alt_ft",
+        "envelope_alt_floor_ft",
+        "alt_step_ft",
+        "reachable_vs_fraction",
+    ):
         value = step.get(key)
         if value is not None and not (
             isinstance(value, (int, float)) and math.isfinite(value)
@@ -92,10 +100,18 @@ def _validate_waypoint_step(step: dict) -> str:
         step.get("speed_kts") is not None
         and step.get("alt_ft") is None
         and not bool(step.get("sample_alt_from_envelope", False))
+        and not bool(step.get("alt_from_start", False))
     ):
         raise ValueError(
-            "route waypoint step speed_kts requires alt_ft or "
-            f"sample_alt_from_envelope=True, got {step!r}."
+            "route waypoint step speed_kts requires alt_ft, "
+            f"sample_alt_from_envelope=True or alt_from_start=True, got {step!r}."
+        )
+    if bool(step.get("alt_from_start", False)) and (
+        step.get("alt_ft") is not None or bool(step.get("sample_alt_from_envelope", False))
+    ):
+        raise ValueError(
+            "route waypoint step alt_from_start takes the altitude the leg starts "
+            f"at; it cannot also set alt_ft or sample it, got {step!r}."
         )
     if bool(step.get("reachable_from_spawn", False)) and not bool(
         step.get("sample_alt_from_envelope", False)

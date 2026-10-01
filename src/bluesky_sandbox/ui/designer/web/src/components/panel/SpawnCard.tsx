@@ -236,6 +236,7 @@ export function SpawnBody({
           label="alt ft"
           step={500}
           allowEnvelope
+          envelopeLevels
           value={region.params?.alt_ft}
           defaultValue={{ type: "envelope" }}
           onChange={(v) => {

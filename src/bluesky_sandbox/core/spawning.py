@@ -424,17 +424,30 @@ class SpawnGenerator:
                     alt_max_ft = (
                         reach_hi if alt_max_ft is None else min(alt_max_ft, reach_hi)
                     )
+            alt_step_ft = step.get("alt_step_ft")
             env_alt, env_cas = feasible_alt_cas(
                 acidx,
                 rng,
                 float(step.get("envelope_alt_floor_ft", 1000.0)),
                 alt_min_ft=alt_min_ft,
                 alt_max_ft=alt_max_ft,
+                alt_step_ft=None if alt_step_ft is None else float(alt_step_ft),
             )
             if sample_alt_from_envelope:
                 alt = env_alt
             if sample_speed_from_envelope:
                 speed = env_cas
+
+        if step.get("alt_from_start", False):
+            # Level flight: the fix is at the altitude the leg starts at - the
+            # aircraft's own, for the first leg - on the level grid if given.
+            if from_state is not None and from_state[2] is not None:
+                alt = float(from_state[2])
+            else:
+                alt = float(bs.traf.alt[self.env._runtime.index(callsign)]) / ft
+            level = step.get("alt_step_ft")
+            if level is not None:
+                alt = round(alt / float(level)) * float(level)
 
         resolved_target = WaypointTarget(
             lat=float(lat),

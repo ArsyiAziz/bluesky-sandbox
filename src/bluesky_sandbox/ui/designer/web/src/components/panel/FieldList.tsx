@@ -36,6 +36,9 @@ export interface FieldOption {
 // design's actions - so it is picked from the design's own (`references`).
 type FieldParam = { name: string; type: string; default: any; refers?: string };
 
+// The design grid's key for an action's control axis (Config > Grid).
+const GRID_KEY: Record<string, string> = { altitude: "alt_ft", speed: "spd_kts", heading: "hdg_deg" };
+
 // A choice a referring parameter can take.
 export type Choice = { value: string; label?: string };
 
@@ -91,6 +94,7 @@ export function FieldList({
   allowRelative,
   references = {},
   addLabel,
+  grid,
 }: {
   label: string;
   fields: SpecDict[];
@@ -111,6 +115,9 @@ export function FieldList({
   references?: Record<string, Choice[]>;
   // The add picker's placeholder, when the label alone does not say it.
   addLabel?: string;
+  // The design's grid (Config > Grid): what an unset step of a step action
+  // takes, shown in its editor.
+  grid?: Record<string, number>;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   // A row being dragged, and the gap it would drop into (0 is before the first).
@@ -295,6 +302,7 @@ export function FieldList({
           kwargs={fields[editing].kwargs ?? {}}
           allowRelative={allowRelative}
           references={references}
+          grid={grid}
           onChange={(kw) => setKwargs(editing, kw)}
           onFieldChange={(nextField) => setField(editing, nextField)}
           onClose={() => setEditing(null)}
@@ -387,6 +395,7 @@ function FieldConfigModal({
   kwargs,
   allowRelative,
   references,
+  grid,
   onChange,
   onFieldChange,
   onClose,
@@ -402,10 +411,14 @@ function FieldConfigModal({
   kwargs: SpecDict;
   allowRelative?: boolean;
   references: Record<string, Choice[]>;
+  grid?: Record<string, number>;
   onChange: (kwargs: SpecDict) => void;
   onFieldChange: (field: SpecDict) => void;
   onClose: () => void;
 }) {
+  // The grid step this action takes when its step normalizer leaves it unset.
+  const gridKey = GRID_KEY[option?.profile?.meta?.control_axis ?? ""];
+  const gridStep = gridKey && grid ? grid[gridKey] : undefined;
   const queryableSpec = option?.queryable_spec ?? option?.profile?.queryable_spec ?? null;
   const params = (option?.params ?? []).filter((p) => p.name !== "normalizer");
   const genericParams = params.filter((p) => !isQueryableParam(p.name, queryableSpec));
@@ -592,6 +605,13 @@ function FieldConfigModal({
                 option={normalizers.find((n) => n.name === normalizer.name)}
                 value={normalizer}
                 onChange={(value) => setNormalizer(value)}
+                inherited={
+                  gridStep !== undefined
+                    ? { step: `from the grid: ${gridStep}` }
+                    : gridKey
+                      ? { step: "set it, or the design's grid" }
+                      : undefined
+                }
               />
             )}
             </>)}
@@ -859,10 +879,13 @@ function defaultKwargsForField(
 function ParamInput({
   param,
   choices,
+  placeholder,
   value,
   onChange,
 }: {
   param: FieldParam;
+  // What an unset value stands for, when it is not the parameter's default.
+  placeholder?: string;
   // Set for a referring parameter: what it can name in this design.
   choices?: Choice[];
   value: any;
@@ -907,7 +930,7 @@ function ParamInput({
       <span>{param.name}</span>
       <input
         type={isNum ? "number" : "text"}
-        placeholder={param.default === null ? "default" : String(param.default)}
+        placeholder={placeholder ?? (param.default === null ? "default" : String(param.default))}
         value={value ?? ""}
         onChange={(e) => {
           const raw = e.target.value;
@@ -928,10 +951,13 @@ function NormalizerParams({
   option,
   value,
   onChange,
+  inherited,
 }: {
   option?: FieldOption;
   value: SpecDict;
   onChange: (value: SpecDict) => void;
+  // A parameter left unset that something else fills in, and what it says.
+  inherited?: Record<string, string>;
 }) {
   const params = option?.params ?? [];
   if (!params.length) return option?.doc ? <div className="muted small field-doc">{option.doc}</div> : null;
@@ -942,6 +968,7 @@ function NormalizerParams({
         <ParamInput
           key={p.name}
           param={p}
+          placeholder={inherited?.[p.name]}
           value={value.kwargs?.[p.name]}
           onChange={(paramValue) => {
             const kwargs = { ...(value.kwargs ?? {}) };

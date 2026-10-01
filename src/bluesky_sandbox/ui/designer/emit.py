@@ -22,7 +22,9 @@ from .spec import (
     EnvSpec,
     FieldRef,
     extract_waypoint_field_dists,
+    envelope_alt_step,
     is_envelope_value,
+    is_start_value,
     is_value_distribution,
     representative_value,
 )
@@ -101,10 +103,12 @@ class _Emitter:
                 return f"Categorical({v['weights']!r})"
             if t == "envelope":
                 self.uses_envelope_sample = True
-                floor = v.get("alt_floor_ft")
-                if floor is None:
-                    return "EnvelopeSample()"
-                return f"EnvelopeSample(alt_floor_ft={self.num(floor)})"
+                kwargs = [
+                    f"{key}={self.num(v[key])}"
+                    for key in ("alt_floor_ft", "alt_step_ft")
+                    if v.get(key) is not None
+                ]
+                return f"EnvelopeSample({', '.join(kwargs)})"
         if isinstance(v, dict):
             items = []
             for key, value in v.items():
@@ -268,7 +272,7 @@ class _Emitter:
             val = d.get(k)
             if val is None:
                 continue
-            if k in ("alt_ft", "speed_kts") and is_envelope_value(val):
+            if k in ("alt_ft", "speed_kts") and (is_envelope_value(val) or is_start_value(val)):
                 continue
             args.append(f"{k}={self.num(representative_value(val))}")
         if d.get("tsas_region") is not None:
@@ -591,6 +595,12 @@ def _route_sampling_metadata(spec: DesignSpec) -> dict[str, dict[str, Any]]:
             out.setdefault(name, {})["sample"] = q["sample"]
         if is_envelope_value(q.get("alt_ft")):
             out.setdefault(name, {})["sample_alt_from_envelope"] = True
+            if (step := envelope_alt_step(q["alt_ft"])) is not None:
+                out[name]["alt_step_ft"] = step
+        elif is_start_value(q.get("alt_ft")):
+            out.setdefault(name, {})["alt_from_start"] = True
+            if (step := envelope_alt_step(q["alt_ft"])) is not None:
+                out[name]["alt_step_ft"] = step
         if is_envelope_value(q.get("speed_kts")):
             out.setdefault(name, {})["sample_speed_from_envelope"] = True
         if "envelope_alt_floor_ft" in q and name in out:

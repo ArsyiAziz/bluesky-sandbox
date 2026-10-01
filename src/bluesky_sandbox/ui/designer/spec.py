@@ -190,6 +190,8 @@ def dump_value(v: Any) -> Any:
         out: dict[str, Any] = {"type": "envelope"}
         if v.alt_floor_ft != 1000.0:
             out["alt_floor_ft"] = float(v.alt_floor_ft)
+        if v.alt_step_ft is not None:
+            out["alt_step_ft"] = float(v.alt_step_ft)
         return out
     if isinstance(v, tuple) and len(v) == 2:
         return {"type": "range", "low": _f(v[0]), "high": _f(v[1])}
@@ -252,7 +254,11 @@ def load_value(d: Any) -> Any:
                 return Bounded(dist, lo, hi, mode=d.get("mode", "truncate"))
             return dist
         if t == "envelope":
-            return EnvelopeSample(alt_floor_ft=float(d.get("alt_floor_ft", 1000.0)))
+            step = d.get("alt_step_ft")
+            return EnvelopeSample(
+                alt_floor_ft=float(d.get("alt_floor_ft", 1000.0)),
+                alt_step_ft=None if step is None else float(step),
+            )
         raise SpecError(f"unknown value type {t!r}")
     if isinstance(d, list):
         return [load_value(x) for x in d]
@@ -286,6 +292,46 @@ def is_envelope_value(v: Any) -> bool:
     return isinstance(v, EnvelopeSample) or (
         isinstance(v, dict) and v.get("type") == "envelope"
     )
+
+
+# Marker for a waypoint altitude taken from where its leg starts - the
+# aircraft's own altitude for the first leg: level flight to the fix.
+START_VALUE = {"type": "start"}
+
+
+def is_start_value(v: Any) -> bool:
+    """True when ``v`` marks a waypoint altitude taken from the leg's start."""
+    return isinstance(v, dict) and v.get("type") == "start"
+
+
+#: The quantities a design's ``grid`` sets a step for.
+GRID_KEYS = ("alt_ft", "spd_kts", "hdg_deg")
+
+
+def validated_grid(grid: Any) -> dict[str, float] | None:
+    """A design's ``grid`` - ``{"alt_ft": 1000, "spd_kts": 10, "hdg_deg": 10}``,
+    any key omitted or None - as positive floats, or None for no grid."""
+    if grid is None:
+        return None
+    if not isinstance(grid, dict):
+        raise SpecError(f"grid must be a mapping of {GRID_KEYS}, got {grid!r}")
+    unknown = sorted(set(grid) - set(GRID_KEYS))
+    if unknown:
+        raise SpecError(f"grid has unknown keys {unknown}; allowed: {list(GRID_KEYS)}")
+    out = {}
+    for key, value in grid.items():
+        if value is None:
+            continue
+        if not isinstance(value, (int, float)) or not value > 0:
+            raise SpecError(f"grid {key} must be a positive number, got {value!r}")
+        out[key] = float(value)
+    return out or None
+
+
+def envelope_alt_step(v: Any) -> float | None:
+    """The level grid of an envelope marker (``alt_step_ft``), None without."""
+    step = v.alt_step_ft if isinstance(v, EnvelopeSample) else v.get("alt_step_ft")
+    return None if step is None else float(step)
 
 
 def representative_value(v: Any) -> Any:
@@ -1108,6 +1154,12 @@ class DesignSpec:
     nav_cycle: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     version: int = _SPEC_VERSION
+    # One step per quantity for the whole design - {"alt_ft": 1000, "spd_kts":
+    # 10, "hdg_deg": 10}, any omitted - applied by ``grid.apply_grid`` before
+    # building: the altitude grid is the levels every target altitude is on
+    # (fixes, level clearances, and spawns marked "levels"), and every step
+    # action's step comes from its quantity's. None: no grid.
+    grid: dict[str, float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1123,6 +1175,7 @@ class DesignSpec:
             "code": dict(self.code),
             "scenario_setup": self.scenario_setup,
             "scenario_hooks": dict(self.scenario_hooks),
+            **({"grid": dict(self.grid)} if self.grid else {}),
         }
 
     @classmethod
@@ -1161,6 +1214,8 @@ class DesignSpec:
             nav_cycle=d.get("nav_cycle"),
             metadata=dict(d.get("metadata", {})),
             version=version,
+            # Absent in pre-grid designs: no grid.
+            grid=validated_grid(d.get("grid")),
         )
 
     def to_json(self, **json_kwargs: Any) -> str:

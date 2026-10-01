@@ -405,6 +405,7 @@ class SpawnRegion:
                         v.alt_floor_ft,
                         alt_min_ft=alt_min_ft,
                         alt_max_ft=alt_max_ft,
+                        alt_step_ft=v.alt_step_ft,
                     )
             elif isinstance(v, (int, float)):
                 pos[k] = float(v)

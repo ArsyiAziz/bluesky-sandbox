@@ -13,7 +13,7 @@ import { useRefresh } from "../../refresh";
 
 export type SampledValue = number | { type: string; [k: string]: any } | undefined;
 
-type Mode = "fixed" | "range" | "dist" | "envelope" | "choice";
+type Mode = "fixed" | "range" | "dist" | "envelope" | "start" | "choice";
 type DistInfo = { name: string; params: string[]; discrete: boolean; unbounded?: boolean; signature: string };
 
 function modeOf(v: SampledValue): Mode {
@@ -21,6 +21,7 @@ function modeOf(v: SampledValue): Mode {
     if (v.type === "range") return "range";
     if (v.type === "scipy") return "dist";
     if (v.type === "envelope") return "envelope";
+    if (v.type === "start") return "start";
     if (v.type === "categorical") return "choice";
   }
   return "fixed";
@@ -95,6 +96,8 @@ export function OptValueField({
   step = 1,
   int = false,
   allowEnvelope = false,
+  envelopeLevels = false,
+  allowStart = false,
   disabled = false,
   disabledReason,
   hint,
@@ -108,6 +111,8 @@ export function OptValueField({
   step?: number;
   int?: boolean;
   allowEnvelope?: boolean;
+  envelopeLevels?: boolean;
+  allowStart?: boolean;
   disabled?: boolean;
   disabledReason?: string;
 }) {
@@ -142,7 +147,16 @@ export function OptValueField({
         <div className="muted small">{disabledReason}</div>
       )}
       {showEditor && (
-        <ValueField label="" value={value} onChange={onChange} step={step} int={int} allowEnvelope={allowEnvelope} />
+        <ValueField
+          label=""
+          value={value}
+          onChange={onChange}
+          step={step}
+          int={int}
+          allowEnvelope={allowEnvelope}
+          envelopeLevels={envelopeLevels}
+          allowStart={allowStart}
+        />
       )}
     </div>
   );
@@ -155,6 +169,8 @@ export function ValueField({
   step = 1,
   int = false,
   allowEnvelope = false,
+  envelopeLevels = false,
+  allowStart = false,
   allowChoice = false,
 }: {
   label: string;
@@ -165,6 +181,10 @@ export function ValueField({
   // When set, offers an "aircraft envelope" mode for per-aircraft draws within
   // the flight envelope (no fixed value to edit).
   allowEnvelope?: boolean;
+  // An altitude: its envelope draw may be put on the design grid's levels.
+  envelopeLevels?: boolean;
+  // A waypoint altitude: may be the altitude its leg starts at (level flight).
+  allowStart?: boolean;
   // When set, offers a weighted-choice mode: a categorical over *numeric*
   // values (e.g. a count-scale mixture: 90% x1.0, 10% x0.08).
   allowChoice?: boolean;
@@ -195,6 +215,7 @@ export function ValueField({
     }
     else if (m === "range") onChange({ type: "range", low: range.low ?? 0, high: range.high ?? 0 });
     else if (m === "envelope") onChange({ type: "envelope" });
+    else if (m === "start") onChange({ type: "start" });
     else if (m === "choice") {
       const seed = Number.isFinite(fixed) ? fixed : 1;
       onChange({ type: "categorical", weights: { [String(seed)]: 1 } });
@@ -255,11 +276,41 @@ export function ValueField({
             ...(allowEnvelope
               ? [{ value: "envelope", label: "aircraft envelope", description: "per-aircraft draw within the flight envelope" }]
               : []),
+            ...(allowStart
+              ? [{ value: "start", label: "where it starts", description: "the altitude the aircraft starts the leg at: level flight to here" }]
+              : []),
           ]}
         />
       </div>
       {mode === "envelope" && (
-        <div className="muted small">sampled per aircraft within the flight envelope</div>
+        <>
+          <div className="muted small">sampled per aircraft within the flight envelope</div>
+          {envelopeLevels && (() => {
+            const env = value as { type: string; levels?: boolean; alt_step_ft?: number };
+            const onLevels = env.levels === true || env.alt_step_ft !== undefined;
+            const setLevels = (on: boolean) => {
+              const { levels: _l, alt_step_ft: _s, ...rest } = env;
+              onChange(on ? { ...rest, levels: true } : rest);
+            };
+            return (
+              <label
+                className="radio"
+                title="draw the altitude among the design grid's levels (Config > Grid) instead of anywhere"
+              >
+                <input type="checkbox" checked={onLevels} onChange={(e) => setLevels(e.target.checked)} />
+                on the grid's levels
+                {env.alt_step_ft !== undefined && !env.levels && (
+                  <span className="muted small"> (every {env.alt_step_ft} ft, set in the design)</span>
+                )}
+              </label>
+            );
+          })()}
+        </>
+      )}
+      {mode === "start" && (
+        <div className="muted small">
+          the altitude the aircraft starts this leg at - its spawn altitude for the first: level flight to here (on the grid's levels, if the design has them)
+        </div>
       )}
       {mode === "choice" && (
         <div className="vf-dist">

@@ -50,6 +50,7 @@ from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from . import setup_code
 from . import spec as _spec
+from .grid import apply_grid
 from .spec import SCENARIO_HOOKS, DesignSpec, EnvSpec, FieldRef
 
 
@@ -432,6 +433,15 @@ def _resolved_geometry(
                 q, _ = _spec.extract_waypoint_field_dists(q)
                 if _spec.is_envelope_value(q.get("alt_ft")):
                     route_sampling.setdefault(name, {})["sample_alt_from_envelope"] = True
+                    # Levels: the envelope marker's grid, for the per-aircraft draw.
+                    if (step := _spec.envelope_alt_step(q["alt_ft"])) is not None:
+                        route_sampling[name]["alt_step_ft"] = step
+                    q["alt_ft"] = None
+                elif _spec.is_start_value(q.get("alt_ft")):
+                    # Level flight: the altitude the leg starts at, per aircraft.
+                    route_sampling.setdefault(name, {})["alt_from_start"] = True
+                    if (step := _spec.envelope_alt_step(q["alt_ft"])) is not None:
+                        route_sampling[name]["alt_step_ft"] = step
                     q["alt_ft"] = None
                 if _spec.is_envelope_value(q.get("speed_kts")):
                     route_sampling.setdefault(name, {})["sample_speed_from_envelope"] = True
@@ -864,7 +874,7 @@ def build_scenario(spec: DesignSpec) -> DesignScenario:
     # model BlueSky is set to. This path never builds an EnvConfig (the
     # designer previews geometry without one), so nothing else would set it.
     apply_performance_model(getattr(spec.env, "performance_model", None))
-    spec = with_inferred_temporal_tracking(spec)
+    spec = with_inferred_temporal_tracking(apply_grid(spec))
     region_dists = _region_param_dists(spec)
     # Named-region bounds for tooling (the designer preview): starts canonical
     # (representative shapes); the episode hook refreshes it with each sample's
@@ -954,6 +964,7 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
     # Make the design's editable code (reward/termination, custom fields)
     # importable before resolving any references to it.
     install_code_modules(spec.code)
+    spec = apply_grid(spec)
 
     env = spec.env
     for hook in BATCHABLE_HOOKS:

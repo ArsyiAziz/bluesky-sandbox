@@ -72,9 +72,33 @@ def _warn_type_data_mismatch(kind: str) -> None:
 
 @dataclass(frozen=True)
 class EnvelopeSample:
-    """Marker for values sampled from an aircraft's feasible flight envelope."""
+    """Marker for values sampled from an aircraft's feasible flight envelope.
+
+    ``alt_step_ft`` puts a sampled altitude on a grid - 1,000 ft: flight
+    levels, the way traffic is assigned them - drawn uniformly among the levels
+    the envelope (and any band) allows. None draws it continuously.
+    """
 
     alt_floor_ft: float = 1000.0
+    alt_step_ft: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.alt_step_ft is not None and not self.alt_step_ft > 0.0:
+            raise ValueError(
+                f"EnvelopeSample alt_step_ft must be > 0 or None, got {self.alt_step_ft!r}"
+            )
+
+
+def _draw_alt(rng, lo: float, hi: float, step: float | None) -> float:
+    """An altitude in ``[lo, hi]``: uniform, or - with ``step`` - uniform
+    among the levels (multiples of ``step``) in it; continuous where no level
+    fits."""
+    if step is not None:
+        k_lo = math.ceil(lo / step - 1e-9)
+        k_hi = math.floor(hi / step + 1e-9)
+        if k_lo <= k_hi:
+            return float(int(rng.integers(k_lo, k_hi + 1)) * step)
+    return float(rng.uniform(lo, hi))
 
 
 def _aircraft_limits(actype: str) -> dict | None:
@@ -161,8 +185,10 @@ def feasible_alt_for_type(
     alt_floor_ft: float = 1000.0,
     alt_min_ft: float | None = None,
     alt_max_ft: float | None = None,
+    alt_step_ft: float | None = None,
 ) -> float:
-    """Draw a feasible spawn altitude for an aircraft type before creation.
+    """Draw a feasible spawn altitude for an aircraft type before creation -
+    on ``alt_step_ft`` levels if given (:func:`_draw_alt`).
 
     Capped at the altitude the type can actually be flown to
     (:func:`_flyable_ceiling_ft`), not its certified ceiling: BlueSky clamps
@@ -181,7 +207,7 @@ def feasible_alt_for_type(
     hi = ceiling_ft if alt_max_ft is None else min(ceiling_ft, float(alt_max_ft))
     if hi < lo:
         lo, hi = floor_ft, ceiling_ft
-    return float(rng.uniform(lo, hi))
+    return _draw_alt(rng, lo, hi, alt_step_ft)
 
 
 def fleet_ceiling_ft(actypes) -> float | None:
@@ -360,8 +386,10 @@ def feasible_alt_cas(
     alt_floor_ft: float = 1000.0,
     alt_min_ft: float | None = None,
     alt_max_ft: float | None = None,
+    alt_step_ft: float | None = None,
 ) -> tuple[float, float]:
-    """Draw a feasible ``(alt_ft, cas_kts)`` for the aircraft at ``acidx``.
+    """Draw a feasible ``(alt_ft, cas_kts)`` for the aircraft at ``acidx`` -
+    its altitude on ``alt_step_ft`` levels if given (:func:`_draw_alt`).
 
     ``alt`` is uniform over ``[alt_floor_ft, ceiling]`` (the live performance
     ceiling), and ``cas`` is uniform over the holdable speed envelope at that
@@ -379,7 +407,7 @@ def feasible_alt_cas(
     if hi < lo:
         # Band lies outside the envelope -> fall back to the full envelope.
         lo, hi = floor_ft, ceiling_ft
-    alt_ft = float(rng.uniform(lo, hi))
+    alt_ft = _draw_alt(rng, lo, hi, alt_step_ft)
 
     vmin_kt, vmax_kt = _speed_band_kt(acidx, alt_ft)
     cas_kt = float(rng.uniform(vmin_kt, vmax_kt))

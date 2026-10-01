@@ -302,6 +302,7 @@ function WaypointConstraints({ q, onChange }: { q: SpecDict; onChange: (q: SpecD
         label="alt ft"
         step={500}
         allowEnvelope
+        allowStart
         value={q.alt_ft}
         defaultValue={3000}
         onChange={(v) => {
