@@ -9,7 +9,15 @@ export type PlacedAircraft = { acid: string; lat: number; lon: number; track_deg
 export type TestSituations = { ok: boolean; errors?: string[]; situations?: Record<string, PlacedAircraft[]> };
 // One result of a test run: a field checked against itself, or a case.
 export type FieldCheckResult = { kind: "field"; field: string; ok: boolean; findings: string[]; notes?: string[] };
-export type CaseRunResult = { kind: "case"; index: number; ok: boolean; got: number | number[] | null; error: string | null };
+export type CaseRunResult = {
+  kind: "case";
+  index: number;
+  ok: boolean;
+  got: number | number[] | null;
+  error: string | null;
+  // What it saw on the way: the action given, the command, what it holds, the value read.
+  saw?: string[];
+};
 // One of the design's own pytest tests (tests.files).
 export type TestFileResult = {
   kind: "test";

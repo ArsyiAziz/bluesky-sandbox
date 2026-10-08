@@ -22,19 +22,21 @@ a built-in, a custom one - is read the same way.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Iterable
 from dataclasses import KW_ONLY, dataclass
 from typing import Any
 
 import bluesky as bs
 import numpy as np
+from bluesky.stack.stackbase import Stack
 
+from bluesky_sandbox.core import services
+from bluesky_sandbox.core.services import value_on_grid
 from bluesky_sandbox.interface.fields.base import EnvBound
 
 from .placement import Situation, place, without_traffic
 
-__all__ = ["Case", "CaseResult", "CasesReport", "Tolerance", "fly", "run_cases"]
+__all__ = ["Case", "CaseResult", "CasesReport", "Tolerance", "run_cases"]
 
 
 @dataclass(frozen=True)
@@ -63,9 +65,10 @@ class Case:
     ``expected`` within ``tolerance``.
 
     First, optionally, action ``apply`` is given ``value`` (in its own unit,
-    as a step applies it), and the episode flies ``fly_s`` seconds - whole
-    env steps, no action given. An action read as ``field`` gives what it
-    holds: apply +1,000 ft and read it, for the level it commands."""
+    as a step applies it) and BlueSky takes the command. An action read as
+    ``field`` gives what it holds: apply +1,000 ft and read it, for the level
+    it commands. Nothing is flown: what the field says is tested, not how
+    BlueSky flies it."""
 
     situation: str
     field: Any
@@ -76,14 +79,11 @@ class Case:
     aircraft: str | None = None
     apply: Any = None
     value: float | None = None
-    fly_s: float = 0.0
     note: str = ""
 
     def __post_init__(self) -> None:
         if (self.apply is None) != (self.value is None):
             raise ValueError("a case applies an action and a value, or neither")
-        if self.fly_s < 0:
-            raise ValueError(f"a case cannot fly {self.fly_s} s")
 
 
 @dataclass(frozen=True)
@@ -93,14 +93,20 @@ class CaseResult:
     ok: bool = False
     #: Why it could not be read at all, where it could not.
     error: str | None = None
+    #: What it saw on the way, in order: the action given and set, the
+    #: command BlueSky took, what the action holds, the value raw and
+    #: normalized - where the case went wrong, when it did.
+    saw: tuple[str, ...] = ()
 
     def __str__(self) -> str:
         c = self.case
         what = f"{c.situation}: {type(c.field).__name__}" + (f" of {c.of}" if c.of else "")
         if self.error is not None:
-            return f"{what} - {self.error}"
-        mark = "ok" if self.ok else "FAILED"
-        return f"{what} = {_fmt(self.got)}, expected {_fmt(c.expected)} - {mark}"
+            line = f"{what} - {self.error}"
+        else:
+            mark = "ok" if self.ok else "FAILED"
+            line = f"{what} = {_fmt(self.got)}, expected {_fmt(c.expected)} - {mark}"
+        return line + (f" ({' · '.join(self.saw)})" if self.saw and not self.ok else "")
 
 
 @dataclass(frozen=True)
@@ -150,30 +156,46 @@ def _run(env: Any, situations: dict[str, Situation], case: Case) -> CaseResult:
         at = place(env, situation)
     except Exception as e:  # noqa: BLE001
         return CaseResult(case, error=f"situation {situation.name!r} could not be set up: {type(e).__name__}: {e}")
+    saw: list[str] = []
     try:
         if case.apply is not None:
-            if not env.apply_action(at[names[0]], _bound(case.apply, env), case.value):
-                return CaseResult(case, error=f"{type(case.apply).__name__} was held back (a mask on it)")
+            action = _bound(case.apply, env)
+            idx = at[names[0]]
+            queued = len(Stack.cmdstack)
+            set_to = value_on_grid(action, case.value, idx)
+            given = f"gave {_fmt(case.value)}" + ("" if _same(set_to, case.value) else f" → on its grid {_fmt(set_to)}")
+            saw.append(given)
+            if not env.apply_action(idx, action, case.value):
+                return CaseResult(case, error=f"{type(action).__name__} was held back (a mask on it)", saw=tuple(saw))
+            saw += [f"command {line}" for line, _sender in Stack.cmdstack[queued:]]
             bs.stack.process()
-        if case.fly_s > 0:
-            fly(env, case.fly_s)
-            gone = [n for n in names if n not in bs.traf.id]
-            if gone:
-                return CaseResult(case, error=f"{gone[0]!r} left the episode while it flew")
-            at = {acid: bs.traf.id.index(acid) for acid in names}
-        got = _bound(case.field, env).case_value(at[names[0]], other=at[case.of] if case.of else None)
+            held = getattr(action, "held", None)
+            if held is not None:
+                saw.append(f"holds {_fmt(held(idx))}" if held(idx) is not None else "holds nothing")
+        field = _bound(case.field, env)
+        own, other = at[names[0]], at[case.of] if case.of else None
+        got = field.case_value(own, other=other)
+        # Reading the action it applied is what it holds - said above.
+        if got is not None and not (case.apply is not None and type(case.field) is type(case.apply)):
+            saw.append(_reading(field, got, own))
     except Exception as e:  # noqa: BLE001
-        return CaseResult(case, error=f"{type(e).__name__}: {e}")
+        return CaseResult(case, error=f"{type(e).__name__}: {e}", saw=tuple(saw))
     if got is None:
-        return CaseResult(case, error=f"{type(case.field).__name__} gives no value here (it holds no clearance)")
-    return CaseResult(case, got=got, ok=case.tolerance.holds(got, case.expected))
+        return CaseResult(case, error=f"{type(case.field).__name__} gives no value here (it holds no clearance)", saw=tuple(saw))
+    return CaseResult(case, got=got, ok=case.tolerance.holds(got, case.expected), saw=tuple(saw))
 
 
-def fly(env: Any, seconds: float) -> None:
-    """Let ``env`` fly ``seconds`` - whole env steps, rounded up - with no
-    action given: each aircraft holds what it was last told."""
-    for _ in range(math.ceil(seconds / float(env.config.dt) - 1e-9)):
-        env.step({})
+def _reading(field: Any, got: Any, own: int) -> str:
+    """``got`` as the field read it - and normalized, for an observation
+    with a normalizer (what the policy sees)."""
+    line = f"{type(field).__name__} raw {_fmt(got)}"
+    if getattr(field, "normalizer", None) is not None and callable(getattr(field, "values_and_bounds", None)):
+        line += f" → normalized {_fmt(services._normalize_field_value(field, got, own))}"
+    return line
+
+
+def _same(a: Any, b: Any) -> bool:
+    return bool(np.allclose(np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)))
 
 
 def _bound(field: Any, env: Any) -> Any:

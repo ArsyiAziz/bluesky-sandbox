@@ -5198,3 +5198,12 @@ div.tests-sketch {
   color: var(--warning-text);
   margin-left: 16px;
 }
+/* What a failed case saw on the way: given, command, holds, read. */
+.tests-saw {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  white-space: normal;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 220px;
+}

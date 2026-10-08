@@ -272,7 +272,6 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
                     <th>situation</th>
                     <th title="An action to give first, in its own unit.">apply</th>
                     <th>value</th>
-                    <th title="Seconds to fly before reading, in whole env steps.">fly s</th>
                     <th title="The field to read. An action reads what it holds.">read</th>
                     <th title="For pair fields: the other aircraft.">about</th>
                     <th title="Which aircraft to read. Default: the first one.">for</th>
@@ -620,17 +619,6 @@ function CaseRow({
         />
       </td>
       <td>
-        <input
-          type="number"
-          className="form-input tests-number"
-          aria-label="seconds to fly"
-          min={0}
-          placeholder="0"
-          value={value.fly_s ?? ""}
-          onChange={(e) => set("fly_s", e.target.value === "" ? null : Number(e.target.value))}
-        />
-      </td>
-      <td>
         <Picker
           placeholder="+ field…"
           value={fieldKey}
@@ -697,7 +685,7 @@ function CaseRow({
           onChange={(e) => set("note", e.target.value)}
         />
       </td>
-      <td className="tests-got" title={result?.error ?? undefined}>
+      <td className="tests-got" title={[result?.error, ...(result?.saw ?? [])].filter(Boolean).join("\n") || undefined}>
         {result &&
           (result.error ? (
             <span className="error-text small">⚠ {result.error}</span>
@@ -715,6 +703,13 @@ function CaseRow({
               )}
             </>
           ))}
+        {result && !result.ok && (result.saw ?? []).length > 0 && (
+          <ol className="tests-saw">
+            {result.saw!.map((line, k) => (
+              <li key={k}>{line}</li>
+            ))}
+          </ol>
+        )}
       </td>
       <td>
         <button className="chip-x" title="remove the case" onClick={onRemove}>

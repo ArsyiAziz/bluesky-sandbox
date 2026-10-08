@@ -20,6 +20,7 @@ from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as act
 from bluesky_sandbox.interface.fields import observations as obs
+from bluesky_sandbox.interface.wrappers.observations.normalizer import MinMaxNormalizer
 
 from test_env_bound import InZone, _Scenario
 
@@ -139,16 +140,35 @@ def test_an_applied_action_is_read_for_what_it_commands(env):
     ).assert_ok()
 
 
-def test_a_case_flies_before_it_reads(env):
+def test_an_observation_reads_the_command_right_after_it(env):
+    # No flying: the autopilot's selected altitude is the new target at once.
     run_cases(
         env,
         [_EAST],
-        [Case("east", obs.TrkDeg(), 180.0, Tolerance(abs=1.0), apply=act.HdgDeltaDeg(), value=90.0, fly_s=120.0)],
+        [Case("east", obs.ApAltFt(), 11_000.0, Tolerance(abs=1.0), apply=act.AltDeltaFt(), value=1000.0)],
     ).assert_ok()
+
+
+def test_a_failed_case_says_what_it_saw(env):
+    wrong = Case("east", obs.ApAltFt(normalizer=MinMaxNormalizer()), 12_000.0, Tolerance(abs=1.0),
+                 apply=act.AltDeltaFt(), value=1000.0)
+    (result,) = run_cases(env, [_EAST], [wrong]).results
+    assert not result.ok
+    # As BlueSky takes it: given, the command, what it holds, what the field read.
+    gave, command, holds, reading = result.saw
+    assert gave == "gave 1000" and command.startswith("command ALT OWN 11000") and holds == "holds 11000"
+    assert reading.startswith("ApAltFt raw 11000 → normalized ")
+    assert "ALT OWN 11000" in str(result)
+
+
+def test_an_action_read_for_itself_says_what_it_holds_once(env):
+    (result,) = run_cases(
+        env, [_EAST], [Case("east", act.AltDeltaFt(), 11_000.0, Tolerance(abs=1.0), apply=act.AltDeltaFt(), value=1000.0)]
+    ).results
+    gave, command, holds = result.saw
+    assert result.ok and (gave, holds) == ("gave 1000", "holds 11000") and command.startswith("command ALT OWN")
 
 
 def test_an_action_case_says_what_it_cannot_do():
     with pytest.raises(ValueError, match="an action and a value, or neither"):
         Case("east", obs.TrkDeg(), 0.0, Tolerance(), apply=act.HdgDeltaDeg())
-    with pytest.raises(ValueError, match="cannot fly"):
-        Case("east", obs.TrkDeg(), 0.0, Tolerance(), fly_s=-1.0)

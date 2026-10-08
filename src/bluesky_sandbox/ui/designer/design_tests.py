@@ -121,7 +121,7 @@ def design_cases(spec: DesignSpec) -> list[tuple[dict[str, Any], dict[str, Field
         except TypeError as e:
             raise SpecError(f"{where}: tolerance - {e}") from e
         # Built as the checks build it - its own rules (an action and a value,
-        # or neither; flying forward) - with the references still as written.
+        # or neither) - with the references still as written.
         optional = {k: v for k, v in d.items() if k not in _required(Case)}
         try:
             Case(d["situation"], d["field"], d["expected"], tolerance, **optional)

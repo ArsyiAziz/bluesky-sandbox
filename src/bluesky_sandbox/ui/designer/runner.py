@@ -803,7 +803,7 @@ def main() -> None:
             _emit("field", {{"field": r.field, "ok": r.ok, "findings": list(r.findings[:5]), "notes": list(r.notes)}})
         for i, case in enumerate(CASES):
             r = run_cases(base, SITUATIONS, [case]).results[0]
-            _emit("case", {{"index": i, "ok": r.ok, "got": _plain(r.got), "error": r.error}})
+            _emit("case", {{"index": i, "ok": r.ok, "got": _plain(r.got), "error": r.error, "saw": list(r.saw)}})
     finally:
         env.close()
     _run_test_files()

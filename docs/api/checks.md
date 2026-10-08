@@ -25,12 +25,14 @@ run_cases(env, [head_on], [
 ]).assert_ok()
 ```
 
-A case can first give an action a value and fly a while. Reading an action gives what it holds:
+A case can first give an action a value; BlueSky takes the command, and nothing is flown - the case tests what the field says, not how BlueSky flies it. Reading an action gives what it holds:
 
 ```python
 Case("head-on", act.AltDeltaFt(), 11_000.0, Tolerance(abs=1), apply=act.AltDeltaFt(), value=1000.0)
-Case("head-on", obs.TrkDeg(), 180.0, Tolerance(abs=1), apply=act.HdgDeltaDeg(), value=90.0, fly_s=120)
+Case("head-on", obs.ApAltFt(), 11_000.0, Tolerance(abs=1), apply=act.AltDeltaFt(), value=1000.0)
 ```
+
+A failed case says what it saw on the way: the value given (and on its grid), the command BlueSky took, what the action holds, and the field's value raw and normalized.
 
 Cases run in the env's own design geometry (its shapes, queryables and routes) with none of its traffic, so a custom field that reads its environment is checked as it runs. Each kind of field says once how it gives a value in a case (`case_value`); the runner reads built-in and custom fields alike.
 
