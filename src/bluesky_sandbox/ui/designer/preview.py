@@ -24,7 +24,7 @@ from bluesky_sandbox.sim.sampling.distributions import Categorical
 from bluesky_sandbox.sim.scenario import transforms as _t
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
-from .builder import build_scenario
+from .builder import build_scenario, lower_waypoints
 from .spec import DesignSpec
 
 
@@ -58,6 +58,8 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
     A single seeded ``iter_spawns`` draw gives a representative set of aircraft
     so the map can show where traffic appears, without stepping the simulator.
     """
+    # Waypoints on points, in the form the scenario (and this) reads.
+    spec = lower_waypoints(spec)
     scenario = build_scenario(spec)
     rng = np.random.default_rng(seed)
     # Sample (not support) so per-episode randomization - rotation and, below,
@@ -171,22 +173,39 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
     rot = getattr(scenario, "last_rotation", None)
     group_maps = getattr(scenario, "last_group_maps", None)
     group_chains = getattr(scenario, "design_region_group_chains", None) or {}
+    generated = getattr(scenario, "design_generated", None) or {}
     if isinstance(sink, dict):
         for name, bounds in sink.items():
-            episode_bounds = bounds
-            if rot:
-                episode_bounds = _t.rotate_bounds(bounds, rot["pivot"], rot["angle"])
-            elif group_maps and group_chains.get(name):
-                chain = [group_maps[g] for g in group_chains[name] if g in group_maps]
-                if chain:
-                    episode_bounds = _t.transform_bounds(bounds, _t.compose(*chain))
-            regions[name] = {"name": name, **bounds_geometry(episode_bounds)}
+            # A partition's shape (``<region>.<i>``) is its region's.
+            base = name.rsplit(".", 1)[0]
+            region = base if name not in generated and base in generated else name
+
+            def to_episode(b, _region=region):
+                if rot:
+                    return _t.rotate_bounds(b, rot["pivot"], rot["angle"])
+                if group_maps and group_chains.get(_region):
+                    chain = [group_maps[g] for g in group_chains[_region] if g in group_maps]
+                    if chain:
+                        return _t.transform_bounds(b, _t.compose(*chain))
+                return b
+
+            # The episode's own named bounds where it has them - rotated, drawn,
+            # and moving with its own motion and its groups'.
+            episode_bounds = (getattr(episode, "bounds", None) or {}).get(name)
+            shown = episode_bounds if episode_bounds is not None else to_episode(bounds)
+            regions[name] = {"name": name, **bounds_geometry(shown)}
+            # A generated region: where its draws lie, drawn faint behind this
+            # episode's - and, for a partition's shape, the region it is of.
+            if region in generated:
+                regions[name]["generated"] = region
+                if name == region:
+                    regions[name]["envelope"] = bounds_geometry(to_episode(generated[region]))
 
     return {
         "airspace": airspace,
         "queryables": queryables,
         "spawn_regions": spawn_regions,
-        "regions": regions,
+        "shapes": regions,
         "sampled_aircraft": sampled_aircraft,
         "max_aircraft": int(episode.max_aircraft),
         "seed": seed,
@@ -197,10 +216,10 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
 def airspace_warnings(episode) -> list[str]:
     """Flag query/spawn regions or waypoints not subsumed by the airspace.
 
-    The airspace is meant to enclose the whole design (it is the operational
-    boundary and the observation-normalization range). Any content whose
-    footprint or finite altitude extent falls outside the airspace is reported
-    by name so the user can enlarge the airspace or move the content in.
+    Content usually sits inside the airspace (the sector, what
+    ``info["in_airspace"]`` asks about), but need not - an exit fix, a feeder
+    beyond it. Any whose footprint or finite altitude extent falls outside is
+    reported by name, as a warning: the design still builds.
     """
     asp = episode.airspace_bounds
     if asp is None:
@@ -266,13 +285,13 @@ def airspace_warnings(episode) -> list[str]:
 
     for name, q in episode.queryables.items():
         if isinstance(q, QueryRegion):
-            if bounds_outside(q.bounds):
+            if bounds_outside(q.shape):
                 out.append(f"queryable '{name}'")
         elif isinstance(q, Waypoint):
             alt_samples = waypoint_alt_samples(q)
             if any(point_outside(lat, lon, alt_samples) for lat, lon in waypoint_points(q)):
                 out.append(f"waypoint '{name}'")
     for i, region in enumerate(episode.spawn.regions):
-        if bounds_outside(region.bounds):
+        if bounds_outside(region.shape):
             out.append(f"spawn '{region.name or i}'")
     return out

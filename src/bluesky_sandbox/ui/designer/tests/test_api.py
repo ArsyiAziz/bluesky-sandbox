@@ -114,6 +114,16 @@ def main() -> int:
     r = client.post("/api/spec/validate", json=broken)
     check("spec/validate error", r.status_code == 200 and r.json()["ok"] is False)
 
+    # content outside the airspace (an exit fix) -> still ok, with a warning
+    outside = _example_spec_dict()
+    outside["queryables"]["far_fix"] = {"type": "waypoint", "lat": 60.0, "lon": 20.0}
+    r = client.post("/api/spec/validate", json=outside)
+    body = r.json()
+    check(
+        "spec/validate warns outside the airspace",
+        body["ok"] is True and any("far_fix" in w for w in body.get("warnings", [])),
+    )
+
     # preview
     r = client.post("/api/spec/preview", json={"spec": spec_dict, "seed": 1})
     prev = r.json()

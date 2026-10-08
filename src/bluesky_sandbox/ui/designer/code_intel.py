@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import importlib
 import inspect
 import sys
 import types as pytypes
@@ -36,14 +37,45 @@ from .builder import build_design_config, build_scenario, run_setup_module
 from .design_keys import Key, design_keys
 from .spec import SCENARIO_HOOKS, DesignSpec
 
-__all__ = ["code_intel", "hints"]
+__all__ = ["code_intel", "describe_type", "hints"]
 
 #: Values whose members say nothing a task needs: numbers, strings, containers.
 _OPAQUE = (int, float, complex, str, bytes, bool, type(None), object, type, Any)
 
-#: How deep member types are followed from a scope's names; deeper types are
-#: named but not described.
+#: How deep member types are followed from a scope's names up front; a deeper
+#: one is named and marked ``partial``, and the editor asks for it
+#: (:func:`describe_type`) when it gets there.
 _DEPTH = 4
+
+
+def describe_type(key: str) -> dict[str, dict[str, Any]]:
+    """The type ``key`` (``"module.Qualname"``, as the types are keyed),
+    described one level down - its members' own types named, ``partial`` -
+    for the editor to fill in a type as completion reaches it. Raises
+    ``LookupError`` for a key that names no class."""
+    cls = _class_of(key)
+    table = TypeTable(None, None)
+    table.ref(cls, depth=1)
+    return table.types
+
+
+def _class_of(key: str) -> type:
+    """The class keyed ``key``: the longest importable module prefix, then
+    the qualname's parts on it."""
+    parts = key.split(".")
+    for cut in range(len(parts) - 1, 0, -1):
+        try:
+            obj: Any = importlib.import_module(".".join(parts[:cut]))
+        except ImportError:
+            continue
+        try:
+            for name in parts[cut:]:
+                obj = getattr(obj, name)
+        except AttributeError:
+            continue
+        if inspect.isclass(obj):
+            return obj
+    raise LookupError(f"no class {key!r}")
 
 
 def code_intel(spec: DesignSpec) -> dict[str, Any]:
@@ -154,7 +186,7 @@ def _doc(obj: Any) -> str:
 class TypeTable:
     """Types by key, described from classes and from the design's keys."""
 
-    def __init__(self, config: EnvConfig, support: Any) -> None:
+    def __init__(self, config: EnvConfig | None, support: Any) -> None:
         self.types: dict[str, dict[str, Any]] = {}
         self._depth: dict[str, int] = {}
         self._config = config
@@ -181,6 +213,9 @@ class TypeTable:
         self.types[key] = {"name": cls.__qualname__, "doc": _doc(cls), "attrs": []}
         if depth > 0:
             self.types[key].update(self._members(cls, depth - 1))
+        else:
+            # Named, not described: the editor asks for it when it gets there.
+            self.types[key]["partial"] = True
         return key
 
     def function(self, name: str, fn: Callable[..., Any], depth: int) -> dict[str, Any]:
@@ -257,8 +292,9 @@ class TypeTable:
                 raw = inspect.getattr_static(cls, name)
             except AttributeError:
                 continue
-            if isinstance(raw, property):
-                returns = hints(raw.fget).get("return") if raw.fget else None
+            if isinstance(raw, (property, functools.cached_property)):
+                fget = raw.fget if isinstance(raw, property) else raw.func
+                returns = hints(fget).get("return") if fget else None
                 attrs[name] = _member(
                     name,
                     "property",
@@ -280,7 +316,9 @@ class TypeTable:
         """The key of a synthetic type whose items are the design's keys."""
         suffix = ":batched" if marker.batched else ""
         key = f"design:{marker.source}{suffix}"
-        if key not in self.types:
+        # Without a design (a type described on its own) the keys are the
+        # design's, already described with it.
+        if key not in self.types and self._config is not None:
             keys = design_keys(marker, self._config, self._support)
             self._closed(key, marker.source, keys, depth)
         return key

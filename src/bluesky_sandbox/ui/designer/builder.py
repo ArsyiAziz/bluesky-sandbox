@@ -41,16 +41,16 @@ from bluesky_sandbox.interface.fields.base import (
     QueryableFieldRequirement,
 )
 from bluesky_sandbox.interface.wrappers.observations import normalizer as _normalizers
-from bluesky_sandbox.sim.bounds import Bounds, RegionBounds, union_footprints
+from bluesky_sandbox.sim.bounds import Bounds, RegionBounds, generate_regions, union_footprints
 from bluesky_sandbox.sim.bounds.base import Footprint
 from bluesky_sandbox.sim.queryables import Queryable
-from bluesky_sandbox.sim.scenario import RandomizedScenario
+from bluesky_sandbox.sim.scenario import GeometryDict, RandomizedScenario
 from bluesky_sandbox.sim.scenario import transforms as _t
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from . import setup_code
 from . import spec as _spec
-from .spec import SCENARIO_HOOKS, DesignSpec, EnvSpec, FieldRef
+from .spec import SCENARIO_HOOKS, DesignSpec, EnvSpec, FieldRef, SpecError
 
 
 class BuildError(ValueError):
@@ -412,15 +412,21 @@ def with_inferred_temporal_tracking(spec: DesignSpec) -> DesignSpec:
 
 
 def _region_resolver(spec: DesignSpec) -> Callable[[Any], Any]:
-    """Return a function inlining ``{"ref": name}`` bounds from ``spec.regions``."""
-    regions = spec.regions or {}
+    """Return a function inlining ``{"ref": name}`` shapes from ``spec.shapes``."""
+    regions = spec.shapes or {}
 
     def resolve(bounds: Any) -> Any:
         if isinstance(bounds, dict) and set(bounds) == {"ref"}:
             name = bounds["ref"]
-            if name not in regions:
-                raise BuildError(f"region ref {name!r} not found in spec.regions.")
-            return copy.deepcopy(regions[name])
+            if name in regions:
+                return copy.deepcopy(regions[name])
+            # One of a partition's shapes, before it is drawn: where any of
+            # them can be - the partition (its envelope). An episode's draw is
+            # written into the regions under this name, and resolves above.
+            base = name.rpartition(".")[0]
+            if base in regions and name in _spec.partition_names(base, regions[base]):
+                return copy.deepcopy(regions[base])
+            raise BuildError(f"shape {name!r} is not in the design.")
         return bounds
 
     return resolve
@@ -437,9 +443,16 @@ def _resolved_geometry(
     for name, q in spec.queryables.items():
         if isinstance(q, dict):
             q = dict(q)
-            if q.get("type") == "query_region" and "bounds" in q:
-                q["bounds"] = resolve(q["bounds"])
+            if q.get("type") == "query_region" and _spec.shape_of(q) is not None:
+                q["shape"] = resolve(_spec.shape_of(q))
+                q.pop("bounds", None)
             if q.get("type") == "waypoint":
+                # At a point: the point itself, named so the episode's draw of
+                # it is the one the waypoint is at.
+                shape = _spec.shape_of(q)
+                if isinstance(shape, dict) and "ref" in shape:
+                    q["shape"] = {**resolve(shape), "name": shape["ref"]}
+                    q.pop("bounds", None)
                 if q.get("sample") is not None:
                     q["sample"] = resolve(q["sample"])
                     if q.get("sample_per") == "aircraft":
@@ -490,7 +503,9 @@ def _resolved_geometry(
         spawn = dict(spawn)
         spawn = _move_waypoint_sampling_to_routes(spawn, route_sampling)
         spawn["regions"] = [
-            {**r, "bounds": resolve(r["bounds"])} if isinstance(r, dict) and "bounds" in r else r
+            {**{k: v for k, v in r.items() if k != "bounds"}, "shape": resolve(_spec.shape_of(r))}
+            if isinstance(r, dict) and _spec.shape_of(r) is not None
+            else r
             for r in spawn.get("regions", [])
         ]
     return airspace, queryables, spawn
@@ -631,7 +646,7 @@ def _region_param_dists(spec: DesignSpec) -> dict[str, dict[str, Any]]:
     ready for :func:`~bluesky_sandbox.sim.scenario.transforms.sample_scalar`.
     """
     out: dict[str, dict[str, Any]] = {}
-    for name, region in spec.regions.items():
+    for name, region in spec.shapes.items():
         fp = region.get("footprint") if isinstance(region, dict) else None
         if not isinstance(fp, dict):
             continue
@@ -675,7 +690,7 @@ def _support_substituted_spec(
                 f"region {name!r} samples {len(paths)} footprint params; "
                 "the endpoint-union support caps at 8"
             )
-        base_fp = out.regions[name]["footprint"]
+        base_fp = out.shapes[name]["footprint"]
         variants: list[Footprint] = []
         for combo in itertools.product(
             *(_value_endpoints(params[p]) for p in paths)
@@ -687,19 +702,97 @@ def _support_substituted_spec(
                 _spec.load({"type": "region", "footprint": fp_dict}).footprint
             )
         union = union_footprints(variants)
-        out.regions[name]["footprint"] = _spec.dump(
+        out.shapes[name]["footprint"] = _spec.dump(
             RegionBounds(union, None)
         )["footprint"]
     return out
 
 
 def _load_named_regions(spec: DesignSpec) -> dict[str, Bounds]:
-    """Resolved Bounds for every named region (sampled params representative)."""
-    return {
-        name: _spec.load(d)
-        for name, d in spec.regions.items()
+    """Resolved Bounds for every named region (sampled params representative,
+    a generated one its generator's envelope)."""
+    try:
+        return {
+            name: _spec.load(d)
+            for name, d in spec.shapes.items()
+            if isinstance(d, dict)
+        }
+    except (SpecError, ValueError, TypeError) as e:
+        raise BuildError(str(e)) from e
+
+
+def _generated_regions(spec: DesignSpec) -> list[str]:
+    """The named regions drawn anew each episode: a generator draws their
+    shape, or a placement their spot - or both."""
+    return [
+        name
+        for name, d in (spec.shapes or {}).items()
         if isinstance(d, dict)
-    }
+        and (
+            (d.get("footprint") or {}).get("type") == "generated"
+            or d.get("placement")
+            or d.get("motion")
+        )
+    ]
+
+
+def _inline_generator_refs(spec: DesignSpec) -> DesignSpec:
+    """``spec`` with each ``{"ref": name}`` in a generator's or a placement's
+    params - a parent, a region to stay within or avoid - replaced by that
+    region, as other refs are."""
+    names = _generated_regions(spec)
+    if not names:
+        return spec
+    resolve = _region_resolver(spec)
+    out = copy.deepcopy(spec)
+
+    def inline(value: Any, chain: tuple[str, ...]) -> Any:
+        """``value`` with every ref in it inlined - and the refs inside what
+        they name, so a region placed clear of a generated one gets that
+        one's parent too."""
+        if isinstance(value, dict) and set(value) == {"ref"}:
+            if value["ref"] in chain:
+                through = f", through {' -> '.join((*chain, value['ref']))}" if len(chain) > 1 else ""
+                raise BuildError(f"region {chain[0]!r} cannot refer to itself{through}")
+            # Named, so an episode's draw of it can stand in for it.
+            return inline_region({**resolve(value), "name": value["ref"]}, (*chain, value["ref"]))
+        if isinstance(value, list):
+            return [inline(v, chain) for v in value]
+        return value
+
+    def inline_region(region: Any, chain: tuple[str, ...]) -> Any:
+        if not isinstance(region, dict):
+            return region
+        footprint = region.get("footprint") or {}
+        if footprint.get("type") == "generated":
+            params = footprint.setdefault("params", {})
+            for key, value in list(params.items()):
+                params[key] = inline(value, chain)
+        for layer in [region.get("placement"), *(region.get("motion") or [])]:
+            if isinstance(layer, dict):
+                for key, value in list(layer.items()):
+                    if key != "type":
+                        layer[key] = inline(value, chain)
+        return region
+
+    for name in names:
+        inline_region(out.shapes[name], (name,))
+    return out
+
+
+def _draw_generated(sub: DesignSpec, rng) -> dict[str, Bounds]:
+    """Draw ``sub``'s generated regions for an episode, writing each drawn
+    shape back into ``sub.shapes`` - so every ref to it resolves to the draw -
+    and a partition's ``<name>.<i>`` beside it. Returns the named regions."""
+    named = _load_named_regions(sub)
+    try:
+        drawn = generate_regions(named, rng)
+    except ValueError as e:
+        raise BuildError(str(e)) from e
+    for name, bounds in drawn.items():
+        if named.get(name) is not bounds:
+            sub.shapes[name] = _spec.dump(bounds)
+    return drawn
 
 
 def _make_episode_geometry_fn(
@@ -707,9 +800,11 @@ def _make_episode_geometry_fn(
     dists: dict[str, dict[str, Any]],
     region_sink: dict[str, Bounds],
 ) -> Callable[[Any], dict[str, Any]]:
-    """Per-episode geometry rebuild for sampled region params.
+    """Per-episode geometry rebuild for sampled region params and generated
+    regions.
 
     Draws every sampled param, substitutes the values into a copy of the spec,
+    draws each generated region (its shape written back into the copy),
     and re-materializes the resolved geometry - so every element referencing a
     sampled region (spawn bounds, route sample steps, sampled waypoints, the
     airspace) picks up the episode's shape through the normal ref resolution.
@@ -720,17 +815,20 @@ def _make_episode_geometry_fn(
     def rebuild(rng) -> dict[str, Any]:
         sub = copy.deepcopy(spec)
         for region, params in dists.items():
-            fp = sub.regions[region]["footprint"]
+            fp = sub.shapes[region]["footprint"]
             for path, value in params.items():
                 _spec.set_footprint_param(fp, path, _t.sample_scalar(value, rng))
+        # Generated regions: drawn, and written back so refs resolve to them.
+        drawn = _draw_generated(sub, rng)
         airspace, queryables, spawn = _materialize(sub)
         region_sink.clear()
-        region_sink.update(_load_named_regions(sub))
+        region_sink.update(drawn)
         return {
             "airspace_bounds": airspace,
             "queryables": queryables,
             "spawn": spawn,
             "sampled_waypoints": _sampled_waypoint_regions(sub),
+            "shapes": dict(region_sink),
         }
 
     return rebuild
@@ -756,14 +854,47 @@ def compile_scenario_hooks(spec: DesignSpec) -> dict[str, Callable[..., Any]]:
         return {}
     namespace: dict[str, Any] = {}
     if spec.scenario_setup.strip():
-        exec(compile(spec.scenario_setup, "<scenario_setup>", "exec"), namespace)
+        try:
+            exec(compile(spec.scenario_setup, "<scenario_setup>", "exec"), namespace)
+        except Exception as e:
+            raise _scenario_code_error(e, "<scenario_setup>", "scenario setup") from e
     out: dict[str, Callable[..., Any]] = {}
     for name, body in hooks.items():
         args = SCENARIO_HOOKS[name][0]
+        filename = f"<scenario_hook:{name}>"
         source = f"def _hook({', '.join(args)}):\n" + textwrap.indent(body, "    ")
-        exec(compile(source, f"<scenario_hook:{name}>", "exec"), namespace)
-        out[name] = namespace.pop("_hook")
+        try:
+            exec(compile(source, filename, "exec"), namespace)
+        except Exception as e:
+            raise _scenario_code_error(e, filename, f"scenario hook {name}", shift=1) from e
+        out[name] = _reporting(namespace.pop("_hook"), filename, f"scenario hook {name}")
     return out
+
+
+def _scenario_code_error(
+    error: Exception, filename: str, where: str, shift: int = 0
+) -> BuildError:
+    """``error``, raised by the design's scenario code, as a BuildError naming
+    the block and its line - so a mistake in it is reported, not a crash."""
+    lineno = _error_line(error, filename)
+    if lineno is None:
+        return BuildError(f"error in {where}: {type(error).__name__}: {error}")
+    line = max(lineno - shift, 1)  # past the ``def _hook(...)`` line
+    return BuildError(f"error in {where}, line {line}: {type(error).__name__}: {error}")
+
+
+def _reporting(hook: Callable[..., Any], filename: str, where: str) -> Callable[..., Any]:
+    """``hook``, with whatever it raises reported as its block and line."""
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return hook(*args, **kwargs)
+        except BuildError:
+            raise
+        except Exception as e:
+            raise _scenario_code_error(e, filename, where, shift=1) from e
+
+    return run
 
 
 def _parse_rotation(spec: DesignSpec) -> dict[str, Any] | None:
@@ -782,29 +913,29 @@ def elements_for_region(spec: DesignSpec, region_name: str) -> list[str]:
     """Element ids whose geometry comes from the named bounds ``region_name``.
 
     Group membership is expressed as **bounds** (named regions); rotating a
-    bounds rotates every element that references it. Ids: ``"airspace"``,
-    ``"q:<name>"`` (queryable), ``"s:<name>"`` (spawn region).
+    bounds rotates every element that references it - one of its shapes, for a
+    partition (``sectors.1``), included - and every waypoint anchored to it.
+    Ids: ``"airspace"``, ``"q:<name>"`` (queryable), ``"s:<name>"`` (spawn
+    region).
     """
+    shapes = set(_spec.partition_names(region_name, (spec.shapes or {}).get(region_name)))
+
+    def refers(b: Any) -> bool:
+        return isinstance(b, dict) and (b.get("ref") == region_name or b.get("ref") in shapes)
+
     ids: list[str] = []
-    air = spec.airspace
-    if isinstance(air, dict) and air.get("ref") == region_name:
+    if refers(spec.airspace):
         ids.append("airspace")
     for qname, q in spec.queryables.items():
         if not isinstance(q, dict):
             continue
-        bounds = q.get("bounds")
-        sample = q.get("sample")
-        if (isinstance(bounds, dict) and bounds.get("ref") == region_name) or (
-            isinstance(sample, dict) and sample.get("ref") == region_name
-        ):
+        if refers(_spec.shape_of(q)) or refers(q.get("sample")) or q.get("anchor") == region_name:
             ids.append(f"q:{qname}")
     spawn = spec.spawn
     regions = spawn.get("regions", []) if isinstance(spawn, dict) else []
     for r in regions:
-        if isinstance(r, dict):
-            bounds = r.get("bounds")
-            if isinstance(bounds, dict) and bounds.get("ref") == region_name:
-                ids.append(f"s:{r.get('name')}")
+        if isinstance(r, dict) and refers(_spec.shape_of(r)):
+            ids.append(f"s:{r.get('name')}")
     return ids
 
 
@@ -812,8 +943,10 @@ def expand_region_members(spec: DesignSpec, region_names: list[str]) -> list[str
     """Flatten group members into the element ids the runtime transforms.
 
     A member is either a bounds (region) name — expanded to every element that
-    references it — or ``"wp:<name>"`` naming a waypoint queryable directly (so a
-    fixed lat/lon waypoint can be grouped even though it has no bounds).
+    references it, and to the named bounds itself (``"b:<name>"``, so code
+    reading it gets it in the episode's frame) — or ``"wp:<name>"`` naming a
+    waypoint queryable directly (so a fixed lat/lon waypoint can be grouped even
+    though it has no bounds).
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -831,6 +964,8 @@ def expand_region_members(spec: DesignSpec, region_names: list[str]) -> list[str
             continue
         for eid in elements_for_region(spec, member):
             add(eid)
+        if member in spec.shapes:
+            add(f"b:{member}")
     return out
 
 
@@ -855,6 +990,17 @@ def _parse_groups(spec: DesignSpec) -> tuple[dict[str, Any], ...] | None:
             return None
         return {"east": east, "north": north}
 
+    resolve = _region_resolver(spec)
+
+    def motion(m: dict[str, Any]) -> Any:
+        """One of a group's motions, its region refs (a drift's ``within``)
+        inlined."""
+        m = {k: resolve(v) if isinstance(v, dict) else v for k, v in m.items()}
+        try:
+            return _spec._placement_load(m, _spec.motion_class)
+        except _spec.SpecError as e:
+            raise BuildError(f"group {g.get('name') or g['id']!r}: {e}") from e
+
     out: list[dict[str, Any]] = []
     for g in groups:
         pivot = g.get("pivot")
@@ -867,6 +1013,9 @@ def _parse_groups(spec: DesignSpec) -> tuple[dict[str, Any], ...] | None:
                 "pivot": tuple(pivot) if pivot else None,
                 "members": expand_region_members(spec, list(g.get("members", []))),
                 "parent": g.get("parent"),
+                # How the group moves during the episode, as one.
+                "motion": tuple(motion(m) for m in g.get("motion") or ()),
+                "motion_update": g.get("motion_update") or "step",
             }
         )
     return tuple(out)
@@ -883,21 +1032,139 @@ def _waypoint_field_dists(spec: DesignSpec) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _point_center(region: dict[str, Any]) -> dict[str, float]:
+    """A point region's position: its ``center``, or its navdb ``fix``'s."""
+    footprint = region.get("footprint") or {}
+    center = footprint.get("center")
+    if isinstance(center, dict):
+        return center
+    fix = footprint.get("fix")
+    if not fix:
+        raise BuildError("a point needs a position: a center or a navdb fix")
+    from .nav import resolve_waypoint  # noqa: PLC0415 - navdb loads on demand
+
+    try:
+        found = resolve_waypoint(str(fix))
+    except ValueError as e:
+        raise BuildError(str(e)) from e
+    return {"lat_deg": found.lat_deg, "lon_deg": found.lon_deg}
+
+
+def lower_waypoints(spec: DesignSpec) -> DesignSpec:
+    """``spec`` with its waypoints on point bounds (``"bounds": {"ref": p}``)
+    ready to build: each point's position settled (a navdb ``fix`` with no
+    ``center`` looked up), and a waypoint drawn *for each aircraft* - on a
+    placed point, ``sample_per: "aircraft"`` - in the form its spawn routes
+    draw from: each aircraft its own spot in the point's placement region.
+
+    Any other waypoint keeps its point: the scenario builds it ``at`` the
+    point, so it is wherever the point is each episode - placed, in a group.
+    A waypoint on anything but a point is refused. Waypoints in the older
+    forms (lat/lon, ``waypoint``, ``sample``) are left as they are."""
+    regions = spec.shapes or {}
+    lowered = {
+        name
+        for name, q in spec.queryables.items()
+        if isinstance(q, dict) and q.get("type") == "waypoint" and isinstance(_spec.shape_of(q), dict)
+    }
+    unplaced = [
+        name
+        for name, r in regions.items()
+        if isinstance(r, dict)
+        and (r.get("footprint") or {}).get("type") == "point"
+        and not isinstance((r.get("footprint") or {}).get("center"), dict)
+    ]
+    if not lowered and not unplaced:
+        return spec
+    out = copy.deepcopy(spec)
+    for name in unplaced:
+        out.shapes[name]["footprint"]["center"] = _point_center(out.shapes[name])
+    for name in lowered:
+        q = out.queryables[name]
+        ref = _spec.shape_of(q).get("ref")
+        region = out.shapes.get(ref) if isinstance(ref, str) else None
+        if ((region or {}).get("footprint") or {}).get("type") != "point":
+            what = "a region's shape" if ref not in regions else "an area"
+            raise BuildError(f"waypoint {name!r} needs a point; {ref!r} is {what}")
+        for key in ("lat", "lon", "waypoint", "sample", "anchor"):
+            q.pop(key, None)
+        placement = region.get("placement")
+        within = placement.get("within") if isinstance(placement, dict) else None
+        if q.get("sample_per") == "aircraft" and within is not None:
+            center = region["footprint"]["center"]
+            q.pop("shape", None)
+            q.pop("bounds", None)
+            q["lat"], q["lon"] = float(center["lat_deg"]), float(center["lon_deg"])
+            q["sample"] = copy.deepcopy(within)
+        else:
+            q.pop("sample_per", None)
+    return out
+
+
+def _check_points(spec: DesignSpec) -> None:
+    """Refuse a point bounds wherever an area is needed: the airspace, a
+    query region, a generator's region, a placement's or a drift's region to
+    stay within. A point is fine where a position is: a spawn, a waypoint's
+    sample, a placement's region to keep clear of."""
+    regions = spec.shapes or {}
+
+    def point(ref: Any) -> str | None:
+        name = ref.get("ref") if isinstance(ref, dict) else None
+        region = regions.get(name) if isinstance(name, str) else None
+        footprint = region.get("footprint") if isinstance(region, dict) else None
+        return name if isinstance(footprint, dict) and footprint.get("type") == "point" else None
+
+    def refuse(ref: Any, what: str) -> None:
+        if name := point(ref):
+            raise BuildError(f"{what} needs an area; {name!r} is a point")
+
+    refuse(spec.airspace, "the airspace")
+    for qname, q in spec.queryables.items():
+        if isinstance(q, dict) and q.get("type") == "query_region":
+            refuse(_spec.shape_of(q), f"query region {qname!r}")
+
+    def refs(value: Any) -> list[Any]:
+        return value if isinstance(value, list) else [value]
+
+    def layers(owner: str, footprint: Any, placement: Any, motions: Any) -> None:
+        if isinstance(footprint, dict) and footprint.get("type") == "generated":
+            for key, value in (footprint.get("params") or {}).items():
+                for ref in refs(value):
+                    refuse(ref, f"{owner}'s generator {key!r}")
+        if isinstance(placement, dict):
+            refuse(placement.get("within"), f"{owner}'s placement")
+        for m in motions or []:
+            if isinstance(m, dict):
+                for key, value in m.items():
+                    for ref in refs(value) if key != "type" else []:
+                        refuse(ref, f"{owner}'s {m.get('type', 'motion')} {key!r}")
+
+    for name, region in regions.items():
+        if isinstance(region, dict):
+            layers(f"region {name!r}", region.get("footprint"), region.get("placement"), region.get("motion"))
+    for g in (spec.transform or {}).get("groups") or []:
+        if isinstance(g, dict):
+            layers(f"group {g.get('name') or g.get('id')!r}", None, None, g.get("motion"))
+
+
 def build_scenario(spec: DesignSpec) -> DesignScenario:
     """Compile the spec's geometry/spawn/queryables into a runnable scenario."""
+    _check_points(spec)
+    spec = lower_waypoints(spec)
     # Before any sampling: spawn altitudes and speeds are drawn from the
     # aircraft's flight envelope, which is read from whichever performance
     # model BlueSky is set to. This path never builds an EnvConfig (the
     # designer previews geometry without one), so nothing else would set it.
     apply_performance_model(getattr(spec.env, "performance_model", None))
-    spec = with_inferred_temporal_tracking(spec)
+    spec = _inline_generator_refs(with_inferred_temporal_tracking(spec))
     region_dists = _region_param_dists(spec)
+    generated = _generated_regions(spec)
     # Named-region bounds for tooling (the designer preview): starts canonical
     # (representative shapes); the episode hook refreshes it with each sample's
     # drawn shapes. Exposed on the scenario as ``design_regions``.
     region_sink = _load_named_regions(spec)
     scenario_hooks = compile_scenario_hooks(spec)
-    if region_dists or scenario_hooks:
+    if region_dists or scenario_hooks or generated:
         # Static geometry = endpoint-union support of the sampled shapes, so
         # support() covers every episode; the hook rebuilds per episode.
         support_spec = (
@@ -905,12 +1172,14 @@ def build_scenario(spec: DesignSpec) -> DesignScenario:
         )
         airspace, queryables, spawn = _materialize(support_spec)
         sampled_waypoints = _sampled_waypoint_regions(support_spec)
+        named_bounds = _load_named_regions(support_spec)
         episode_geometry_fn = _make_episode_geometry_fn(
             spec, region_dists, region_sink
         )
     else:
         airspace, queryables, spawn = _materialize(spec)
         sampled_waypoints = _sampled_waypoint_regions(spec)
+        named_bounds = _load_named_regions(spec)
         episode_geometry_fn = None
     # Chain the design's own hook after the structured rebuild, exactly as
     # codegen does. With no region params there is nothing to rebuild,
@@ -923,10 +1192,11 @@ def build_scenario(spec: DesignSpec) -> DesignScenario:
             "queryables": queryables,
             "spawn": spawn,
             "sampled_waypoints": sampled_waypoints,
+            "shapes": named_bounds,
         }
 
         def episode_geometry_fn(rng, _structured=structured, _static=static_geometry):
-            base = dict(_structured(rng)) if _structured else copy.deepcopy(_static)
+            base = GeometryDict(_structured(rng)) if _structured else GeometryDict(copy.deepcopy(_static))
             return design_hook(base, rng)
     scenario = DesignScenario(
         airspace_bounds=airspace,
@@ -937,8 +1207,16 @@ def build_scenario(spec: DesignSpec) -> DesignScenario:
         sampled_waypoints=sampled_waypoints,
         waypoint_fields=_waypoint_field_dists(spec),
         episode_geometry_fn=episode_geometry_fn,
+        shapes=named_bounds,
     )
     object.__setattr__(scenario, "design_regions", region_sink)
+    # Generated regions, by name, as their envelope: for the preview to show
+    # where every draw lies.
+    object.__setattr__(
+        scenario,
+        "design_generated",
+        {name: named_bounds[name] for name in generated if name in named_bounds},
+    )
     object.__setattr__(scenario, "design_region_group_chains", _region_group_chains(spec))
     return scenario
 

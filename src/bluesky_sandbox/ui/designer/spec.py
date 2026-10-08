@@ -34,6 +34,8 @@ Two deliberate fidelity choices:
 from __future__ import annotations
 
 import ast
+import dataclasses
+import importlib
 import json
 import math
 import textwrap
@@ -42,6 +44,7 @@ from typing import Any
 
 import scipy.stats as _scipy_stats
 
+from bluesky_sandbox._renames import renamed
 from bluesky_sandbox.sim.bounds import (
     AnnularSectorFootprint,
     BooleanFootprint,
@@ -52,13 +55,20 @@ from bluesky_sandbox.sim.bounds import (
     Footprint,
     LatLon,
     LinearAltitudeBand,
+    PointFootprint,
     PolygonFootprint,
     RadialAltitudeBand,
     RegionBounds,
     SectorFootprint,
     VertexAltitudeBand,
 )
+from bluesky_sandbox.sim.bounds import generators as _generators
+from bluesky_sandbox.sim.bounds import placement as _placements
+from bluesky_sandbox.sim.bounds import motion as _motions
+from bluesky_sandbox.sim.bounds.motion import Motion, MovingFootprint
+from bluesky_sandbox.sim.bounds.placement import PlacedFootprint, Placement
 from bluesky_sandbox.sim.bounds.altitude import AltitudeBand
+from bluesky_sandbox.sim.bounds.generators import GeneratedFootprint, ShapeGenerator
 from bluesky_sandbox.sim.bounds.footprints import ShapelyFootprint
 from bluesky_sandbox.sim.performance.envelope import EnvelopeSample
 from bluesky_sandbox.sim.queryables import Queryable, QueryRegion, Waypoint
@@ -74,7 +84,8 @@ DEFAULT_HOOKS = ("reward", "terminated", "truncated")
 # generated ``Scenario``, not the env, and are the escape hatch for episode
 # sampling the structured spec cannot express. ``episode_geometry`` receives the
 # geometry dict the structured design just built - keys ``airspace_bounds`` /
-# ``spawn`` / ``queryables`` / ``sampled_waypoints`` - plus the episode ``rng``,
+# ``spawn`` / ``queryables`` / ``sampled_waypoints`` / ``shapes`` (``bounds``,
+# their older name, still works) - plus the episode ``rng``,
 # and returns the dict to actually use. Returning it unchanged is the no-op.
 SCENARIO_HOOKS: dict[str, tuple[tuple[str, ...], str]] = {
     "episode_geometry": (
@@ -355,7 +366,7 @@ def extract_waypoint_field_dists(qdict: dict[str, Any]) -> tuple[dict[str, Any],
 # --------------------------------------------------------------------------- #
 # Keys of a footprint dict that are structure, not sampleable scalar geometry.
 _FOOTPRINT_STRUCTURAL_KEYS = frozenset(
-    {"type", "center", "coords", "n_vertices", "op", "left", "right"}
+    {"type", "center", "fix", "coords", "n_vertices", "op", "left", "right", "generator", "params"}
 )
 
 
@@ -413,6 +424,8 @@ def _footprint_dump(fp: Footprint) -> dict[str, Any]:
             "lon_min_deg": float(fp.lon_min_deg),
             "lon_max_deg": float(fp.lon_max_deg),
         }
+    if isinstance(fp, PointFootprint):
+        return {"type": "point", "center": _latlon_dump(fp.center), **({"fix": fp.fix} if fp.fix else {})}
     if isinstance(fp, DiskFootprint):
         return {
             "type": "disk",
@@ -448,6 +461,8 @@ def _footprint_dump(fp: Footprint) -> dict[str, Any]:
             "left": _footprint_dump(fp.left),
             "right": _footprint_dump(fp.right),
         }
+    if isinstance(fp, GeneratedFootprint):
+        return _generated_dump(fp.generator)
     if isinstance(fp, ShapelyFootprint):
         # No parametric handles survive a shapely result; degrade to polygon.
         return {"type": "polygon", "coords": [[a, b] for a, b in fp.vertices]}
@@ -466,6 +481,8 @@ def _footprint_load(d: dict[str, Any]) -> Footprint:
             _fpv(d["lon_min_deg"]),
             _fpv(d["lon_max_deg"]),
         )
+    if t == "point":
+        return PointFootprint(_latlon_load(d["center"]), d.get("fix"))
     if t == "disk":
         return DiskFootprint(
             _latlon_load(d["center"]), _fpv(d["radius_nm"]), d.get("n_vertices", 72)
@@ -493,7 +510,170 @@ def _footprint_load(d: dict[str, Any]) -> Footprint:
         return BooleanFootprint(
             d["op"], _footprint_load(d["left"]), _footprint_load(d["right"])
         )
+    if t == "generated":
+        return GeneratedFootprint(_generated_load(d))
     raise SpecError(f"unknown footprint type {t!r}")
+
+
+# --------------------------------------------------------------------------- #
+# Generated footprints: a generator and its params                            #
+# --------------------------------------------------------------------------- #
+#   {"type": "generated", "generator": "ConvexPolygon" | "pkg.module:Class",
+#    "params": {"center": {"lat_deg", "lon_deg"}, "radius_nm": 10 | range | scipy,
+#               "contains": [latlon, ...], "within" / "parent": region | {"ref"}, ...}}
+# A built-in generator is named by its class; one of your own by import path.
+# A {"ref": name} param is inlined by the builder before this loads.
+
+
+def _class_named(name: str, module: Any, base: type, what: str) -> type:
+    """The class ``name`` names: one of ``module``'s by its class name, or
+    one of your own by ``"package.module:Class"`` - a ``base``."""
+    if ":" in name:
+        mod, _, attr = name.partition(":")
+        try:
+            cls = getattr(importlib.import_module(mod), attr)
+        except (ImportError, AttributeError) as e:
+            raise SpecError(f"cannot import {what} {name!r}: {e}") from e
+    else:
+        cls = getattr(module, name, None)
+    if not (isinstance(cls, type) and issubclass(cls, base)):
+        raise SpecError(f"{name!r} is not a {what}")
+    return cls
+
+
+def _class_ref(cls: type, module: Any) -> str:
+    """How ``cls`` is named in a spec: by class name if ``module``'s, else
+    by import path."""
+    if getattr(module, cls.__name__, None) is cls:
+        return cls.__name__
+    return f"{cls.__module__}:{cls.__qualname__}"
+
+
+def generator_class(name: str) -> type[ShapeGenerator]:
+    """The generator class ``name`` names: a built-in's class name, or
+    ``"package.module:Class"``."""
+    return _class_named(name, _generators, ShapeGenerator, "shape generator")
+
+
+def placement_class(name: str) -> type[Placement]:
+    """The placement class ``name`` names: a built-in's class name, or
+    ``"package.module:Class"``."""
+    return _class_named(name, _placements, Placement, "placement")
+
+
+def motion_class(name: str) -> type[Motion]:
+    """The motion class ``name`` names: a built-in's class name, or
+    ``"package.module:Class"``."""
+    return _class_named(name, _motions, Motion, "motion")
+
+
+#   "placement": {"type": "InRegion", "within": region | {"ref"}, "turn_deg": ...,
+#                 "keep_inside": true, "avoid": [region | {"ref"}, ...]}
+# on a region: where it sits each episode. {"ref"} params are inlined by the
+# builder before this loads.
+#   "motion": [{"type": "Drift", "heading_deg": ..., "speed_kts": ..., "within": ...},
+#              {"type": "Spin", "rate_deg_s": ...}, ...]
+# on a region: how it moves during the episode, in order. Same encoding.
+def _placement_load(d: dict[str, Any], cls_of: Any = None) -> Any:
+    """A placement - or, with ``cls_of=motion_class``, a motion - from
+    ``{"type": name, param: value, ...}``."""
+    cls_of = cls_of or placement_class
+    name = d.get("type")
+    what = "motion" if cls_of is motion_class else "placement"
+    if not isinstance(name, str) or not name:
+        raise SpecError(f"a {what} names its type")
+    cls = cls_of(name)
+    params = {k: _generator_param_load(v) for k, v in d.items() if k != "type"}
+    try:
+        return cls(**params)
+    except (TypeError, ValueError) as e:
+        raise SpecError(f"{what} {name}: {e}") from e
+
+
+def _placement_dump(obj: Any, module: Any = None) -> dict[str, Any]:
+    out: dict[str, Any] = {"type": _class_ref(type(obj), module or _placements)}
+    out.update(_params_dump(obj))
+    return out
+
+
+def _params_dump(obj: Any) -> dict[str, Any]:
+    """A generator's or placement's params that differ from their defaults."""
+    params = {}
+    for f in dataclasses.fields(obj):
+        if not f.init:
+            continue
+        value = getattr(obj, f.name)
+        default = f.default if f.default is not dataclasses.MISSING else None
+        if value == default or (value == () and default == ()):
+            continue
+        params[f.name] = _generator_param_dump(value)
+    return params
+
+
+def partition_names(name: str, region: Any) -> list[str]:
+    """The names of a partition's shapes - ``<name>.0``, ``<name>.1``, ... -
+    when ``region`` is a generated region drawing several, else []."""
+    fp = region.get("footprint") if isinstance(region, dict) else None
+    if not (isinstance(fp, dict) and fp.get("type") == "generated"):
+        return []
+    try:
+        cls = generator_class(str(fp.get("generator")))
+    except SpecError:
+        return []
+    param = getattr(cls, "partition", None)
+    if not param:
+        return []
+    default = next((f.default for f in dataclasses.fields(cls) if f.name == param), 0)
+    count = (fp.get("params") or {}).get(param, default)
+    try:
+        return [f"{name}.{i}" for i in range(int(count))]
+    except (TypeError, ValueError):
+        return []
+
+
+def _generator_param_load(value: Any) -> Any:
+    if isinstance(value, dict) and set(value) == {"lat_deg", "lon_deg"}:
+        return _latlon_load(value)
+    if isinstance(value, dict) and value.get("type") == "region":
+        return load(value)
+    if isinstance(value, dict) and set(value) == {"ref"}:
+        raise SpecError(f"region ref {value['ref']!r} in a generator was not resolved")
+    if is_value_distribution(value):
+        return load_value(value)
+    if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+        return tuple(_generator_param_load(v) for v in value)
+    return value
+
+
+def _generated_load(d: dict[str, Any]) -> ShapeGenerator:
+    name = d.get("generator")
+    if not isinstance(name, str) or not name:
+        raise SpecError("a generated footprint names its generator")
+    cls = generator_class(name)
+    params = {k: _generator_param_load(v) for k, v in dict(d.get("params") or {}).items()}
+    try:
+        return cls(**params)
+    except (TypeError, ValueError) as e:
+        raise SpecError(f"generator {name}: {e}") from e
+
+
+def _generator_param_dump(value: Any) -> Any:
+    if isinstance(value, LatLon):
+        return _latlon_dump(value)
+    if isinstance(value, Bounds):
+        return dump(value)
+    if isinstance(value, Footprint):
+        return {"type": "region", "footprint": _footprint_dump(value)}
+    if isinstance(value, (list, tuple)) and value and all(isinstance(v, LatLon) for v in value):
+        return [_latlon_dump(v) for v in value]
+    if isinstance(value, (list, tuple)) and value and all(isinstance(v, (Bounds, Footprint)) for v in value):
+        return [_generator_param_dump(v) for v in value]
+    return dump_value(value)
+
+
+def _generated_dump(generator: ShapeGenerator) -> dict[str, Any]:
+    name = _class_ref(type(generator), _generators)
+    return {"type": "generated", "generator": name, "params": _params_dump(generator)}
 
 
 # --------------------------------------------------------------------------- #
@@ -574,20 +754,44 @@ def _altitude_load(d: Any) -> AltitudeBand | None:
 # --------------------------------------------------------------------------- #
 def _bounds_dump(b: Bounds) -> dict[str, Any]:
     if isinstance(b, RegionBounds):
-        return {
+        footprint, placement, motions, update = b.footprint, None, (), "step"
+        if isinstance(footprint, MovingFootprint):
+            footprint, motions, update = footprint.footprint, footprint.motions, footprint.update
+        if isinstance(footprint, PlacedFootprint):
+            footprint, placement = footprint.footprint, footprint.placement
+        out = {
             "type": "region",
-            "footprint": _footprint_dump(b.footprint),
+            "footprint": _footprint_dump(footprint),
             "altitude": _altitude_dump(b.altitude) if b.altitude is not None else None,
         }
+        if placement is not None:
+            out["placement"] = _placement_dump(placement)
+        if motions:
+            out["motion"] = [_placement_dump(m, _motions) for m in motions]
+            if update != "step":
+                out["motion_update"] = update
+        return out
     raise SpecError(f"cannot serialize bounds of type {type(b).__name__}")
 
 
 def _bounds_load(d: dict[str, Any]) -> Bounds:
     t = d.get("type")
     if t == "region":
-        bounds = RegionBounds(
-            _footprint_load(d["footprint"]), _altitude_load(d.get("altitude"))
-        )
+        footprint = _footprint_load(d["footprint"])
+        # Where it sits each episode, drawn by a placement - after its shape.
+        if d.get("placement") is not None:
+            footprint = PlacedFootprint(footprint, _placement_load(d["placement"]))
+        # How it moves during the episode - from wherever it is placed.
+        if d.get("motion"):
+            try:
+                footprint = MovingFootprint(
+                    footprint,
+                    tuple(_placement_load(m, motion_class) for m in d["motion"]),
+                    d.get("motion_update") or "step",
+                )
+            except ValueError as e:
+                raise SpecError(str(e)) from e
+        bounds = RegionBounds(footprint, _altitude_load(d.get("altitude")), d.get("name"))
         # Optional static rotation of this bounds about its own center (degrees,
         # CCW). Baked into the geometry here; the editor keeps the original
         # footprint + `rotation_deg` so the shape stays parametric to edit.
@@ -605,7 +809,7 @@ def _queryable_dump(q: Queryable) -> dict[str, Any]:
     if isinstance(q, QueryRegion):
         return {
             "type": "query_region",
-            "bounds": _bounds_dump(q.bounds),
+            "shape": _bounds_dump(q.shape),
             "color": q.color,
             "render_shape": q.render_shape,
             "render_label": q.render_label,
@@ -650,7 +854,7 @@ def _queryable_load(d: dict[str, Any]) -> Queryable:
     t = d.get("type")
     if t == "query_region":
         return QueryRegion(
-            _bounds_load(d["bounds"]),
+            _bounds_load(shape_of(d)),
             color=d.get("color", "orange"),
             render_shape=d.get("render_shape", True),
             render_label=d.get("render_label", True),
@@ -679,10 +883,16 @@ def _queryable_load(d: dict[str, Any]) -> Queryable:
         speed_kts = d.get("speed_kts")
         sample_alt_env = is_envelope_value(alt_ft)
         sample_spd_env = is_envelope_value(speed_kts)
+        # At a point: where the point is (the builder inlines its ref).
+        shape = shape_of(d)
+        at = load(shape) if isinstance(shape, dict) and "ref" not in shape else None
+        if at is not None:
+            lat = lon = None
         return Waypoint(
+            at=at,
             lat=lat,
             lon=lon,
-            waypoint=d.get("waypoint"),
+            waypoint=None if at is not None else d.get("waypoint"),
             alt_ft=None if sample_alt_env else alt_ft,
             speed_kts=None if sample_spd_env else speed_kts,
             reach_radius_nm=d.get("reach_radius_nm", 1.0),
@@ -705,7 +915,7 @@ def _queryable_load(d: dict[str, Any]) -> Queryable:
 def _spawn_region_dump(r: SpawnRegion) -> dict[str, Any]:
     return {
         "type": "spawn_region",
-        "bounds": _bounds_dump(r.bounds),
+        "shape": _bounds_dump(r.shape),
         "n_aircraft": dump_value(r.n_aircraft),
         "params": {k: dump_value(v) for k, v in r.params.items()},
         "aircraft_type": dump_value(r.aircraft_type),
@@ -726,7 +936,7 @@ def _spawn_region_dump(r: SpawnRegion) -> dict[str, Any]:
 
 def _spawn_region_load(d: dict[str, Any]) -> SpawnRegion:
     return SpawnRegion(
-        bounds=_bounds_load(d["bounds"]),
+        shape=_bounds_load(shape_of(d)),
         n_aircraft=load_value(d["n_aircraft"]),
         params={k: load_value(v) for k, v in d.get("params", {}).items()},
         aircraft_type=load_value(d.get("aircraft_type")),
@@ -786,10 +996,12 @@ def _spawn_config_load(d: dict[str, Any]) -> SpawnConfig:
 _LOADERS = {
     "box": _footprint_load,
     "disk": _footprint_load,
+    "point": _footprint_load,
     "polygon": _footprint_load,
     "sector": _footprint_load,
     "annular_sector": _footprint_load,
     "boolean": _footprint_load,
+    "generated": _footprint_load,
     "constant": _altitude_load,
     "linear": _altitude_load,
     "radial": _altitude_load,
@@ -1109,6 +1321,28 @@ class EnvSpec:
 _SPEC_VERSION = 1
 
 
+def shape_of(element: dict[str, Any]) -> Any:
+    """An element's shape: its ``"shape"`` - or ``"bounds"``, the older key,
+    which wins when both are there (only code setting it would put it there)."""
+    return element["bounds"] if "bounds" in element else element.get("shape")
+
+
+def _with_shape_key(element: Any) -> Any:
+    """An element dict with its older ``"bounds"`` key as ``"shape"``, in place
+    of it (order kept); anything else as it is."""
+    if isinstance(element, dict) and "bounds" in element:
+        out = {k: v for k, v in element.items() if k != "shape"}
+        return {("shape" if k == "bounds" else k): v for k, v in out.items()}
+    return element
+
+
+def _spawn_with_shape_keys(spawn: Any) -> Any:
+    if isinstance(spawn, dict) and isinstance(spawn.get("regions"), list):
+        return {**spawn, "regions": [_with_shape_key(r) for r in spawn["regions"]]}
+    return spawn
+
+
+@renamed(regions="shapes")
 @dataclass
 class DesignSpec:
     """Top-level design document - the single source of truth for an environment.
@@ -1123,10 +1357,10 @@ class DesignSpec:
     spawn: dict[str, Any]
     airspace: dict[str, Any] | None = None
     queryables: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Named, reusable bounds. Any consumer that takes a bounds dict (airspace,
-    # query-region, spawn-region, waypoint sample, spawn destination) may use
-    # ``{"ref": "<name>"}`` to reference one of these instead of inlining it.
-    regions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # The design's shapes - areas and points - by name. An element takes one
+    # as its ``"shape": {"ref": "<name>"}`` (``"bounds"``, the older key, still
+    # reads); ``regions``, the older name of this field, still works.
+    shapes: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Named waypoint stacks: several waypoint queryables that share ONE
     # per-episode position draw and take correlated altitudes, so a set of
     # streams can be routed onto a single merge/diverge point at either the same
@@ -1163,9 +1397,9 @@ class DesignSpec:
             "nav_cycle": self.nav_cycle,
             "metadata": dict(self.metadata),
             "airspace": self.airspace,
-            "queryables": dict(self.queryables),
-            "regions": dict(self.regions),
-            "spawn": self.spawn,
+            "queryables": {k: _with_shape_key(v) for k, v in self.queryables.items()},
+            "shapes": dict(self.shapes),
+            "spawn": _spawn_with_shape_keys(self.spawn),
             "transform": self.transform,
             "env": self.env.to_dict(),
             "code": dict(self.code),
@@ -1204,10 +1438,11 @@ class DesignSpec:
             code.pop("task.py", None)
         return cls(
             env=env,
-            spawn=d["spawn"],
+            spawn=_spawn_with_shape_keys(d["spawn"]),
             airspace=d.get("airspace"),
-            queryables=dict(d.get("queryables", {})),
-            regions=dict(d.get("regions", {})),
+            # Older designs: an element's "bounds", the design's "regions".
+            queryables={k: _with_shape_key(v) for k, v in d.get("queryables", {}).items()},
+            shapes=dict(d.get("shapes", d.get("regions", {}))),
             # Absent in pre-stack designs: an empty mapping is the no-op.
             transform=d.get("transform"),
             code=code,

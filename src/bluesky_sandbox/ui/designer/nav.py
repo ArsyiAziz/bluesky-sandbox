@@ -17,6 +17,7 @@ viewport into concrete features and resolves a single identifier to coords.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import bluesky as bs
@@ -272,12 +273,14 @@ def search(
     *,
     kinds: tuple[str, ...] = ("waypoint", "airport"),
     limit: int = 30,
+    near: tuple[float, float] | None = None,
 ) -> dict[str, list]:
     """Search navdb by identifier (and airport name) for the global picker.
 
     Unlike :func:`features_in_bounds`, this is not window-scoped - it powers the
-    "fly to / add a feature" search box. Matching is case-insensitive: exact and
-    prefix hits rank ahead of substring hits, capped at ``limit`` per kind.
+    "fly to / add a feature" search box. Matching is case-insensitive: exact,
+    then prefix, then substring hits, capped at ``limit`` per kind. ``near`` -
+    a ``(lat, lon)``: within each, the nearest first (names repeat worldwide).
     """
     q = query.strip().upper()
     out: dict[str, list] = {"waypoints": [], "airports": []}
@@ -294,7 +297,9 @@ def search(
                 lon_deg=float(nd.wplon[i]),
                 wptype=_decode(nd.wptype[i]) if nd.wptype else None,
             )
-            for i in _rank_matches((_decode(x) for x in nd.wpid), q, limit)
+            for i in _rank_matches(
+                (_decode(x) for x in nd.wpid), q, limit, near, lambda i: (nd.wplat[i], nd.wplon[i])
+            )
         ]
 
     if "airport" in kinds:
@@ -312,24 +317,37 @@ def search(
                 lon_deg=float(nd.aptlon[i]),
                 name=_decode(names[i]) if i < len(names) else None,
             )
-            for i in _rank_matches(iter(haystack), q, limit)
+            for i in _rank_matches(iter(haystack), q, limit, near, lambda i: (nd.aptlat[i], nd.aptlon[i]))
         ]
     return out
 
 
-def _rank_matches(values, q: str, limit: int) -> list[int]:
-    """Return indices whose upper-cased value matches ``q``, prefix hits first."""
-    prefix: list[int] = []
-    substring: list[int] = []
+def _rank_matches(values, q: str, limit: int, near=None, at=None) -> list[int]:
+    """Return indices whose upper-cased value matches ``q``: exact hits (on its
+    first word), then prefix, then substring - each nearest ``near`` first
+    when given (``at(i)`` - entry ``i``'s ``(lat, lon)``)."""
+    tiers: tuple[list[int], list[int], list[int]] = ([], [], [])
     for i, value in enumerate(values):
         v = value.upper()
-        if v.startswith(q):
-            prefix.append(i)
+        if v.split(" ", 1)[0] == q:
+            tiers[0].append(i)
+        elif v.startswith(q):
+            tiers[1].append(i)
         elif q in v:
-            substring.append(i)
-        if len(prefix) >= limit:
+            tiers[2].append(i)
+        if near is None and len(tiers[0]) + len(tiers[1]) >= limit:
             break
-    return (prefix + substring)[:limit]
+    if near is not None and at is not None:
+        lat0, lon0 = near
+        cos = math.cos(math.radians(lat0))
+
+        def distance(i: int) -> float:
+            lat, lon = at(i)
+            return (float(lat) - lat0) ** 2 + ((float(lon) - lon0) * cos) ** 2
+
+        for tier in tiers:
+            tier.sort(key=distance)
+    return (tiers[0] + tiers[1] + tiers[2])[:limit]
 
 
 def features_in_bounds(

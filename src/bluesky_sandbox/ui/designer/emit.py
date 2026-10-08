@@ -29,7 +29,7 @@ from .spec import (
     representative_value,
 )
 
-_FOOTPRINT_TYPES = {"box", "disk", "polygon", "sector", "annular_sector", "boolean"}
+_FOOTPRINT_TYPES = {"box", "disk", "point", "polygon", "sector", "annular_sector", "boolean", "generated"}
 
 
 # SpawnConfig's own defaults, so generated code only spells out a changed value.
@@ -82,6 +82,10 @@ class _Emitter:
         # reference them as draw['<region>.<param path>'].
         self.sampled_region_params: dict[str, Any] = {}
         self._current_region: str | None = None
+        # Whether a named region is drawn by a generator; modules of the
+        # generators of one's own a design names by import path.
+        self.uses_generated = False
+        self.generator_modules: set[str] = set()
 
     # ---- scalar-or-distribution values ---------------------------------- #
     def value(self, v: Any) -> str:
@@ -166,6 +170,9 @@ class _Emitter:
                 f"BoxFootprint({self.fparam(d, 'lat_min_deg', path)}, {self.fparam(d, 'lat_max_deg', path)}, "
                 f"{self.fparam(d, 'lon_min_deg', path)}, {self.fparam(d, 'lon_max_deg', path)})"
             )
+        if t == "point":
+            fix = f", fix={str(d['fix']).upper()!r}" if d.get("fix") else ""
+            return f"PointFootprint({self.latlon(d['center'])}{fix})"
         if t == "disk":
             return f"DiskFootprint({self.latlon(d['center'])}, radius_nm={self.fparam(d, 'radius_nm', path)}, n_vertices={d.get('n_vertices', 72)})"
         if t == "polygon":
@@ -188,7 +195,67 @@ class _Emitter:
                 f"({self.footprint(d['left'], path + 'left.')} {ops[d['op']]} "
                 f"{self.footprint(d['right'], path + 'right.')})"
             )
+        if t == "generated":
+            return self.generated(d)
         raise ValueError(f"cannot emit footprint {t!r}")
+
+    def generated(self, d: dict[str, Any]) -> str:
+        """``GeneratedFootprint(Generator(param=...))``: a region a generator
+        draws each episode. Its params are drawn by the generator itself, so a
+        range stays a range here."""
+        if self._current_region is None:
+            raise ValueError("a generated footprint is only supported on a named region")
+        self.uses_generated = True
+        name = d["generator"]
+        if ":" in name:
+            module, _, attr = name.partition(":")
+            self.generator_modules.add(module)
+            cls = f"{module}.{attr}"
+        else:
+            cls = name
+        params = ", ".join(
+            f"{key}={self.generator_param(value)}" for key, value in (d.get("params") or {}).items()
+        )
+        return f"GeneratedFootprint({cls}({params}))"
+
+    def generator_param(self, v: Any) -> str:
+        if isinstance(v, dict) and set(v) == {"lat_deg", "lon_deg"}:
+            return self.latlon(v)
+        if isinstance(v, dict) and set(v) == {"ref"}:
+            # Inline: the region it names, as its fixed shape - REGIONS is
+            # still being built where this is.
+            target = self.regions.get(v["ref"])
+            base = v["ref"].rpartition(".")[0]
+            if target is None and base in self.regions and v["ref"] in _spec.partition_names(base, self.regions[base]):
+                target = self.regions[base]
+            if target is None:
+                raise ValueError(f"region ref {v['ref']!r} not found")
+            # Named, so an episode's draw of it stands in for it.
+            return self.inline_bounds(target)[:-1] + f", name={v['ref']!r})"
+        if isinstance(v, dict) and v.get("type") == "region":
+            return self.inline_bounds(v)
+        if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+            return "(" + ", ".join(self.generator_param(x) for x in v) + ",)"
+        if isinstance(v, bool):
+            return repr(v)
+        return self.value(v)
+
+    def inline_bounds(self, d: dict[str, Any]) -> str:
+        """A region where another refers to it: as a fixed shape (sampled
+        params at their representative) - or, drawn anew each episode, as its
+        generator and placement, which this episode's draw stands in for."""
+        fp = d.get("footprint") or {}
+        if fp.get("type") == "generated" or d.get("placement") or d.get("motion"):
+            outer, self._current_region = self._current_region, "<inline>"
+            try:
+                return f"RegionBounds({self.layered(d)}, {self.band(d.get('altitude'))})"
+            finally:
+                self._current_region = outer
+        outer, self._current_region = self._current_region, None
+        try:
+            return self.bounds(_spec.dump(_spec.load(d)))
+        finally:
+            self._current_region = outer
 
     def named_bounds(self, name: str, d: dict[str, Any]) -> str:
         """Emit a named region's bounds, allowing its params to be sampled."""
@@ -227,7 +294,35 @@ class _Emitter:
         # no special rotation primitive.
         if d.get("rotation_deg"):
             d = _spec.dump(_spec.load(d))
-        return f"RegionBounds({self.footprint(d['footprint'])}, {self.band(d.get('altitude'))})"
+        return f"RegionBounds({self.layered(d)}, {self.band(d.get('altitude'))})"
+
+    def layered(self, d: dict[str, Any]) -> str:
+        """A region's footprint with its layers: placed where its placement
+        puts it, moving by its motions."""
+        footprint = self.footprint(d["footprint"])
+        if d.get("placement"):
+            footprint = f"PlacedFootprint({footprint}, {self.placement(d['placement'])})"
+        if d.get("motion"):
+            motions = ", ".join(self.placement(m) for m in d["motion"])
+            update = d.get("motion_update") or "step"
+            tail = "" if update == "step" else f", update={update!r}"
+            footprint = f"MovingFootprint({footprint}, ({motions},){tail})"
+        return footprint
+
+    def placement(self, d: dict[str, Any]) -> str:
+        """``InRegion(...)``, ``Drift(...)``: a placement or a motion of a region."""
+        if self._current_region is None:
+            raise ValueError("a placement is only supported on a named region")
+        self.uses_generated = True
+        name = d["type"]
+        if ":" in name:
+            module, _, attr = name.partition(":")
+            self.generator_modules.add(module)
+            name = f"{module}.{attr}"
+        params = ", ".join(
+            f"{key}={self.generator_param(value)}" for key, value in d.items() if key != "type"
+        )
+        return f"{name}({params})"
 
     def bounds_or_ref(self, d: dict[str, Any]) -> str:
         """Emit a bounds, a ``REGIONS[name]`` reference, or a bare footprint."""
@@ -240,13 +335,16 @@ class _Emitter:
     def queryable(self, d: dict[str, Any]) -> str:
         if d["type"] == "query_region":
             return (
-                f"QueryRegion({self.bounds_or_ref(d['bounds'])}, color={d.get('color', 'orange')!r}, "
+                f"QueryRegion({self.bounds_or_ref(_spec.shape_of(d))}, color={d.get('color', 'orange')!r}, "
                 f"render_shape={d.get('render_shape', True)}, render_label={d.get('render_label', True)}, "
                 f"track_temporal_state={d.get('track_temporal_state', False)})"
             )
         # waypoint
         args = []
-        if d.get("waypoint") is not None:
+        if _spec.shape_of(d) is not None:
+            # At its point: where the point is, each episode.
+            args.append(f"at={self.bounds_or_ref(_spec.shape_of(d))}")
+        elif d.get("waypoint") is not None:
             args.append(f"waypoint={d['waypoint']!r}")
         else:
             lat, lon = d.get("lat"), d.get("lon")
@@ -293,7 +391,7 @@ class _Emitter:
     def spawn_region(self, d: dict[str, Any]) -> str:
         params = ", ".join(f"{k!r}: {self.value(v)}" for k, v in d.get("params", {}).items())
         lines = [
-            f"        bounds={self.bounds_or_ref(d['bounds'])},",
+            f"        shape={self.bounds_or_ref(_spec.shape_of(d))},",
             f"        n_aircraft={self.value(d['n_aircraft'])},",
             f"        params={{{params}}},",
         ]
@@ -688,10 +786,20 @@ def _emit_group(em: _Emitter, spec: DesignSpec, g: dict[str, Any]) -> str:
         )
     else:
         translation = "None"
+    motion = ""
+    if g.get("motion"):
+        # As on a region: its motions, written as objects. Placed as a region's
+        # would be - a placement's emitter wants a named region in hand.
+        outer, em._current_region = em._current_region, "<group>"
+        try:
+            motions = ", ".join(em.placement(m) for m in g["motion"])
+        finally:
+            em._current_region = outer
+        motion = f', "motion": ({motions},), "motion_update": {(g.get("motion_update") or "step")!r}'
     return (
         f'{{"id": {g["id"]!r}, "angle": {angle_expr}, '
         f'"translation": {translation}, "scale": {scale_expr}, '
-        f'"pivot": {pivot!r}, "members": {members!r}, "parent": {g.get("parent")!r}}}'
+        f'"pivot": {pivot!r}, "members": {members!r}, "parent": {g.get("parent")!r}{motion}}}'
     )
 
 
@@ -709,9 +817,9 @@ def _emit_transform(em: _Emitter, spec: DesignSpec) -> str:
 
 def emit_scenario_sources(spec: DesignSpec) -> dict[str, str]:
     """Return imports and scenario expressions for a generated scenario.py."""
-    em = _Emitter(regions=spec.regions)
+    em = _Emitter(regions=spec.shapes)
     regions = ",\n    ".join(
-        f"{name!r}: {em.named_bounds(name, b)}" for name, b in (spec.regions or {}).items()
+        f"{name!r}: {em.named_bounds(name, b)}" for name, b in (spec.shapes or {}).items()
     )
     airspace = em.bounds_or_ref(spec.airspace) if spec.airspace else "None"
     queryables = ",\n    ".join(
@@ -736,10 +844,13 @@ def emit_scenario_sources(spec: DesignSpec) -> dict[str, str]:
         if em.uses_envelope_sample
         else ""
     )
-    imports = f'''{scipy_import}from bluesky_sandbox.sim.bounds import (
+    generator_import = "".join(f"import {m}\n" for m in sorted(em.generator_modules))
+    imports = f'''{generator_import}{scipy_import}from bluesky_sandbox.sim.bounds import (
     AnnularSectorFootprint, BooleanFootprint, BoxFootprint, ConstantAltitudeBand,
-    DiskFootprint, LatLon, LinearAltitudeBand, PolygonFootprint, RadialAltitudeBand,
-    RegionBounds, SectorFootprint, VertexAltitudeBand,
+    DiskFootprint, LatLon, LinearAltitudeBand, PointFootprint, PolygonFootprint,
+    RadialAltitudeBand, RegionBounds, SectorFootprint, VertexAltitudeBand,
+    GeneratedFootprint, Blob, ConvexPolygon, VoronoiSectors, PlacedFootprint,
+    InRegion, MovingFootprint, Drift, Spin, Grow,
 )
 from bluesky_sandbox.sim.sampling.distributions import Bounded, Categorical
 {envelope_import.rstrip()}
@@ -759,6 +870,9 @@ from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion'''
         "region_param_dists": (
             "{\n        " + region_param_dists + ",\n    }" if region_param_dists else ""
         ),
+        # Non-empty iff a named region is drawn by a generator: the template's
+        # parametric form draws it each episode.
+        "generated_regions": "yes" if em.uses_generated else "",
         # Non-empty iff the design declares waypoint stacks (shared merge
         # points). Also switches the scenario template to the parametric form,
         # since stacks need the per-episode geometry hook.
@@ -771,11 +885,11 @@ def emit_design(spec: DesignSpec, package: str | None = None) -> str:
     Defines module-level ``AIRSPACE``, ``QUERYABLES``, ``SPAWN``, ``TRANSFORM``,
     and the scalar env settings.
     """
-    em = _Emitter(package=package, regions=spec.regions)
+    em = _Emitter(package=package, regions=spec.shapes)
     env: EnvSpec = spec.env
 
     regions = ",\n    ".join(
-        f"{name!r}: {em.bounds(b)}" for name, b in (spec.regions or {}).items()
+        f"{name!r}: {em.bounds(b)}" for name, b in (spec.shapes or {}).items()
     )
     airspace = em.bounds_or_ref(spec.airspace) if spec.airspace else "None"
     queryables = ",\n    ".join(
@@ -808,8 +922,10 @@ from __future__ import annotations
 
 {scipy_import}from bluesky_sandbox.sim.bounds import (
     AnnularSectorFootprint, BooleanFootprint, BoxFootprint, ConstantAltitudeBand,
-    DiskFootprint, LatLon, LinearAltitudeBand, PolygonFootprint, RadialAltitudeBand,
+    DiskFootprint, LatLon, LinearAltitudeBand, PointFootprint, PolygonFootprint, RadialAltitudeBand,
     RegionBounds, SectorFootprint, VertexAltitudeBand,
+    GeneratedFootprint, Blob, ConvexPolygon, VoronoiSectors, PlacedFootprint, InRegion,
+    MovingFootprint, Drift, Spin, Grow,
 )
 from bluesky_sandbox.sim.sampling.distributions import Bounded, Categorical
 {envelope_import.rstrip()}

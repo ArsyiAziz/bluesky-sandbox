@@ -96,6 +96,95 @@ def _concrete_subclasses(module, base) -> list[type]:
     return out
 
 
+def _param_kind(hint: Any) -> str | None:
+    """What input a generator's or placement's param takes, from its
+    annotation: ``latlon`` (a point), ``points`` (several), ``region`` (a named
+    region), ``regions`` (several), ``value`` (a number, range or
+    distribution), ``int``, ``float``, ``bool`` - else None (not offered)."""
+    text = str(hint)
+    if "Sequence[" in text and "LatLon" in text:
+        return "points"
+    if "Sequence[" in text and ("Bounds" in text or "Footprint" in text):
+        return "regions"
+    if "LatLon" in text:
+        return "latlon"
+    if "Bounds" in text or "Footprint" in text:
+        return "region"
+    if text.startswith(("Value", "Any", "typing.Any")):
+        return "value"
+    if text in ("bool", "<class 'bool'>"):
+        return "bool"
+    if text in ("int", "<class 'int'>"):
+        return "int"
+    if text in ("float", "float | None", "<class 'float'>"):
+        return "float"
+    return None
+
+
+def _params_of(cls: type) -> list[dict[str, Any]]:
+    """A generator's or placement's params: each one's name, kind, default."""
+    params = []
+    for f in dataclasses.fields(cls):
+        kind = _param_kind(f.type)
+        if not f.init or kind is None:
+            continue
+        default = f.default if f.default is not dataclasses.MISSING else None
+        if isinstance(default, _bounds.LatLon):
+            default = {"lat_deg": default.lat_deg, "lon_deg": default.lon_deg}
+        elif not isinstance(default, (int, float, str, bool, type(None))):
+            default = None
+        params.append({"name": f.name, "kind": kind, "default": default})
+    return params
+
+
+def _summary(cls: type) -> str:
+    """A docstring's first paragraph, as one line."""
+    doc = inspect.getdoc(cls) or ""
+    return " ".join(doc.split("\n\n", 1)[0].split())
+
+
+def _concrete(module: Any, base: type) -> list[tuple[str, type]]:
+    return [
+        (name, cls)
+        for name, cls in sorted(vars(module).items())
+        if inspect.isclass(cls) and issubclass(cls, base) and not inspect.isabstract(cls)
+    ]
+
+
+def generators() -> list[dict[str, Any]]:
+    """The shape generators: each one's class name, doc, and params (see
+    :func:`_param_kind`); a partition's ``partition`` names the param its
+    number of shapes is set by."""
+    from bluesky_sandbox.sim.bounds import generators as _gen  # noqa: PLC0415
+
+    return [
+        {"name": name, "doc": _summary(cls), "params": _params_of(cls), "partition": cls.partition}
+        for name, cls in _concrete(_gen, _gen.ShapeGenerator)
+    ]
+
+
+def placements() -> list[dict[str, Any]]:
+    """The placements - where a region sits each episode: each one's class
+    name, doc, and params (see :func:`_param_kind`)."""
+    from bluesky_sandbox.sim.bounds import placement as _place  # noqa: PLC0415
+
+    return [
+        {"name": name, "doc": _summary(cls), "params": _params_of(cls)}
+        for name, cls in _concrete(_place, _place.Placement)
+    ]
+
+
+def motions() -> list[dict[str, Any]]:
+    """The motions - how a region moves during an episode: each one's class
+    name, doc, and params (see :func:`_param_kind`)."""
+    from bluesky_sandbox.sim.bounds import motion as _motion  # noqa: PLC0415
+
+    return [
+        {"name": name, "doc": _summary(cls), "params": _params_of(cls)}
+        for name, cls in _concrete(_motion, _motion.Motion)
+    ]
+
+
 def footprints() -> list[dict[str, Any]]:
     """Available footprint primitives with their constructor parameters."""
     names = [
@@ -842,6 +931,9 @@ def catalog(model: str | None = None) -> dict[str, Any]:
     """Full palette payload for the GUI in one call."""
     return {
         "footprints": footprints(),
+        "generators": generators(),
+        "placements": placements(),
+        "motions": motions(),
         "altitude_bands": altitude_bands(),
         "queryables": queryables(),
         "obs_fields": obs_fields(),

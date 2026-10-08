@@ -47,7 +47,7 @@ from . import nav as _nav
 from . import runner as _runner
 from . import spec as _spec
 from .builder import BuildError, build_design_config, build_scenario
-from .code_intel import code_intel, forget_type_checking_names
+from .code_intel import code_intel, describe_type, forget_type_checking_names
 from .diagnostics import diagnostics
 from .mdp import mdp_summary
 from .preview import airspace_warnings, scenario_preview
@@ -190,6 +190,16 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail="invalid module name")
         return _python_module_members(module)
 
+    @app.get("/api/python/type")
+    def python_type(key: str) -> dict[str, Any]:
+        """A type the code editor reached, described one level down."""
+        if not key or not key.replace(".", "").replace("_", "").isalnum():
+            raise HTTPException(status_code=422, detail="invalid type key")
+        try:
+            return {"types": describe_type(key)}
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
     # -------------------------------------------------------------------- nav
     @app.post("/api/nav/features")
     def nav_features(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
@@ -229,8 +239,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
     @app.get("/api/nav/search")
-    def nav_search(q: str, limit: int = 30) -> dict[str, Any]:
-        result = _nav.search(q, limit=limit)
+    def nav_search(
+        q: str, limit: int = 30, lat: float | None = None, lon: float | None = None
+    ) -> dict[str, Any]:
+        near = (lat, lon) if lat is not None and lon is not None else None
+        result = _nav.search(q, limit=limit, near=near)
         return {
             "waypoints": [dataclasses.asdict(w) for w in result["waypoints"]],
             "airports": [dataclasses.asdict(a) for a in result["airports"]],
@@ -245,9 +258,12 @@ def create_app() -> FastAPI:
             warnings = _airspace_validation_errors(spec)
         except (BuildError, ValueError, TypeError) as e:
             return {"ok": False, "error": str(e)}
+        # Outside the airspace is worth knowing - an exit fix, a feeder - but
+        # the design builds: a warning, not an error.
+        out: dict[str, Any] = {"ok": True, "summary": summary}
         if warnings:
-            return {"ok": False, "error": f"outside airspace: {', '.join(warnings)}"}
-        return {"ok": True, "summary": summary}
+            out["warnings"] = [f"outside the airspace: {', '.join(warnings)}"]
+        return out
 
     @app.post("/api/spec/code-intel")
     def spec_code_intel(body: dict[str, Any] = Body(...)) -> dict[str, Any]:

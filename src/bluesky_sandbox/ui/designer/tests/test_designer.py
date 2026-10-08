@@ -518,7 +518,7 @@ def test_sampled_region_params():
     # with a whole-geometry rotation, the region geometry rotates with the seed.
     spec.transform = {"rotation": {"angle_deg": {"type": "range", "low": 0.0, "high": 360.0},
                                    "pivot": [52.0, 4.7]}}
-    zones = [scenario_preview(spec, seed=s)["regions"]["zone"] for s in (0, 1)]
+    zones = [scenario_preview(spec, seed=s)["shapes"]["zone"] for s in (0, 1)]
     assert all(z["vertices"] for z in zones)
     # A disk is rotation-invariant, but its *sampled radius* must vary by seed.
     def _r(z):
@@ -586,7 +586,7 @@ def test_group_transforms_route_samples_and_preview_regions():
     for seed in (0, 1):
         ep = scenario.sample(np.random.default_rng(seed))
         b_ep = bearing(ep.spawn.regions[0].route[0]["sample"].vertices)
-        b_pv = bearing(scenario_preview(spec, seed=seed)["regions"]["corridor"]["vertices"])
+        b_pv = bearing(scenario_preview(spec, seed=seed)["shapes"]["corridor"]["vertices"])
         assert abs(b_ep - b_pv) < 1.0, (b_ep, b_pv)
         bearings.append(b_ep)
     assert abs(bearings[0] - bearings[1]) > 5.0  # the group angle actually varies
@@ -1488,7 +1488,7 @@ def test_scenario_hooks():
     scenario_py = files[f"{pkg}/scenario.py"]
     assert "SHIFT_DEG = 0.25" in scenario_py
     assert "def _episode_geometry(geometry, rng):" in scenario_py
-    assert "self._episode_geometry(dict(sampler.episode_geometry(rng)), rng)" in scenario_py
+    assert "self._episode_geometry(GeometryDict(sampler.episode_geometry(rng)), rng)" in scenario_py
     compile(scenario_py, "scenario.py", "exec")
 
     # a design with no scenario code is untouched: same template, no hook wiring

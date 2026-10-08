@@ -40,6 +40,7 @@ from . import setup_code
 from .builder import (
     build_design_config,
     build_scenario,
+    lower_waypoints,
     with_inferred_temporal_tracking,
 )
 from .catalog import hooks as _hook_catalog
@@ -84,6 +85,10 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
     (``custom_fields:MyField`` -> ``<pkg>.custom_fields:MyField``) so the
     package is self-contained and importable.
     """
+    # The design as made, for design.json; the rest is built from it with its
+    # waypoints on points in the form the generated scenario takes.
+    original = spec
+    spec = lower_waypoints(spec)
     pkg = _valid_package_name(package_name)
     class_stem = _class_stem(pkg)
     template = template_of(spec)
@@ -111,7 +116,7 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
 
     files: dict[str, str] = {
         f"{pkg}/__init__.py": _init_py(pkg, title, class_stem, meta),
-        f"{pkg}/design.json": spec.to_json(),
+        f"{pkg}/design.json": original.to_json(),
         f"{pkg}/__main__.py": _main_py(),
         f"{pkg}/README.md": _readme_md(pkg, title, e, meta, template),
     }
@@ -320,7 +325,9 @@ def _scenario_py(
     # parametric form is what gives the hook a geometry dict to post-process.
     scenario_hooks = dict(scenario_hooks or {})
     if (
-        scenario_sources.get("region_param_dists") or scenario_hooks
+        scenario_sources.get("region_param_dists")
+        or scenario_sources.get("generated_regions")
+        or scenario_hooks
     ):
         return _parametric_scenario_py(
             class_stem, scenario_sources, scenario_setup, scenario_hooks
@@ -357,6 +364,7 @@ class {class_stem}Scenario(RandomizedScenario):
             groups=groups,
             sampled_waypoints={scenario_sources["sampled_waypoints"]},
             waypoint_fields={scenario_sources["waypoint_fields"]},
+            shapes=REGIONS,
         )
 
 '''
@@ -394,7 +402,7 @@ which returns the geometry dict the episode actually runs."""
     if "episode_geometry" in scenario_hooks:
         episode_geometry_wiring = """
         def episode_geometry_fn(rng):
-            return self._episode_geometry(dict(sampler.episode_geometry(rng)), rng)
+            return self._episode_geometry(GeometryDict(sampler.episode_geometry(rng)), rng)
 
 """
         episode_geometry_expr = "episode_geometry_fn"
@@ -412,7 +420,7 @@ shapes at every parameter endpoint.{hooks_doc}
 
 from __future__ import annotations
 
-from bluesky_sandbox.sim.scenario import RandomizedScenario, RegionParamSampler
+from bluesky_sandbox.sim.scenario import GeometryDict, RandomizedScenario, RegionParamSampler
 
 {scenario_sources["imports"]}{setup_block}
 
@@ -434,6 +442,7 @@ class {class_stem}Scenario(RandomizedScenario):
             "spawn": {scenario_sources["spawn"]},
             "queryables": {scenario_sources["queryables"]},
             "sampled_waypoints": {scenario_sources["sampled_waypoints"]},
+            "shapes": REGIONS,
         }}
 
     def __init__(self) -> None:
@@ -457,6 +466,7 @@ class {class_stem}Scenario(RandomizedScenario):
             sampled_waypoints=geometry["sampled_waypoints"],
             waypoint_fields={scenario_sources["waypoint_fields"]},
             episode_geometry_fn={episode_geometry_expr},
+            shapes=geometry["shapes"],
         )
 
 '''

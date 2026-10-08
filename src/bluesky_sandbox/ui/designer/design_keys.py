@@ -105,12 +105,23 @@ def _queryable_result(batched: bool, _config: EnvConfig, support: Any) -> list[K
     return _queryables(support, lambda q: getattr(q, "result_type", None))
 
 
+def _bounds(_batched: bool, _config: EnvConfig, support: Any) -> list[Key]:
+    from bluesky_sandbox.sim.bounds import RegionBounds  # noqa: PLC0415
+
+    return [
+        Key(name, RegionBounds, type(b.footprint).__name__.removesuffix("Footprint"), _doc(RegionBounds))
+        for name, b in (getattr(support, "bounds", None) or {}).items()
+    ]
+
+
 _SOURCES = {
     "observation": _observation,
     "state": _state,
     "action": _action,
     "queryable": _queryable,
     "queryable_result": _queryable_result,
+    "shapes": _bounds,
+    "bounds": _bounds,  # shapes' older name
 }
 
 
