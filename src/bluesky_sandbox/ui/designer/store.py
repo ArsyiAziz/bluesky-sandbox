@@ -1,7 +1,10 @@
 """On-disk persistence for design specs.
 
-A flat directory of ``<name>.json`` documents, or ``<name>-v<version>.json``
-when the design carries a ``metadata.version``. Names are slugged to stay
+A directory of designs, each a folder ``<name>/`` (``design.json`` and its code
+as ``.py`` files - see :mod:`.folder`) or one ``<name>.json`` file;
+``<name>-v<version>`` when the design carries a ``metadata.version``. A new
+design is saved as a folder; one already stored as a file stays one (the
+``design convert`` command turns it into a folder). Names are slugged to stay
 filesystem-safe and to keep the store from escaping its root.
 
 Versions are separate documents, not revisions of one: a design at v2 is a
@@ -15,9 +18,11 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from .folder import DESIGN_FILE, read_folder, write_folder
 from .spec import DesignSpec
 
 _DEFAULT_DIR = Path.home() / ".bluesky_sandbox" / "designs"
@@ -44,6 +49,18 @@ class SpecStore:
     def _path(self, name: str) -> Path:
         return self.root / f"{slug(name)}.json"
 
+    def _folder(self, name: str) -> Path:
+        return self.root / slug(name)
+
+    def _entries(self) -> list[Path]:
+        """Each stored design: its ``.json`` file, or its folder's ``design.json``."""
+        files = list(self.root.glob("*.json")) + list(self.root.glob(f"*/{DESIGN_FILE}"))
+        return sorted(files, key=lambda p: self._stem(p))
+
+    @staticmethod
+    def _stem(path: Path) -> str:
+        return path.parent.name if path.name == DESIGN_FILE else path.stem
+
     @staticmethod
     def _split_stem(stem: str) -> tuple[str, str]:
         """``("point-merge-v2")`` -> ``("point-merge", "2")``; no suffix -> ``("", )``."""
@@ -54,17 +71,18 @@ class SpecStore:
 
     def list(self) -> list[dict[str, str]]:
         out = []
-        for p in sorted(self.root.glob("*.json")):
+        for p in self._entries():
+            stem = self._stem(p)
             try:
                 data = json.loads(p.read_text())
                 meta = data.get("metadata", {})
             except (OSError, json.JSONDecodeError):
                 meta = {}
-            base, version = self._split_stem(p.stem)
+            base, version = self._split_stem(stem)
             out.append(
                 {
-                    "name": p.stem,          # the load key
-                    "title": meta.get("name", p.stem),
+                    "name": stem,            # the load key
+                    "title": meta.get("name", stem),
                     "base": base,            # groups versions of one design
                     "version": str(meta.get("version", version) or version),
                 }
@@ -72,6 +90,9 @@ class SpecStore:
         return out
 
     def load(self, name: str) -> DesignSpec:
+        folder = self._folder(name)
+        if (folder / DESIGN_FILE).is_file():
+            return read_folder(folder)
         path = self._path(name)
         if not path.exists():
             raise FileNotFoundError(f"no design named {name!r}.")
@@ -88,10 +109,17 @@ class SpecStore:
         if version and version != "0":
             stem = f"{stem}-v{slug(version)}"
         path = self.root / f"{stem}.json"
-        path.write_text(spec.to_json())
-        return path.stem
+        if path.exists():
+            # Stored as one file: it stays one.
+            path.write_text(spec.to_json())
+        else:
+            write_folder(spec, self.root / stem)
+        return stem
 
     def delete(self, name: str) -> None:
+        folder = self._folder(name)
+        if (folder / DESIGN_FILE).is_file():
+            shutil.rmtree(folder)
         path = self._path(name)
         if path.exists():
             path.unlink()

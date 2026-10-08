@@ -37,7 +37,9 @@ import string and edited as code.
 | `catalog.py` | palette of available footprints / bands / fields / aircraft for the GUI |
 | `codegen.py` | spec → runnable task package (design.json + scenario/env/task scaffolding) |
 | `runner.py`  | code-gen the spec to a temp package and launch it in a live driver subprocess |
-| `store.py`   | on-disk persistence of named designs (`~/.bluesky_sandbox/designs`) |
+| `store.py`   | on-disk persistence of named designs (`~/.bluesky_sandbox/designs`), each a folder or one `.json` file |
+| `folder.py`  | a design as a folder: `design.json` for its structure, its code as `.py` modules |
+| `schema.py`  | the JSON Schema of `design.json`, read from the catalog |
 | `api.py`     | FastAPI server tying it together + static frontend serving |
 
 ### Frontend (`web/`)
@@ -264,6 +266,39 @@ classes are *logic*, so they live as Python in `spec.code` (edited in the Code
 tab) and are referenced from the spec by import string (`task:reward`,
 `custom_fields:MyField`). The builder registers these modules in-process for live
 validation, and `codegen` writes them into the generated package.
+
+## A design on disk
+
+A design is saved as a folder, its code as real Python modules:
+
+```
+my_design/
+  design.json          # the structure: shapes, elements, spawn, spaces, config
+  design.schema.json   # what design.json may hold: any JSON editor completes and checks it
+  code/
+    hooks.py           # the env hooks, as functions, after their setup
+    task_info.py       # the task-info entries, as functions, after their setup
+    scenario.py        # scenario setup, scenario hooks, each spawn source's plan_<name>
+    custom_fields.py   # the design's own modules, as they are
+```
+
+In each code file, a function named for a hook (`reward`), a task-info entry,
+a scenario hook (`episode_geometry`) or a spawn source (`plan_<name>`) is that;
+everything else is its setup. The block between the `in scope` markers at the
+top imports what the design has in scope there, so an editor or linter reads
+the file as the design runs it; it is rewritten on every save and never read
+back. A design saved earlier as one `.json` file stays one; it still shares
+best that way, and either form converts to the other.
+
+From the command line, without the designer:
+
+```bash
+bluesky-sandbox design check   my_design                # build it; exit 1 on any error
+bluesky-sandbox design preview my_design --seed 3       # one episode's aircraft
+bluesky-sandbox design build   my_design --out tasks/   # its task package
+bluesky-sandbox design convert my_design.json my_design # a file to a folder, or back
+bluesky-sandbox design schema  --out design.schema.json
+```
 
 ## Running
 

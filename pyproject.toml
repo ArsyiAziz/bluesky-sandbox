@@ -69,6 +69,7 @@ all = ["bluesky-sandbox[designer,pygame,qtgl,panda3d,recording]"]
 dev = ["bluesky-sandbox[all]", "pytest>=8", "black>=24", "ruff>=0.16", "httpx2>=2"]
 
 [project.scripts]
+bluesky-sandbox = "bluesky_sandbox.cli:main"
 bluesky-sandbox-doctor = "bluesky_sandbox.doctor:main"
 bluesky-sandbox-designer = "bluesky_sandbox.ui.designer.api:main"
 
