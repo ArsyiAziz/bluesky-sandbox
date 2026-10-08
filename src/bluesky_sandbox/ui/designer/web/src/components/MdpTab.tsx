@@ -43,6 +43,9 @@ type Field = {
   output: { low: (number | null)[]; high: (number | null)[] };
   curve: Curve | null;
   curve_note?: string;
+  // An action's mapping, stage by stage: the policy's value, the normalizer,
+  // its grid (the value's or the target's), the command.
+  pipeline?: { stage: string; text: string; step?: number }[] | null;
 };
 type Part = { part: string; rows?: string; width: number; fields: Field[] };
 type Summary = {
@@ -356,6 +359,20 @@ function Detail({
         ))}
         <dt>{role === "observation" ? "policy sees" : "policy gives"}</dt>
         <dd>{outputText(f)}</dd>
+        {f.pipeline && (
+          <>
+            <dt>mapping</dt>
+            <dd>
+              <ol className="mdp-pipeline">
+                {f.pipeline.map((s, i) => (
+                  <li key={i}>
+                    <span className="muted small">{s.stage}</span> {s.text}
+                  </li>
+                ))}
+              </ol>
+            </dd>
+          </>
+        )}
         {perAircraft && (
           <>
             <dt>range</dt>

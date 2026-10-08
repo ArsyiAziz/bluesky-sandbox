@@ -18,6 +18,8 @@ export interface FieldOption {
   category_doc?: string;
   // Whether the constructor takes a normalizer (a switch action does not).
   normalizable?: boolean;
+  // Whether an action takes a grid (a switch does not).
+  griddable?: boolean;
   pair_only?: boolean;
   params?: FieldParam[];
   queryable_spec?: QueryableFieldSpec | null;
@@ -34,10 +36,8 @@ export interface FieldOption {
 
 // A constructor parameter. `refers` says what it names - "action": one of the
 // design's actions - so it is picked from the design's own (`references`).
-type FieldParam = { name: string; type: string; default: any; refers?: string };
-
-// The design grid's key for an action's control axis (Config > Grid).
-const GRID_KEY: Record<string, string> = { altitude: "alt_ft", speed: "spd_kts", heading: "hdg_deg" };
+// `blank` says what leaving an optional one blank means, as its code says it.
+type FieldParam = { name: string; type: string; default: any; refers?: string; blank?: string };
 
 // A choice a referring parameter can take.
 export type Choice = { value: string; label?: string };
@@ -94,7 +94,6 @@ export function FieldList({
   allowRelative,
   references = {},
   addLabel,
-  grid,
 }: {
   label: string;
   fields: SpecDict[];
@@ -115,9 +114,6 @@ export function FieldList({
   references?: Record<string, Choice[]>;
   // The add picker's placeholder, when the label alone does not say it.
   addLabel?: string;
-  // The design's grid (Config > Grid): what an unset step of a step action
-  // takes, shown in its editor.
-  grid?: Record<string, number>;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   // A row being dragged, and the gap it would drop into (0 is before the first).
@@ -302,7 +298,6 @@ export function FieldList({
           kwargs={fields[editing].kwargs ?? {}}
           allowRelative={allowRelative}
           references={references}
-          grid={grid}
           onChange={(kw) => setKwargs(editing, kw)}
           onFieldChange={(nextField) => setField(editing, nextField)}
           onClose={() => setEditing(null)}
@@ -337,10 +332,13 @@ function fieldParams(f: SpecDict): string {
     const lock = c.lock ? `, lock ${c.lock === "duration" ? "for duration" : "until captured"}` : "";
     parts.push(`clearance${dur}${lock}`);
   }
+  if (kw.grid?.type === "grid") {
+    parts.push(`grid ${kw.grid.step}${kw.grid.on === "target" ? " on the target" : ""}`);
+  }
   if (kw.query_name) parts.push(String(kw.query_name));
   if (Array.isArray(kw.query_names) && kw.query_names.length) parts.push(kw.query_names.join(","));
   for (const [k, v] of Object.entries(kw)) {
-    if (k === "query_name" || k === "query_names" || k === "normalizer" || v == null) continue;
+    if (["query_name", "query_names", "normalizer", "grid"].includes(k) || v == null) continue;
     parts.push(`${k}=${v}`);
   }
   return parts.join(", ");
@@ -395,7 +393,6 @@ function FieldConfigModal({
   kwargs,
   allowRelative,
   references,
-  grid,
   onChange,
   onFieldChange,
   onClose,
@@ -411,14 +408,10 @@ function FieldConfigModal({
   kwargs: SpecDict;
   allowRelative?: boolean;
   references: Record<string, Choice[]>;
-  grid?: Record<string, number>;
   onChange: (kwargs: SpecDict) => void;
   onFieldChange: (field: SpecDict) => void;
   onClose: () => void;
 }) {
-  // The grid step this action takes when its step normalizer leaves it unset.
-  const gridKey = GRID_KEY[option?.profile?.meta?.control_axis ?? ""];
-  const gridStep = gridKey && grid ? grid[gridKey] : undefined;
   const queryableSpec = option?.queryable_spec ?? option?.profile?.queryable_spec ?? null;
   const params = (option?.params ?? []).filter((p) => p.name !== "normalizer");
   const genericParams = params.filter((p) => !isQueryableParam(p.name, queryableSpec));
@@ -605,16 +598,23 @@ function FieldConfigModal({
                 option={normalizers.find((n) => n.name === normalizer.name)}
                 value={normalizer}
                 onChange={(value) => setNormalizer(value)}
-                inherited={
-                  gridStep !== undefined
-                    ? { step: `from the grid: ${gridStep}` }
-                    : gridKey
-                      ? { step: "set it, or the design's grid" }
-                      : undefined
-                }
               />
             )}
             </>)}
+
+            {kind === "action" && option?.griddable !== false && (
+              <GridControls
+                value={kwargs.grid?.type === "grid" ? kwargs.grid : null}
+                onChange={(grid) => {
+                  const next = { ...kwargs };
+                  const moved = regrid(normalizer, kwargs.grid ?? null, grid);
+                  if (moved.normalizer) next.normalizer = moved.normalizer;
+                  if (moved.grid) next.grid = moved.grid;
+                  else delete next.grid;
+                  onChange(next);
+                }}
+              />
+            )}
 
             {kind === "action" && (
               <ClearanceControls
@@ -879,13 +879,10 @@ function defaultKwargsForField(
 function ParamInput({
   param,
   choices,
-  placeholder,
   value,
   onChange,
 }: {
   param: FieldParam;
-  // What an unset value stands for, when it is not the parameter's default.
-  placeholder?: string;
   // Set for a referring parameter: what it can name in this design.
   choices?: Choice[];
   value: any;
@@ -930,7 +927,7 @@ function ParamInput({
       <span>{param.name}</span>
       <input
         type={isNum ? "number" : "text"}
-        placeholder={placeholder ?? (param.default === null ? "default" : String(param.default))}
+        placeholder={param.default === null ? param.blank ?? "default" : String(param.default)}
         value={value ?? ""}
         onChange={(e) => {
           const raw = e.target.value;
@@ -951,13 +948,10 @@ function NormalizerParams({
   option,
   value,
   onChange,
-  inherited,
 }: {
   option?: FieldOption;
   value: SpecDict;
   onChange: (value: SpecDict) => void;
-  // A parameter left unset that something else fills in, and what it says.
-  inherited?: Record<string, string>;
 }) {
   const params = option?.params ?? [];
   if (!params.length) return option?.doc ? <div className="muted small field-doc">{option.doc}</div> : null;
@@ -968,7 +962,6 @@ function NormalizerParams({
         <ParamInput
           key={p.name}
           param={p}
-          placeholder={inherited?.[p.name]}
           value={value.kwargs?.[p.name]}
           onChange={(paramValue) => {
             const kwargs = { ...(value.kwargs ?? {}) };
@@ -1116,6 +1109,89 @@ function updateCustomFieldSource(
 }
 
 
+// A grid set or taken away, and the step normalizer with it: on a grid its
+// step counts grid steps, so its step (in the action's unit) becomes the grid's
+// when one is set, and grid step × count when it is taken away - the steps the
+// same either way. Any other normalizer is left as it is.
+function regrid(
+  normalizer: SpecDict | null,
+  from: SpecDict | null,
+  to: SpecDict | null,
+): { normalizer: SpecDict | null; grid: SpecDict | null } {
+  const steps = normalizer?.name === "StepNormalizer" ? normalizer : null;
+  if (!steps) return { normalizer, grid: to };
+  const kwargs: SpecDict = { ...(steps.kwargs ?? {}) };
+  if (to && !from) {
+    if (kwargs.step != null) to = { ...to, step: kwargs.step };
+    delete kwargs.step;
+    return { normalizer: { ...steps, kwargs }, grid: to };
+  }
+  if (!to && from?.step != null) {
+    const step = Number(from.step) * Number(kwargs.step ?? 1);
+    return { normalizer: { ...steps, kwargs: { ...kwargs, step } }, grid: null };
+  }
+  return { normalizer, grid: to };
+}
+
+// An action's grid (actions.Grid): whole steps, after the normalizer - of the
+// action's own value (a delta's change) or of the target it commands (flight
+// levels), in the action's unit. `target` offers the choice between them: an
+// absolute value (a duration) has only the one.
+function GridControls({
+  value,
+  onChange,
+  label = "grid",
+  startStep = 1000,
+  target = true,
+}: {
+  value: SpecDict | null;
+  onChange: (value: SpecDict | null) => void;
+  label?: string;
+  startStep?: number;
+  target?: boolean;
+}) {
+  return (
+    <>
+      <div className="sub-label">{label}</div>
+      <label className="radio modal-check" title="applied after the normalizer, within what the aircraft can be commanded">
+        <input
+          type="checkbox"
+          checked={value != null}
+          onChange={(e) => onChange(e.target.checked ? { type: "grid", step: startStep, on: "value" } : null)}
+        />
+        on a grid: whole steps
+      </label>
+      {value != null && (
+        <>
+          <label className="numfield inline">
+            <span>step</span>
+            <input
+              type="number"
+              min={0}
+              value={value.step ?? ""}
+              onChange={(e) => onChange({ ...value, step: Number(e.target.value) })}
+            />
+          </label>
+          {target && <label className="numfield inline">
+            <span>on</span>
+            <Picker
+              searchable={false}
+              placeholder="the value"
+              value={value.on ?? "value"}
+              onChange={(v) => onChange({ ...value, on: v || "value" })}
+              options={[
+                { value: "value", label: "the value", description: "the action's own value on the grid: a delta's change - +1,000 ft from 23,344 ft is 24,344 ft" },
+                { value: "target", label: "the target", description: "what it commands on the grid: flight levels - +1,000 ft from 23,344 ft is FL240" },
+              ]}
+            />
+          </label>}
+          <div className="muted small">In the action's unit. A step normalizer steps along it.</div>
+        </>
+      )}
+    </>
+  );
+}
+
 // An action as a clearance (actions.Clearance): the policy gives it when it
 // decides to - its mask - for a duration it chooses, after which own navigation
 // takes the axis back; the lock sets how long nothing else is accepted on the
@@ -1138,6 +1214,7 @@ function ClearanceControls({
     if (!Array.isArray(next.duration)) {
       if (next.lock === "duration") next.lock = null;
       delete next.duration_normalizer;
+      delete next.duration_grid;
       delete next.duration_from;
     }
     onChange(next);
@@ -1190,6 +1267,16 @@ function ClearanceControls({
                   onChange={(v) => set({ duration_normalizer: v })}
                 />
               )}
+              <GridControls
+                label="duration grid"
+                startStep={30}
+                target={false}
+                value={value.duration_grid ?? null}
+                onChange={(grid) => {
+                  const moved = regrid(normalizer, value.duration_grid ?? null, grid);
+                  set({ duration_normalizer: moved.normalizer, duration_grid: moved.grid });
+                }}
+              />
               <label className="numfield inline">
                 <span>counted from</span>
                 <Picker

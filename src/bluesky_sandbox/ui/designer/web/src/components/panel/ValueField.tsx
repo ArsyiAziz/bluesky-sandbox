@@ -96,7 +96,7 @@ export function OptValueField({
   step = 1,
   int = false,
   allowEnvelope = false,
-  envelopeLevels = false,
+  altLevels = false,
   allowStart = false,
   disabled = false,
   disabledReason,
@@ -111,7 +111,7 @@ export function OptValueField({
   step?: number;
   int?: boolean;
   allowEnvelope?: boolean;
-  envelopeLevels?: boolean;
+  altLevels?: boolean;
   allowStart?: boolean;
   disabled?: boolean;
   disabledReason?: string;
@@ -154,7 +154,7 @@ export function OptValueField({
           step={step}
           int={int}
           allowEnvelope={allowEnvelope}
-          envelopeLevels={envelopeLevels}
+          altLevels={altLevels}
           allowStart={allowStart}
         />
       )}
@@ -169,7 +169,7 @@ export function ValueField({
   step = 1,
   int = false,
   allowEnvelope = false,
-  envelopeLevels = false,
+  altLevels = false,
   allowStart = false,
   allowChoice = false,
 }: {
@@ -181,8 +181,9 @@ export function ValueField({
   // When set, offers an "aircraft envelope" mode for per-aircraft draws within
   // the flight envelope (no fixed value to edit).
   allowEnvelope?: boolean;
-  // An altitude: its envelope draw may be put on the design grid's levels.
-  envelopeLevels?: boolean;
+  // An altitude: an envelope draw, or where it starts, may be on flight levels
+  // (alt_step_ft) - set here, on the value itself.
+  altLevels?: boolean;
   // A waypoint altitude: may be the altitude its leg starts at (level flight).
   allowStart?: boolean;
   // When set, offers a weighted-choice mode: a categorical over *numeric*
@@ -285,32 +286,16 @@ export function ValueField({
       {mode === "envelope" && (
         <>
           <div className="muted small">sampled per aircraft within the flight envelope</div>
-          {envelopeLevels && (() => {
-            const env = value as { type: string; levels?: boolean; alt_step_ft?: number };
-            const onLevels = env.levels === true || env.alt_step_ft !== undefined;
-            const setLevels = (on: boolean) => {
-              const { levels: _l, alt_step_ft: _s, ...rest } = env;
-              onChange(on ? { ...rest, levels: true } : rest);
-            };
-            return (
-              <label
-                className="radio"
-                title="draw the altitude among the design grid's levels (Config > Grid) instead of anywhere"
-              >
-                <input type="checkbox" checked={onLevels} onChange={(e) => setLevels(e.target.checked)} />
-                on the grid's levels
-                {env.alt_step_ft !== undefined && !env.levels && (
-                  <span className="muted small"> (every {env.alt_step_ft} ft, set in the design)</span>
-                )}
-              </label>
-            );
-          })()}
+          {altLevels && <LevelStep value={value as LevelValue} onChange={onChange} />}
         </>
       )}
       {mode === "start" && (
-        <div className="muted small">
-          the altitude the aircraft starts this leg at - its spawn altitude for the first: level flight to here (on the grid's levels, if the design has them)
-        </div>
+        <>
+          <div className="muted small">
+            the altitude the aircraft starts this leg at - its spawn altitude for the first: level flight to here
+          </div>
+          {altLevels && <LevelStep value={value as LevelValue} onChange={onChange} />}
+        </>
       )}
       {mode === "choice" && (
         <div className="vf-dist">
@@ -464,5 +449,32 @@ export function ValueField({
         </div>
       )}
     </div>
+  );
+}
+
+type LevelValue = { type: string; alt_step_ft?: number; [k: string]: any };
+
+// An envelope or start altitude's flight levels: drawn (or held) on a level
+// every alt_step_ft; blank, anywhere.
+function LevelStep({ value, onChange }: { value: LevelValue; onChange: (v: SampledValue) => void }) {
+  const set = (raw: string) => {
+    const { alt_step_ft: _s, ...rest } = value;
+    const step = Number(raw);
+    onChange(raw !== "" && step > 0 ? { ...rest, alt_step_ft: step } : rest);
+  };
+  return (
+    <label className="vf-row" title="put the altitude on flight levels: a level every this many feet (blank: anywhere)">
+      <span className="muted small">levels every</span>
+      <input
+        type="number"
+        className="vf-input"
+        step={500}
+        min={0}
+        placeholder="none"
+        value={value.alt_step_ft ?? ""}
+        onChange={(e) => set(e.target.value)}
+      />
+      <span className="muted small">ft</span>
+    </label>
   );
 }

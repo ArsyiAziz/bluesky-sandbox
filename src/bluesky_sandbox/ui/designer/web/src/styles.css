@@ -3436,6 +3436,15 @@ button:disabled {
   padding-left: 10px;
 }
 
+.mdp-pipeline {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.mdp-pipeline li + li::marker {
+  content: "→  ";
+}
+
 .mdp-plot {
   margin: 0;
 }

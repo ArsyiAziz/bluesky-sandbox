@@ -279,7 +279,6 @@ export default function SpacesEditor({
             label="action"
             fields={env.action_fields ?? []}
             options={catalog?.action_fields ?? []}
-            grid={spec.grid ?? undefined}
             normalizers={catalog?.normalizers ?? []}
             queryables={spec.queryables ?? {}}
             validationError={validationError}
