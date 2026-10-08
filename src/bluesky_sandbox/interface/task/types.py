@@ -10,7 +10,7 @@ in :mod:`.providers`; both are re-exported from the package, so
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import (
@@ -182,16 +182,37 @@ class SeparationContext:
 
 @dataclass(frozen=True)
 class AircraftReadoutItem:
-    """Atomic aircraft-level readout row for GUI drivers."""
+    """One row of an aircraft's readout in the GUI drivers: ``label value``.
+
+    A readout hook may return these, or plainly ``{label: value}`` or
+    ``[(label, value), ...]`` - see :func:`aircraft_readout_items`."""
 
     label: str
     value: object
-    color: str | tuple[int, int, int] | None = None
-    priority: int = 0
 
     def __post_init__(self) -> None:
         if not self.label:
             raise ValueError("AircraftReadoutItem.label must be non-empty")
+
+
+#: What ``define_aircraft_readouts`` returns: rows, in order - ``{label:
+#: value}``, ``(label, value)`` pairs, or :class:`AircraftReadoutItem` s.
+AircraftReadouts = Mapping[str, object] | Iterable[AircraftReadoutItem | tuple[str, object]]
+
+
+def aircraft_readout_items(rows: AircraftReadouts | None) -> tuple[AircraftReadoutItem, ...]:
+    """A readout hook's rows as items, in order."""
+    if rows is None:
+        return ()
+    pairs = rows.items() if isinstance(rows, Mapping) else rows
+    out = []
+    for row in pairs:
+        if isinstance(row, AircraftReadoutItem):
+            out.append(row)
+        else:
+            label, value = row
+            out.append(AircraftReadoutItem(str(label), value))
+    return tuple(out)
 
 
 @dataclass(frozen=True)

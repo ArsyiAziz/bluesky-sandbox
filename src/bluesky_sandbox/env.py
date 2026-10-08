@@ -23,7 +23,7 @@ from bluesky_sandbox.interface.fields.base import (
 )
 from bluesky_sandbox.interface.task import (
     AgentStepContext,
-    AircraftReadoutItem,
+    AircraftReadouts,
     BaseAgentInfo,
     BaseObs,
     TaskInfoProvider,
@@ -177,9 +177,11 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         return False
 
     @overridable
-    def define_aircraft_readouts(self, _acid: str) -> tuple[AircraftReadoutItem, ...]:
-        """Return task-specific aircraft readout rows."""
-        return ()
+    def define_aircraft_readouts(self, _acid: str) -> AircraftReadouts:
+        """Rows for this aircraft's readout in the GUI drivers, in order:
+        ``{label: value}`` (or ``(label, value)`` pairs, or
+        :class:`AircraftReadoutItem` s)."""
+        return {}
 
     @overridable
     def define_waypoint_readouts(self, _acid: str) -> tuple[WaypointReadoutItem, ...]:

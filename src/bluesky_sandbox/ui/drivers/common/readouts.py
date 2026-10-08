@@ -12,7 +12,11 @@ from bluesky_sandbox.interface.fields._state import arrival_time
 from bluesky_sandbox.interface.fields.observations import (
     ActiveRouteWaypointArrivalErrorS,
 )
-from bluesky_sandbox.interface.task import AircraftReadoutItem, WaypointReadoutItem
+from bluesky_sandbox.interface.task import (
+    AircraftReadoutItem,
+    WaypointReadoutItem,
+    aircraft_readout_items,
+)
 from bluesky_sandbox.sim.performance.speeds import crossover_display
 
 
@@ -120,7 +124,7 @@ class AircraftReadoutMixin:
 
         task_lines: list[str] = []
         if self._env is not None:
-            for item in self._env.define_aircraft_readouts(acid):
+            for item in aircraft_readout_items(self._env.define_aircraft_readouts(acid)):
                 task_lines.append(self._aircraft_readout_row(item))
         if task_lines:
             lines.append(self._separator_row())
