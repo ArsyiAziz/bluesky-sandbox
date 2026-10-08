@@ -43,7 +43,6 @@
   --tooltip-bg: #1b2a44;
   --tooltip-text: #f2f5f7;
   --tooltip-border: rgba(255, 255, 255, 0.14);
-  --spinner-track: rgba(255, 255, 255, 0.35);
   --header: #0b1322;
 
   --success: #4ade80;
@@ -145,7 +144,6 @@
   --tooltip-bg: #13213a;
   --tooltip-text: #f2f5f7;
   --tooltip-border: rgba(255, 255, 255, 0.14);
-  --spinner-track: rgba(18, 48, 110, 0.25);
   --header: #ffffff;
 
   --success: #15803d;
@@ -2594,22 +2592,6 @@ button:disabled {
   border-color: var(--success-border);
 }
 
-.spinner {
-  width: 11px;
-  height: 11px;
-  border: 2px solid var(--spinner-track);
-  border-top-color: var(--text-strong);
-  border-radius: 50%;
-  display: inline-block;
-  animation: spin 0.7s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* A picker opens a list, but holds a value: it reads as a field. */
 .picker-trigger {
   display: flex;
@@ -4986,12 +4968,6 @@ button:disabled {
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
   opacity: 0.85;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
