@@ -77,6 +77,7 @@ from .services import (
     QueryStateMonitor,
     RenderableBuilder,
     TrafficMonitor,
+    value_on_grid,
 )
 from .spawning import SpawnGenerator
 from .state import (
@@ -966,6 +967,14 @@ class BlueskyBaseEnvironment(ParallelEnv):
             state is AircraftControlState.CONTROLLED
         ):
             self._invalidate_agent_cache()
+
+    def apply_action(self, idx: int, field: Any, value: Any) -> bool:
+        """Command the aircraft at ``idx`` with action ``field`` set to
+        ``value`` in its own unit - as it acts now, put on its grid - the way a
+        step applies a policy's action: masks, clearances and switches as
+        there. Whether it was applied (a mask can hold it back). It takes
+        effect when the simulator next processes its commands."""
+        return self._action_dispatcher.apply_values(idx, [(field, value_on_grid(field, value, idx))])[0]
 
     def mark_aircraft_for_deletion(self, acid: Callsign) -> None:
         """Request deletion for one aircraft on the next transition pass."""

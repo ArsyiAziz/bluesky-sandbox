@@ -341,11 +341,11 @@ class _BoundedField:
             cls.__doc__ = f"{summary}\n\n{_render_metadata(meta)}\n"
 
     # ---- a test case ---------------------------------------------------- #
-    def case_value(self, own: int, *, other: int | None = None, value: float | None = None) -> Any:
-        """What this field gives in a test case (:mod:`bluesky_sandbox.checks`):
-        for the aircraft at ``own``, about ``other`` (a pair field's intruder),
-        after ``value`` is applied (an action's). Each kind of field says it
-        once, here, so a case runner never asks which kind it has."""
+    def case_value(self, own: int, *, other: int | None = None) -> Any:
+        """What this field gives in a test case (:mod:`bluesky_sandbox.checks`)
+        for the aircraft at ``own``, about ``other`` (a pair field's other
+        aircraft). Each kind of field says it once, here, so a case runner never
+        asks which kind it has."""
         raise NotImplementedError(f"{type(self).__name__} cannot be read in a test case yet")
 
     # ---- optional per-aircraft state ------------------------------------- #
@@ -509,11 +509,11 @@ class ObsField(_BoundedField, ABC):
     def get(self, idx: Any) -> Any:
         """Return the observation value for one or more BlueSky traffic indices."""
 
-    def case_value(self, own: int, *, other: int | None = None, value: float | None = None) -> Any:
+    def case_value(self, own: int, *, other: int | None = None) -> Any:
         """Its value for the aircraft at ``own``: an ownship field reads no
-        other aircraft and applies nothing."""
-        if other is not None or value is not None:
-            raise ValueError(f"{type(self).__name__} is read for one aircraft: no other, no value")
+        other aircraft."""
+        if other is not None:
+            raise ValueError(f"{type(self).__name__} is read for one aircraft, not about another")
         return self.get(own)
 
     def get_many(self, indices: Any) -> Any:
@@ -709,12 +709,10 @@ class PairObsField(_BoundedField, ABC):
     def get_pair(self, own_idx: int, other_idx: Any) -> Any:
         """Return an ownship-relative observation for one or more other indices."""
 
-    def case_value(self, own: int, *, other: int | None = None, value: float | None = None) -> Any:
+    def case_value(self, own: int, *, other: int | None = None) -> Any:
         """Its value for the aircraft at ``own`` about the one at ``other``."""
         if other is None:
             raise ValueError(f"{type(self).__name__} is read about another aircraft: name it")
-        if value is not None:
-            raise ValueError(f"{type(self).__name__} applies no value")
         return self.get_pair(own, other)
 
     def get_pairs(self, own_idx: int, other_indices: Any) -> Any:
@@ -1003,6 +1001,17 @@ class ActionField(_BoundedField, ABC):
 
     def __call__(self, idx: int, value: float) -> None:
         self.set(idx, value)
+
+    def case_value(self, own: int, *, other: int | None = None) -> Any:
+        """What it holds for the aircraft at ``own`` - the target its clearance
+        holds (``held``), ``None`` while it flies its own - so a case can
+        apply a value, then read what it commands."""
+        if other is not None:
+            raise ValueError(f"{type(self).__name__} is read for one aircraft, not about another")
+        held = getattr(self, "held", None)
+        if held is None:
+            raise NotImplementedError(f"{type(self).__name__} cannot say what it holds")
+        return held(own)
 
 
 @dataclass(frozen=True)

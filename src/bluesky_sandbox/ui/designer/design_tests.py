@@ -77,10 +77,10 @@ def situation_of(d: Any, index: int) -> Situation:
         raise SpecError(f"{where}: {e}") from e
 
 
-def design_cases(spec: DesignSpec) -> list[tuple[dict[str, Any], FieldRef]]:
-    """The design's cases, each with its field reference - checked against
-    its situations. Each case's dict is as stored; its field is resolved
-    where the cases run."""
+def design_cases(spec: DesignSpec) -> list[tuple[dict[str, Any], dict[str, FieldRef]]]:
+    """The design's cases, each with its field references (``field``, and
+    ``apply`` where it applies an action) - checked against its situations.
+    Each case's dict is as stored; its fields are resolved where it runs."""
     situations = {s.name: s for s in design_situations(spec)}
     keys = _names(Case)
     out = []
@@ -91,7 +91,7 @@ def design_cases(spec: DesignSpec) -> list[tuple[dict[str, Any], FieldRef]]:
         unknown = set(d) - keys
         if unknown:
             raise SpecError(f"{where}: no {', '.join(sorted(unknown))}")
-        missing = [k for k in ("situation", "field", "expected", "tolerance") if d.get(k) is None]
+        missing = [k for k in _required(Case) if d.get(k) is None]
         if missing:
             raise SpecError(f"{where} needs {', '.join(missing)}")
         situation = situations.get(d["situation"])
@@ -102,11 +102,31 @@ def design_cases(spec: DesignSpec) -> list[tuple[dict[str, Any], FieldRef]]:
             if d.get(role) and d[role] not in placed:
                 raise SpecError(f"{where}: situation {situation.name!r} places no aircraft {d[role]!r}")
         try:
-            Tolerance(**d["tolerance"])
+            tolerance = Tolerance(**d["tolerance"])
         except TypeError as e:
             raise SpecError(f"{where}: tolerance - {e}") from e
-        out.append((d, FieldRef.from_dict(d["field"])))
+        # Built as the checks build it - its own rules (an action and a value,
+        # or neither; flying forward) - with the references still as written.
+        optional = {k: v for k, v in d.items() if k not in _required(Case)}
+        try:
+            Case(d["situation"], d["field"], d["expected"], tolerance, **optional)
+        except (TypeError, ValueError) as e:
+            raise SpecError(f"{where}: {e}") from e
+        refs = {k: FieldRef.from_dict(d[k]) for k in _REFERENCES if d.get(k) is not None}
+        out.append((d, refs))
     return out
+
+
+#: A case's keys that name a field - written as field references.
+_REFERENCES = ("field", "apply")
+
+
+def _required(cls: type) -> list[str]:
+    return [
+        f.name
+        for f in dataclasses.fields(cls)
+        if f.name != "_" and f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+    ]
 
 
 def cases_module(spec: DesignSpec, package: str | None = None) -> str | None:
@@ -117,7 +137,7 @@ def cases_module(spec: DesignSpec, package: str | None = None) -> str | None:
     situations = design_situations(spec)
     cases = design_cases(spec)
     em = _Emitter(package=package)
-    case_lines = [_case(d, em.field(ref, "obs")) for d, ref in cases]
+    case_lines = [_case(d, {k: _expr(em, ref) for k, ref in refs.items()}) for d, refs in cases]
     situation_lines = [_situation(s) for s in situations]
     return f'''"""This design's test cases: situations placed by hand, and the value each
 field should give in them. Run them with ``bluesky_sandbox.checks.run_cases``.
@@ -149,7 +169,19 @@ def _aircraft(a: Aircraft) -> str:
     return f"Aircraft({a.acid!r}, {', '.join(given)})"
 
 
-def _case(d: dict[str, Any], field_expr: str) -> str:
+def _expr(em: _Emitter, ref: FieldRef) -> str:
+    """``ref`` as code: from the actions module where it names an action."""
+    from bluesky_sandbox.interface.fields import actions  # noqa: PLC0415
+
+    return em.field(ref, "act" if hasattr(actions, ref.name) else "obs")
+
+
+def _case(d: dict[str, Any], exprs: dict[str, str]) -> str:
     tolerance = ", ".join(f"{k}={float(v)!r}" for k, v in sorted(d["tolerance"].items()))
-    extra = "".join(f", {k}={d[k]!r}" for k in ("of", "aircraft", "note") if d.get(k))
-    return f"    Case({d['situation']!r}, {field_expr}, {d['expected']!r}, Tolerance({tolerance}){extra}),\n"
+    required = _required(Case)
+    extra = "".join(
+        f", {f.name}={exprs.get(f.name) or repr(d[f.name])}"
+        for f in dataclasses.fields(Case)
+        if f.name not in (*required, "_") and d.get(f.name) not in (None, "", f.default)
+    )
+    return f"    Case({d['situation']!r}, {exprs['field']}, {d['expected']!r}, Tolerance({tolerance}){extra}),\n"

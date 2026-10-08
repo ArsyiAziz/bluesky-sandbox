@@ -5103,7 +5103,7 @@ div.tests-sketch {
   white-space: nowrap;
 }
 .tests-tolerance input {
-  width: 64px;
+  width: 56px;
 }
 .tests-take {
   margin-left: 6px;
@@ -5132,18 +5132,30 @@ div.tests-sketch {
 .tests-cases {
   table-layout: auto;
 }
+.tests-cases-wrap {
+  overflow-x: auto;
+}
 .tests-cases select.form-input {
-  min-width: 96px;
+  min-width: 80px;
 }
 .tests-cases .picker {
-  min-width: 220px;
+  min-width: 150px;
 }
 .tests-cases input[aria-label="expected"] {
-  min-width: 96px;
+  width: 80px;
 }
 .tests-cases input[aria-label="note"] {
-  min-width: 140px;
+  min-width: 110px;
 }
 .tests-got {
   white-space: nowrap;
+}
+.tests-cases .tests-number {
+  width: 72px;
+  min-width: 0;
+}
+/* The cases table holds more columns than a page of cards: a wider page. */
+.form-page:has(.tests-page) .form-page-head,
+.form-page:has(.tests-page) .form-page-body {
+  max-width: 1440px;
 }

@@ -152,9 +152,23 @@ def _denormalize_action_value(field, values, idx: int):
     """The value ``field`` is set to: the policy's values through its
     normalizer, then on its grid - those of the action as it acts now (a
     crossover speed action above its crossover: in Mach)."""
+    acting = _acting(field, idx)
+    return _on_grid(acting, _denormalized(acting, values, idx), idx)
+
+
+def value_on_grid(field, value, idx: int):
+    """The value ``field`` is set to for ``value`` given in its own unit - as
+    it acts now - rather than by a policy: on its grid, as a step puts it."""
+    acting = _acting(field, idx)
+    return _on_grid(acting, value, idx)
+
+
+def _acting(field, idx: int):
     acting = getattr(field, "acting", None)
-    field = field if acting is None else acting(idx)
-    value = _denormalized(field, values, idx)
+    return field if acting is None else acting(idx)
+
+
+def _on_grid(field, value, idx: int):
     grid = getattr(field, "grid", None)
     return value if grid is None else grid.apply(field, value, idx)
 

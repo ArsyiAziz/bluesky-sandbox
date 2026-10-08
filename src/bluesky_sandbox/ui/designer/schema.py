@@ -86,7 +86,9 @@ def _tests_schema() -> dict[str, Any]:
     case = _dataclass_object(
         Case,
         {
-            "field": {"$ref": "#/$defs/obs_ref"},
+            # An observation, or an action - read for what it holds.
+            "field": {"anyOf": [{"$ref": "#/$defs/obs_ref"}, {"$ref": "#/$defs/action_ref"}]},
+            "apply": {"$ref": "#/$defs/action_ref"},
             "expected": number_or_numbers,
             "tolerance": _dataclass_object(Tolerance),
         },

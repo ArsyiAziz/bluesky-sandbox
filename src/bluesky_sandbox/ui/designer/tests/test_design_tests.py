@@ -139,3 +139,30 @@ def test_each_situation_is_placed_for_the_tab_to_draw():
     body = TestClient(create_app()).post("/api/spec/test/situations", json={"spec": _design(tests).to_dict()}).json()
     assert list(body["situations"]) == ["head-on"]
     assert body["errors"] == ["tests: situation 'unfinished', aircraft 'A' needs track_deg, gs_kts, alt_ft, actype"]
+
+
+def test_an_action_case_applies_flies_and_reads():
+    tests = _tests()
+    tests["cases"] = [
+        {"situation": "head-on", "apply": {"field": "AltDeltaFt"}, "value": 1000, "field": {"field": "AltDeltaFt"},
+         "expected": 11000, "tolerance": {"abs": 1}},
+        {"situation": "head-on", "apply": {"field": "HdgDeltaDeg"}, "value": 90, "fly_s": 120,
+         "field": {"field": "TrkDeg"}, "expected": 180, "tolerance": {"abs": 1}},
+    ]
+    design = _design(tests)
+    pytest.importorskip("jsonschema").Draft202012Validator(design_schema()).validate(design.to_dict())
+    namespace: dict = {}
+    exec(compile(cases_module(design), "cases.py", "exec"), namespace)  # noqa: S102
+    held, flown = namespace["CASES"]
+    assert type(held.apply).__name__ == type(held.field).__name__ == "AltDeltaFt" and held.value == 1000
+    assert flown.fly_s == 120
+    response = TestClient(create_app()).post("/api/spec/test", json={"spec": design.to_dict()})
+    cases = [json.loads(line) for line in response.text.splitlines() if '"case"' in line]
+    assert [c["ok"] for c in cases] == [True, True], cases
+
+
+def test_half_an_action_case_is_refused():
+    tests = _tests()
+    tests["cases"][0]["apply"] = {"field": "AltDeltaFt"}
+    with pytest.raises(S.SpecError, match="an action and a value, or neither"):
+        design_cases(_design(tests))

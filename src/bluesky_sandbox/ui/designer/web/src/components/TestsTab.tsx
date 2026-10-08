@@ -33,29 +33,55 @@ const types = (p?: Prop) => [p?.type ?? []].flat();
 const isNumber = (p?: Prop) => types(p).some((t) => t === "number" || t === "integer");
 
 // The design's own fields - every list of field references its env holds,
-// whatever it is called - then the library's, from the catalog.
-function fieldOptions(spec: SpecDict, catalog: any): PickerOption[] {
-  const out: PickerOption[] = [];
-  for (const [list, refs] of Object.entries(spec.env ?? {})) {
-    if (!Array.isArray(refs)) continue;
-    for (const ref of refs) {
-      if (!ref || typeof ref !== "object" || typeof ref.field !== "string") continue;
-      out.push({
-        value: JSON.stringify(ref),
-        label: refLabel(ref),
-        category: `this design: ${list}`,
-      });
-    }
-  }
-  for (const option of catalog?.obs_fields ?? []) {
-    out.push({
-      value: JSON.stringify({ field: option.name }),
-      label: option.name,
-      description: option.doc,
-      category: option.category ?? "library",
-    });
+// whatever it is called - then the library's, from the catalog. Which lists
+// hold actions the design schema says (their items are action references).
+type FieldChoices = { fields: PickerOption[]; actions: PickerOption[] };
+
+function listKinds(schema: any): Record<string, "obs" | "action"> {
+  const out: Record<string, "obs" | "action"> = {};
+  for (const [list, prop] of Object.entries<any>(schema?.properties?.env?.properties ?? {})) {
+    const ref: string | undefined = prop?.items?.$ref ?? prop?.anyOf?.find((o: any) => o?.items)?.items?.$ref;
+    if (ref) out[list] = ref.endsWith("action_ref") ? "action" : "obs";
   }
   return out;
+}
+
+function fieldChoices(spec: SpecDict, catalog: any, kinds: Record<string, "obs" | "action">): FieldChoices {
+  const fields: PickerOption[] = [];
+  const actions: PickerOption[] = [];
+  for (const [list, refs] of Object.entries(spec.env ?? {})) {
+    if (!Array.isArray(refs) || !kinds[list]) continue;
+    for (const ref of refs) {
+      if (!ref || typeof ref !== "object" || typeof ref.field !== "string") continue;
+      const option = { value: JSON.stringify(ref), label: refLabel(ref), category: `this design: ${list}` };
+      fields.push(option);
+      if (kinds[list] === "action") actions.push(option);
+    }
+  }
+  const library = (entries: any[], into: PickerOption[][], what: string) => {
+    for (const entry of entries ?? []) {
+      const option = {
+        value: JSON.stringify({ field: entry.name }),
+        label: entry.name,
+        description: entry.doc,
+        category: `${what}: ${entry.category ?? "library"}`,
+      };
+      into.forEach((list) => list.push(option));
+    }
+  };
+  library(catalog?.obs_fields, [fields], "observations");
+  library(catalog?.action_fields, [fields, actions], "actions");
+  return { fields, actions };
+}
+
+// ``options``, with ``ref`` among them where it is not: a case keeps the field
+// it names even when the design no longer lists it.
+function withRef(options: PickerOption[], ref: SpecDict | undefined): PickerOption[] {
+  if (!ref) return options;
+  const key = JSON.stringify(ref);
+  return options.some((o) => o.value === key)
+    ? options
+    : [{ value: key, label: refLabel(ref), category: "this case" }, ...options];
 }
 
 function refLabel(ref: SpecDict): string {
@@ -66,7 +92,9 @@ function refLabel(ref: SpecDict): string {
 }
 
 function unitOf(catalog: any, ref: SpecDict | undefined): string {
-  const option = (catalog?.obs_fields ?? []).find((o: any) => o.name === ref?.field);
+  const option = [...(catalog?.obs_fields ?? []), ...(catalog?.action_fields ?? [])].find(
+    (o: any) => o.name === ref?.field,
+  );
   const unit = option?.profile?.meta?.unit;
   return unit && unit !== "unitless" ? unit : "";
 }
@@ -76,6 +104,7 @@ const fmt = (v: number | number[] | null | undefined) =>
 
 export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; onChange: (next: SpecDict) => void }) {
   const [schema, setSchema] = useState<AircraftSchema | null>(null);
+  const [kinds, setKinds] = useState<Record<string, "obs" | "action">>({});
   const [catalog, setCatalog] = useState<any>(null);
   const [placed, setPlaced] = useState<Record<string, PlacedAircraft[]>>({});
   const [placeError, setPlaceError] = useState<string | null>(null);
@@ -88,7 +117,10 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
   useEffect(() => {
     api
       .designSchema()
-      .then((s) => setSchema(aircraftSchema(s)))
+      .then((s) => {
+        setSchema(aircraftSchema(s));
+        setKinds(listKinds(s));
+      })
       .catch(() => setSchema(null));
     api
       .catalogOnce()
@@ -122,7 +154,10 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [situationsKey]);
 
-  const options = useMemo(() => (spec ? fieldOptions(spec, catalog) : []), [spec, catalog]);
+  const choices = useMemo(
+    () => (spec ? fieldChoices(spec, catalog, kinds) : { fields: [], actions: [] }),
+    [spec, catalog, kinds],
+  );
 
   if (!spec) return <div className="form-page muted">Spec has a JSON error; fix it in the Code tab.</div>;
 
@@ -205,39 +240,46 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
         <section className="tests-section">
           <h3>Cases</h3>
           {cases.length === 0 ? (
-            <div className="muted small">No cases yet. Add one: a situation, a field, and the value it should read.</div>
+            <div className="muted small">
+              No cases yet. Add one: a situation, a field, and the value it should read.
+            </div>
           ) : (
-            <table className="sample-table tests-cases">
-              <thead>
-                <tr>
-                  <th>situation</th>
-                  <th>field</th>
-                  <th title="For pair fields: the other aircraft.">about</th>
-                  <th title="Which aircraft to read. Default: the first one.">for</th>
-                  <th>expected</th>
-                  <th title="Passes if within either: an absolute difference, or a fraction of the expected value.">
-                    tolerance abs / rel
-                  </th>
-                  <th>note</th>
-                  <th>got</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {cases.map((c, i) => (
-                  <CaseRow
-                    key={i}
-                    value={c}
-                    situations={situations}
-                    options={options}
-                    unit={unitOf(catalog, c.field)}
-                    result={caseResults[i]}
-                    onChange={(next) => setCases(cases.map((o, j) => (j === i ? next : o)))}
-                    onRemove={() => setCases(cases.filter((_, j) => j !== i))}
-                  />
-                ))}
-              </tbody>
-            </table>
+            <div className="tests-cases-wrap">
+              <table className="sample-table tests-cases">
+                <thead>
+                  <tr>
+                    <th>situation</th>
+                    <th title="An action to give first, in its own unit.">apply</th>
+                    <th>value</th>
+                    <th title="Seconds to fly before reading, in whole env steps.">fly s</th>
+                    <th title="The field to read. An action reads what it holds.">read</th>
+                    <th title="For pair fields: the other aircraft.">about</th>
+                    <th title="Which aircraft to read. Default: the first one.">for</th>
+                    <th>expected</th>
+                    <th title="Passes if within either: an absolute difference, or a fraction of the expected value.">
+                      tolerance abs / rel
+                    </th>
+                    <th>note</th>
+                    <th>got</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {cases.map((c, i) => (
+                    <CaseRow
+                      key={i}
+                      value={c}
+                      situations={situations}
+                      choices={choices}
+                      unit={unitOf(catalog, c.field)}
+                      result={caseResults[i]}
+                      onChange={(next) => setCases(cases.map((o, j) => (j === i ? next : o)))}
+                      onRemove={() => setCases(cases.filter((_, j) => j !== i))}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           <button
             disabled={situations.length === 0}
@@ -475,7 +517,7 @@ function SituationSketch({ aircraft }: { aircraft: PlacedAircraft[] }) {
 function CaseRow({
   value,
   situations,
-  options,
+  choices,
   unit,
   result,
   onChange,
@@ -483,7 +525,7 @@ function CaseRow({
 }: {
   value: SpecDict;
   situations: SpecDict[];
-  options: PickerOption[];
+  choices: FieldChoices;
   unit: string;
   result?: CaseRunResult;
   onChange: (next: SpecDict) => void;
@@ -507,17 +549,7 @@ function CaseRow({
   const [expectedText, setExpectedText] = useState<string>(fmtExpected(value.expected));
   useEffect(() => setExpectedText(fmtExpected(value.expected)), [value.expected]);
   const fieldKey = value.field ? JSON.stringify(value.field) : "";
-  const fieldOptions =
-    options.some((o) => o.value === fieldKey) || !value.field
-      ? options
-      : [
-          {
-            value: fieldKey,
-            label: refLabel(value.field),
-            category: "this case",
-          },
-          ...options,
-        ];
+  const applyKey = value.apply ? JSON.stringify(value.apply) : "";
   return (
     <tr className={result ? (result.ok ? "ok" : "failed") : undefined}>
       <td>
@@ -531,9 +563,46 @@ function CaseRow({
       </td>
       <td>
         <Picker
+          placeholder="nothing"
+          value={applyKey}
+          options={[{ value: "", label: "nothing", category: "" }, ...withRef(choices.actions, value.apply)]}
+          onChange={(v) => {
+            const next = { ...value };
+            if (v) next.apply = JSON.parse(v);
+            else {
+              delete next.apply;
+              delete next.value;
+            }
+            onChange(next);
+          }}
+        />
+      </td>
+      <td>
+        <input
+          type="number"
+          className="form-input tests-number"
+          aria-label="value to apply"
+          disabled={!value.apply}
+          value={value.value ?? ""}
+          onChange={(e) => set("value", e.target.value === "" ? null : Number(e.target.value))}
+        />
+      </td>
+      <td>
+        <input
+          type="number"
+          className="form-input tests-number"
+          aria-label="seconds to fly"
+          min={0}
+          placeholder="0"
+          value={value.fly_s ?? ""}
+          onChange={(e) => set("fly_s", e.target.value === "" ? null : Number(e.target.value))}
+        />
+      </td>
+      <td>
+        <Picker
           placeholder="+ field…"
           value={fieldKey}
-          options={fieldOptions}
+          options={withRef(choices.fields, value.field)}
           onChange={(v) => v && set("field", JSON.parse(v))}
         />
       </td>

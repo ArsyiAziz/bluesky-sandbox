@@ -22,17 +22,19 @@ a built-in, a custom one - is read the same way.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import KW_ONLY, dataclass
 from typing import Any
 
+import bluesky as bs
 import numpy as np
 
 from bluesky_sandbox.interface.fields.base import EnvBound
 
 from .placement import Situation, place, without_traffic
 
-__all__ = ["Case", "CaseResult", "CasesReport", "Tolerance", "run_cases"]
+__all__ = ["Case", "CaseResult", "CasesReport", "Tolerance", "fly", "run_cases"]
 
 
 @dataclass(frozen=True)
@@ -58,7 +60,12 @@ class Tolerance:
 class Case:
     """``field``, read in situation ``situation`` for ``aircraft`` (by default
     its ownship) about ``of`` (a pair field's other aircraft), should give
-    ``expected`` within ``tolerance``."""
+    ``expected`` within ``tolerance``.
+
+    First, optionally, action ``apply`` is given ``value`` (in its own unit,
+    as a step applies it), and the episode flies ``fly_s`` seconds - whole
+    env steps, no action given. An action read as ``field`` gives what it
+    holds: apply +1,000 ft and read it, for the level it commands."""
 
     situation: str
     field: Any
@@ -67,7 +74,16 @@ class Case:
     _: KW_ONLY
     of: str | None = None
     aircraft: str | None = None
+    apply: Any = None
+    value: float | None = None
+    fly_s: float = 0.0
     note: str = ""
+
+    def __post_init__(self) -> None:
+        if (self.apply is None) != (self.value is None):
+            raise ValueError("a case applies an action and a value, or neither")
+        if self.fly_s < 0:
+            raise ValueError(f"a case cannot fly {self.fly_s} s")
 
 
 @dataclass(frozen=True)
@@ -135,11 +151,33 @@ def _run(env: Any, situations: dict[str, Situation], case: Case) -> CaseResult:
     except Exception as e:  # noqa: BLE001
         return CaseResult(case, error=f"situation {situation.name!r} could not be set up: {type(e).__name__}: {e}")
     try:
-        field = case.field.bind_env(env) if isinstance(case.field, EnvBound) else case.field
-        got = field.case_value(at[names[0]], other=at[case.of] if case.of else None)
+        if case.apply is not None:
+            if not env.apply_action(at[names[0]], _bound(case.apply, env), case.value):
+                return CaseResult(case, error=f"{type(case.apply).__name__} was held back (a mask on it)")
+            bs.stack.process()
+        if case.fly_s > 0:
+            fly(env, case.fly_s)
+            gone = [n for n in names if n not in bs.traf.id]
+            if gone:
+                return CaseResult(case, error=f"{gone[0]!r} left the episode while it flew")
+            at = {acid: bs.traf.id.index(acid) for acid in names}
+        got = _bound(case.field, env).case_value(at[names[0]], other=at[case.of] if case.of else None)
     except Exception as e:  # noqa: BLE001
         return CaseResult(case, error=f"{type(e).__name__}: {e}")
+    if got is None:
+        return CaseResult(case, error=f"{type(case.field).__name__} gives no value here (it holds no clearance)")
     return CaseResult(case, got=got, ok=case.tolerance.holds(got, case.expected))
+
+
+def fly(env: Any, seconds: float) -> None:
+    """Let ``env`` fly ``seconds`` - whole env steps, rounded up - with no
+    action given: each aircraft holds what it was last told."""
+    for _ in range(math.ceil(seconds / float(env.config.dt) - 1e-9)):
+        env.step({})
+
+
+def _bound(field: Any, env: Any) -> Any:
+    return field.bind_env(env) if isinstance(field, EnvBound) else field
 
 
 def _fmt(value: Any) -> str:

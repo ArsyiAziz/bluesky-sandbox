@@ -18,6 +18,7 @@ from bluesky_sandbox.checks import (
 )
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.env import BlueskyEnv
+from bluesky_sandbox.interface.fields import actions as act
 from bluesky_sandbox.interface.fields import observations as obs
 
 from test_env_bound import InZone, _Scenario
@@ -120,3 +121,34 @@ def test_a_case_that_fails_or_cannot_be_read_says_why_and_the_rest_run(env):
     assert last.ok
     with pytest.raises(AssertionError, match="4 of 5 cases failed"):
         report.assert_ok()
+
+
+_EAST = Situation("east", (Aircraft("OWN", lat=52.0, lon=4.0, track_deg=90.0, **_LEVEL),))
+
+
+def test_an_applied_action_is_read_for_what_it_commands(env):
+    run_cases(
+        env,
+        [_EAST],
+        [
+            # +1,000 ft from 10,000 ft holds 11,000 ft.
+            Case("east", act.AltDeltaFt(), 11_000.0, Tolerance(abs=1.0), apply=act.AltDeltaFt(), value=1000.0),
+            # +90 deg from a track of 090 holds 180.
+            Case("east", act.HdgDeltaDeg(), 180.0, Tolerance(abs=0.5), apply=act.HdgDeltaDeg(), value=90.0),
+        ],
+    ).assert_ok()
+
+
+def test_a_case_flies_before_it_reads(env):
+    run_cases(
+        env,
+        [_EAST],
+        [Case("east", obs.TrkDeg(), 180.0, Tolerance(abs=1.0), apply=act.HdgDeltaDeg(), value=90.0, fly_s=120.0)],
+    ).assert_ok()
+
+
+def test_an_action_case_says_what_it_cannot_do():
+    with pytest.raises(ValueError, match="an action and a value, or neither"):
+        Case("east", obs.TrkDeg(), 0.0, Tolerance(), apply=act.HdgDeltaDeg())
+    with pytest.raises(ValueError, match="cannot fly"):
+        Case("east", obs.TrkDeg(), 0.0, Tolerance(), fly_s=-1.0)
