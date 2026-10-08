@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from bluesky_sandbox.sim.performance import bada_available
 from bluesky_sandbox.ui.designer import runner
 from bluesky_sandbox.ui.designer import spec as S
 from bluesky_sandbox.ui.designer.builder import BuildError
@@ -55,14 +56,13 @@ def test_a_stream_closed_early_finishes_and_the_process_is_kept(design):
 
 
 def test_another_performance_model_gets_a_process_of_its_own(design):
+    if not bada_available():  # licensed: CI has none
+        pytest.skip("no BADA database installed")
     runner.sample_design(design, seed=0)
     pid = _pid()
     other = S.DesignSpec.from_json(design.to_json())
     other.env.performance_model = "bada"
-    try:
-        runner.sample_design(other, seed=0)
-    except BuildError as error:  # no BADA installed here
-        pytest.skip(str(error))
+    runner.sample_design(other, seed=0)
     assert _pid() != pid and runner._WORKER._model == "bada"
 
 

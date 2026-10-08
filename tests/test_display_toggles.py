@@ -13,7 +13,7 @@ import pytest
 from bluesky_sandbox.ui.drivers.common import ASCII_TRENDS, DISPLAY_TOGGLES
 from bluesky_sandbox.ui.drivers.common.readouts import aircraft_label_lines
 
-from test_driver_frame_reuse import _env, _step
+from test_driver_frame_reuse import _env, _step, panda_can_draw
 
 pygame = pytest.importorskip("pygame")
 from bluesky_sandbox.ui.drivers.pygame.driver import PygameSimDriver  # noqa: E402
@@ -178,9 +178,10 @@ def test_a_block_takes_the_clearest_corner_and_keeps_it():
 def panda():
     pytest.importorskip("panda3d")
     env = _env(render_mode="rgb_array", frame_driver="panda3d")
-    env.reset(seed=0)
-    _step(env)
-    env.render()
+    with panda_can_draw(env):
+        env.reset(seed=0)
+        _step(env)
+        env.render()
     yield env
     env.close()
 

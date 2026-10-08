@@ -4,6 +4,7 @@ widgets updated in place."""
 
 from __future__ import annotations
 
+import contextlib
 import math
 
 import bluesky as bs
@@ -109,12 +110,31 @@ def test_one_aircraft_frame_serves_a_whole_frame():
         env.close()
 
 
+# What Panda3D raises where it has nothing to draw with - no display and no
+# GPU, as on a CI runner - even for an offscreen buffer.
+_NO_PANDA_PIPE = ("Could not open window", "No graphics pipe")
+
+
+@contextlib.contextmanager
+def panda_can_draw(env):
+    """Skip the test where Panda3D cannot draw at all: it opens its window or
+    buffer as the env resets."""
+    try:
+        yield
+    except Exception as error:
+        if not any(s in str(error) for s in _NO_PANDA_PIPE):
+            raise
+        env.close()
+        pytest.skip(f"Panda3D cannot draw here: {str(error).splitlines()[0]}")
+
+
 @pytest.fixture
 def panda(monkeypatch):
     pytest.importorskip("panda3d")
     env = _env(render_mode="rgb_array", frame_driver="panda3d")
-    env.reset(seed=0)
-    env.render()
+    with panda_can_draw(env):
+        env.reset(seed=0)
+        env.render()
     yield env
     env.close()
 
