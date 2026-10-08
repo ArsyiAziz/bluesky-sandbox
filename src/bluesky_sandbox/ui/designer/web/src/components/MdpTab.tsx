@@ -2,6 +2,7 @@
 // drawn as a strip colored by the normalizer each goes through, and a table of
 // its fields - each lag listed under the field it lags - where a row opens to
 // its normalizer's settings and mapping.
+import { Spinner } from "./Spinner";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api, type SampleResult, type SpecDict } from "../api";
 import { normalizerColor } from "../normColors";
@@ -398,7 +399,7 @@ function Detail({
               {aircraft.length
                 ? aircraft.map((a) => `${a.type} [${number(a.low)}, ${number(a.high)}]`).join(" · ")
                 : loading
-                  ? "reading each aircraft's range from the sampled episode…"
+                  ? <><Spinner /> reading each aircraft's range from the sampled episode…</>
                   : "each aircraft's own; no aircraft is up in the sampled episode"}
             </dd>
           </>

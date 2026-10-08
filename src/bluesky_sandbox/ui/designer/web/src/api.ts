@@ -1,3 +1,4 @@
+import { during, labelFor, trackedFetch } from "./busy";
 import type { Intel, Problem } from "./code/intel";
 
 // Typed client for the designer API. Paths are relative so the Vite dev proxy
@@ -252,24 +253,25 @@ let catalogCache: Promise<any> | null = null;
 export const api = {
   health: () => fetch("/api/health").then((r) => jsonOrThrow<{ status: string }>(r)),
 
-  catalog: () => fetch("/api/catalog").then((r) => jsonOrThrow<any>(r)),
+  catalog: () => trackedFetch("/api/catalog").then((r) => jsonOrThrow<any>(r)),
+  designSchema: () => trackedFetch("/api/design/schema").then((r) => jsonOrThrow<any>(r)),
 
   validate: (spec: SpecDict) =>
-    fetch("/api/spec/validate", {
+    trackedFetch("/api/spec/validate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(spec),
     }).then((r) => jsonOrThrow<ValidateResult>(r)),
 
   preview: (spec: SpecDict, seed = 0) =>
-    fetch("/api/spec/preview", {
+    trackedFetch("/api/spec/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec, seed }),
     }).then((r) => jsonOrThrow<PreviewResult>(r)),
 
   navFeatures: (boundsSpec: SpecDict, airportLimit = 200, waypointLimit = 1500) =>
-    fetch("/api/nav/features", {
+    trackedFetch("/api/nav/features", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -281,11 +283,11 @@ export const api = {
 
   // A navdb fix by name: where it is (404, not found).
   navWaypoint: (ident: string) =>
-    fetch(`/api/nav/waypoint/${encodeURIComponent(ident)}`).then((r) => jsonOrThrow<NavWaypoint>(r)),
+    trackedFetch(`/api/nav/waypoint/${encodeURIComponent(ident)}`).then((r) => jsonOrThrow<NavWaypoint>(r)),
 
   // ``near``: [lat, lon] - each kind of match nearest it first.
   search: (q: string, limit = 20, near?: [number, number]) =>
-    fetch(
+    trackedFetch(
       `/api/nav/search?q=${encodeURIComponent(q)}&limit=${limit}` +
         (near ? `&lat=${near[0]}&lon=${near[1]}` : ""),
     ).then((r) =>
@@ -293,7 +295,7 @@ export const api = {
     ),
 
   generate: (spec: SpecDict, packageName: string) =>
-    fetch("/api/spec/generate", {
+    trackedFetch("/api/spec/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec, package_name: packageName }),
@@ -308,7 +310,7 @@ export const api = {
     seed = 0,
     actionMode: "random" | "zero" = "random",
   ) =>
-    fetch("/api/spec/run", {
+    trackedFetch("/api/spec/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -330,7 +332,8 @@ export const api = {
     onAircraft: (a: SpawnedAircraft) => void,
     signal: AbortSignal,
     untilS = 3600,
-  ): Promise<EpisodeRunDone> => {
+  ): Promise<EpisodeRunDone> =>
+    during(labelFor("/api/spec/episode"), async () => {
     const r = await fetch("/api/spec/episode", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -356,10 +359,10 @@ export const api = {
       }
     }
     throw new Error("the episode run ended early");
-  },
+    }),
 
   sample: (spec: SpecDict, seed = 0, atS = 0, acid: string | null = null, maxAgents = 3, maxIntruders = 25) =>
-    fetch("/api/spec/sample", {
+    trackedFetch("/api/spec/sample", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec, seed, at_s: atS, acid, max_agents: maxAgents, max_intruders: maxIntruders }),
@@ -371,7 +374,7 @@ export const api = {
     fetch("/api/spec/run/stop", { method: "POST" }).then((r) => jsonOrThrow<{ ok: boolean }>(r)),
 
   generateZip: (spec: SpecDict, packageName: string) =>
-    fetch("/api/spec/generate/zip", {
+    trackedFetch("/api/spec/generate/zip", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec, package_name: packageName }),
@@ -380,7 +383,7 @@ export const api = {
       return r.blob();
     }),
 
-  catalogOnce: () => (catalogCache ??= fetch("/api/catalog").then((r) => jsonOrThrow<any>(r))),
+  catalogOnce: () => (catalogCache ??= trackedFetch("/api/catalog").then((r) => jsonOrThrow<any>(r))),
 
   // Drop what the backend and this page have cached, so the next reads are fresh.
   refresh: () => {
@@ -402,40 +405,40 @@ export const api = {
 
   // The design's MDP: its spaces field by field, and each normalizer's mapping.
   mdp: (spec: SpecDict) =>
-    fetch("/api/spec/mdp", {
+    trackedFetch("/api/spec/mdp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec }),
     }).then((r) => jsonOrThrow<any>(r)),
   // Problems in the design's code, by block.
   diagnostics: (spec: SpecDict) =>
-    fetch("/api/spec/diagnostics", {
+    trackedFetch("/api/spec/diagnostics", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec }),
     }).then((r) => jsonOrThrow<{ ok: boolean; problems: Record<string, Problem[]> }>(r)),
   // What the design's code can use: types, scopes and design keys.
   codeIntel: (spec: SpecDict) =>
-    fetch("/api/spec/code-intel", {
+    trackedFetch("/api/spec/code-intel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec }),
     }).then((r) => jsonOrThrow<Intel | { ok: false; error: string }>(r)),
 
-  listSpecs: () => fetch("/api/specs").then((r) => jsonOrThrow<{ name: string; title: string }[]>(r)),
+  listSpecs: () => trackedFetch("/api/specs").then((r) => jsonOrThrow<{ name: string; title: string }[]>(r)),
 
   getSpec: (name: string) =>
-    fetch(`/api/specs/${encodeURIComponent(name)}`).then((r) => jsonOrThrow<SpecDict>(r)),
+    trackedFetch(`/api/specs/${encodeURIComponent(name)}`).then((r) => jsonOrThrow<SpecDict>(r)),
 
   saveSpec: (name: string, spec: SpecDict) =>
-    fetch(`/api/specs/${encodeURIComponent(name)}`, {
+    trackedFetch(`/api/specs/${encodeURIComponent(name)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(spec),
     }).then((r) => jsonOrThrow<{ name: string }>(r)),
 
   deleteSpec: (name: string) =>
-    fetch(`/api/specs/${encodeURIComponent(name)}`, { method: "DELETE" }).then((r) =>
+    trackedFetch(`/api/specs/${encodeURIComponent(name)}`, { method: "DELETE" }).then((r) =>
       jsonOrThrow<{ name: string }>(r),
     ),
 };

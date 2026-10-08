@@ -1,5 +1,7 @@
 import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type SpecDict, type ValidateResult } from "./api";
+import { useBusy } from "./busy";
+import { Spinner } from "./components/Spinner";
 import { forgetModuleMembers, useCodeIntel } from "./code/pythonEditor";
 import { DEFAULT_SPEC } from "./defaultSpec";
 import { migrateRewardHooks, migrateRotationGroups, migrateShapeKeys, migrateTypesOntoRegions, normalizeToRegions } from "./specHelpers";
@@ -82,6 +84,8 @@ const NEW_PROJECT_VALUE = "__new_project__";
 const DELETE_PROJECT_VALUE = "__delete_project__";
 
 export default function App() {
+  // What the designer is waiting on, if anything (busy.ts).
+  const busy = useBusy();
   const [tab, setTab] = useState<Tab>("map");
   const [specText, setSpecText] = useState<string>(() => JSON.stringify(normalizeSpec(DEFAULT_SPEC), null, 2));
   const [validation, setValidation] = useState<ValidateResult | null>(null);
@@ -561,6 +565,11 @@ export default function App() {
           </span>
         )}
         <span className="spacer" />
+        {busy && (
+          <span className="statusbar-busy" role="status" aria-live="polite">
+            <Spinner label={busy} /> {busy}
+          </span>
+        )}
         {validation?.ok && validation.summary && (
           <span>
             max aircraft: {validation.summary.max_aircraft} · obs:{" "}

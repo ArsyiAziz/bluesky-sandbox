@@ -3,6 +3,7 @@
 // draws the same episode (it is the seed).
 import { useEffect, useState } from "react";
 import { useEpisode } from "../episode";
+import { Spinner } from "./Spinner";
 
 // ``label``: name it "episode" - off where a heading already does.
 export function EpisodeStepper({ busy = false, label = true }: { busy?: boolean; label?: boolean }) {
@@ -53,6 +54,7 @@ export function EpisodeStepper({ busy = false, label = true }: { busy?: boolean;
           ›
         </button>
       </span>
+      {busy && <Spinner label="drawing this episode" />}
       {seed !== 0 && (
         <button type="button" className="link episode-zero" onClick={() => setSeed(0)} title="Back to episode 0">
           ↺ 0

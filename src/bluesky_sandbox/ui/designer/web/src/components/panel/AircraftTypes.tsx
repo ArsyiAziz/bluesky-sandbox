@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { api, type SpecDict } from "../../api";
 import { useRefresh } from "../../refresh";
 import { Picker } from "./Picker";
+import { Spinner } from "../Spinner";
 
 export type AircraftOption = { type: string; name?: string | null; tags: string[] };
 
@@ -108,7 +109,7 @@ export function AircraftTypes({
       {error ? (
         <div className="error-text small">{model}: {error}</div>
       ) : loading ? (
-        <div className="muted small">loading {model}'s aircraft types…</div>
+        <div className="muted small"><Spinner /> loading {model}'s aircraft types…</div>
       ) : (
         <Picker
           placeholder={chosen.length ? "+ add a type to the mix…" : "+ aircraft type…"}

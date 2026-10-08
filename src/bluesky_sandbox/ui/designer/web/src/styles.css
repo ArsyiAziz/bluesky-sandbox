@@ -4975,6 +4975,38 @@ button:disabled {
   text-align: right;
 }
 
+/* Loading: a small spinning ring, sized to its text (Spinner.tsx). */
+.spinner {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  vertical-align: -0.12em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  opacity: 0.85;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+.statusbar-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
 /* A spawn region's route mix: each route's weight and the share it makes. */
 .route-weight-row {
   display: flex;

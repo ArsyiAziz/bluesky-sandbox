@@ -282,6 +282,7 @@ function markAll() {
 export function registerPythonIntel(monaco: any) {
   if (registered) return;
   registered = true;
+  registerDesignSchema(monaco);
   monacoApi = monaco;
   intelChanged = new monaco.Emitter();
   // Keys are checked as they are typed; the backend's checks follow the spec.
@@ -496,4 +497,21 @@ export function registerPythonIntel(monaco: any) {
       };
     },
   });
+}
+
+// The design file's JSON Schema (backend schema.py), so the spec.json editor
+// completes its keys and marks what does not belong where it is.
+function registerDesignSchema(monaco: any) {
+  const json = monaco.languages?.json?.jsonDefaults;
+  if (!json) return;
+  api
+    .designSchema()
+    .then((schema) =>
+      json.setDiagnosticsOptions({
+        validate: true,
+        enableSchemaRequest: false,
+        schemas: [{ uri: schema.$id ?? "design.schema.json", fileMatch: ["spec.json", "*design.json"], schema }],
+      }),
+    )
+    .catch(() => undefined);
 }
