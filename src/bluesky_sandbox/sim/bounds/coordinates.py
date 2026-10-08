@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class LatLon:
-    """Geographic point in degrees."""
+    """Geographic point in degrees - or many: arrays of them, one per entry."""
 
     lat_deg: float
     lon_deg: float

@@ -10,7 +10,14 @@ from shapely.prepared import prep
 
 from .base import Footprint
 from .coordinates import LatLon, LocalFrame
-from .footprints import ShapelyFootprint, vertices_from_shape
+from .footprints import (
+    ShapelyFootprint,
+    arc_points,
+    circle_points,
+    polygon_of,
+    similarity,
+    vertices_from_shape,
+)
 
 
 @dataclass
@@ -84,6 +91,33 @@ class SectorFootprint(Footprint):
         )
         p = self._frame.offset(bearing_deg, radius_nm)
         return p.lat_deg, p.lon_deg
+
+    def outline(self):
+        if self.half_angle_deg >= 180.0:  # all the way round: a disk
+            return polygon_of(circle_points(self._frame, self.radius_nm))
+        arc = arc_points(
+            self._frame,
+            self.bearing_deg - self.half_angle_deg,
+            self.bearing_deg + self.half_angle_deg,
+            self.radius_nm,
+        )
+        return polygon_of([self.center, *arc])
+
+    def circles(self) -> list[tuple[LatLon, float]]:
+        return [(self.center, self.radius_nm)]
+
+    def center_point(self) -> LatLon:
+        return self.center
+
+    def axis_deg(self) -> float:
+        return self.bearing_deg % 360.0
+
+    def mapped(self, point) -> SectorFootprint:
+        center, scale, turn = similarity(point, self.center, self.radius_nm)
+        return SectorFootprint(
+            center, self.radius_nm * scale, (self.bearing_deg + turn) % 360.0,
+            self.half_angle_deg, self.n_vertices,
+        )
 
 
 @dataclass
@@ -183,6 +217,35 @@ class AnnularSectorFootprint(Footprint):
         p = self._frame.offset(bearing_deg, radius_nm)
         return p.lat_deg, p.lon_deg
 
+    def outline(self):
+        outer, inner = self.outer_radius_nm, self.inner_radius_nm
+        if self.half_angle_deg >= 180.0:  # all the way round: a ring
+            holes = [circle_points(self._frame, inner)] if inner > 0.0 else []
+            return polygon_of(circle_points(self._frame, outer), holes)
+        lo = self.bearing_deg - self.half_angle_deg
+        hi = self.bearing_deg + self.half_angle_deg
+        inner_arc = arc_points(self._frame, lo, hi, inner) if inner > 0.0 else [self.center]
+        return polygon_of([*inner_arc, *arc_points(self._frame, hi, lo, outer)])
+
+    def circles(self) -> list[tuple[LatLon, float]]:
+        out = [(self.center, self.outer_radius_nm)]
+        if self.inner_radius_nm > 0.0:
+            out.append((self.center, self.inner_radius_nm))
+        return out
+
+    def center_point(self) -> LatLon:
+        return self.center
+
+    def axis_deg(self) -> float:
+        return self.bearing_deg % 360.0
+
+    def mapped(self, point) -> AnnularSectorFootprint:
+        center, scale, turn = similarity(point, self.center, self.outer_radius_nm)
+        return AnnularSectorFootprint(
+            center, self.inner_radius_nm * scale, self.outer_radius_nm * scale,
+            (self.bearing_deg + turn) % 360.0, self.half_angle_deg, self.n_vertices,
+        )
+
 
 @dataclass
 class CorridorFootprint(Footprint):
@@ -256,6 +319,19 @@ class CorridorFootprint(Footprint):
         )
         return p.lat_deg, p.lon_deg
 
+    def center_point(self) -> LatLon:
+        half = self._length_nm / 2.0
+        return self._frame.from_xy_nm(self._axis_x * half, self._axis_y * half)
+
+    def axis_deg(self) -> float:
+        return math.degrees(math.atan2(self._axis_x, self._axis_y)) % 360.0
+
+    def mapped(self, point) -> CorridorFootprint:
+        start, scale, _ = similarity(point, self.start, self.half_width_nm)
+        return CorridorFootprint(
+            start, LatLon(*point(self.end.lat_deg, self.end.lon_deg)), self.half_width_nm * scale
+        )
+
 
 @dataclass
 class BooleanFootprint(Footprint):
@@ -310,6 +386,16 @@ class BooleanFootprint(Footprint):
                 lon_deg,
             )
         return bool(self._prepared.contains(_ShPoint(lon_deg, lat_deg)))
+
+    def outline(self):
+        left, right = self.left.outline(), self.right.outline()
+        return getattr(left, self.op)(right)
+
+    def circles(self) -> list[tuple[LatLon, float]]:
+        return [*self.left.circles(), *self.right.circles()]
+
+    def mapped(self, point) -> BooleanFootprint:
+        return BooleanFootprint(self.op, self.left.mapped(point), self.right.mapped(point))
 
     def sample_point(self, rng: np.random.Generator) -> tuple[float, float]:
         if self.op == "difference":
