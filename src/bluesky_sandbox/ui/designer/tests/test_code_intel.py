@@ -177,3 +177,78 @@ def test_every_design_key_source_is_described():
     sources = get_args(get_type_hints(DesignKeys)["source"])
     assert "observation" in sources
     assert set(sources) == set(design_keys_module._SOURCES)
+
+
+def _shapes_intel():
+    from .test_generated_regions import _design
+
+    spec = _design()
+    # Of a sampled size: the support holds the envelope of every size, a
+    # polygon; each episode an annular sector.
+    spec.regions["stream"] = {
+        "type": "region",
+        "footprint": {
+            "type": "annular_sector",
+            "center": {"lat_deg": 52.0, "lon_deg": 4.5},
+            "inner_radius_nm": 5,
+            "outer_radius_nm": 20,
+            "bearing_deg": 90,
+            "half_angle_deg": {"type": "range", "low": 10, "high": 30},
+        },
+    }
+    return spec, code_intel(spec)
+
+
+def _footprint_of(intel, scope_type, shape):
+    keyed = _attr(intel, scope_type, "shape")["returns_by_key"]
+    region = _item(intel, keyed, shape)["type"]
+    return _type(intel, _attr(intel, region, "footprint")["type"])
+
+
+def test_a_shape_completes_its_footprint_as_its_episodes_hold_it():
+    from bluesky_sandbox.ui.designer.builder import build_scenario
+    from bluesky_sandbox.ui.designer.code_intel import _sampled_episodes, _shared_class
+
+    spec, intel = _shapes_intel()
+    context = _context(intel)
+    core = _footprint_of(intel, context, "core")
+    assert core["name"] == "BoxFootprint"
+    assert {"lat_min_deg", "lon_max_deg"} <= {m["name"] for m in core["attrs"]}
+    stream = _footprint_of(intel, context, "stream")
+    assert stream["name"] == "AnnularSectorFootprint"
+    assert {"inner_radius_nm", "half_angle_deg"} <= {m["name"] for m in stream["attrs"]}
+    # A generated shape: as far as its draws agree.
+    drawn = tuple(e.shapes["wx"].footprint for e in _sampled_episodes(build_scenario(spec)))
+    assert _footprint_of(intel, context, "wx")["name"] == _shared_class(drawn).__name__
+    # shapes["name"] reads the same as shape("name").
+    by_item = _item(intel, _attr(intel, context, "shapes")["type"], "stream")["type"]
+    assert by_item == _item(intel, _attr(intel, context, "shape")["returns_by_key"], "stream")["type"]
+
+
+def test_a_member_whose_class_differs_between_episodes_is_not_narrowed():
+    from bluesky_sandbox.sim.bounds import (
+        BoxFootprint,
+        ConstantAltitudeBand,
+        DiskFootprint,
+        LatLon,
+        RegionBounds,
+    )
+    from bluesky_sandbox.ui.designer.code_intel import TypeTable
+
+    band = ConstantAltitudeBand(0.0, 10_000.0)
+    held = (
+        RegionBounds(DiskFootprint(LatLon(52.0, 4.5), 10.0), band),
+        RegionBounds(BoxFootprint(51.5, 52.5, 4.0, 5.0), band),
+    )
+    table = TypeTable(None, None)
+    key = table.narrowed(RegionBounds, held, depth=3)
+    footprint = next(m for m in table.types[key]["attrs"] if m["name"] == "footprint")
+    assert table.types[footprint["type"]]["name"] == "Footprint"
+    # What the two agree on still narrows.
+    altitude = next(m for m in table.types[key]["attrs"] if m["name"] == "altitude")
+    assert table.types[altitude["type"]]["name"] == "ConstantAltitudeBand"
+
+
+def test_a_keyed_call_returning_something_else_is_not_read_per_key(intel):
+    batch = _param(intel, "hook:reward_batch", "batch")["type"]
+    assert "returns_by_key" not in _attr(intel, batch, "query")

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -28,7 +29,10 @@ __all__ = ["Key", "design_keys"]
 class Key:
     """One key: ``value`` is the type of what it holds - ``float``,
     ``np.ndarray``, a queryable or result class - or ``None`` when ``keys``
-    holds its own keys, as an observation part does."""
+    holds its own keys, as an observation part does. ``seen`` is what it held
+    in sampled episodes, where the design's run-time objects are known: what
+    a reader narrows the type's members from (a disk shape's footprint is a
+    ``DiskFootprint``, where ``value`` only says ``Footprint``)."""
 
     name: str
     value: Any
@@ -36,21 +40,25 @@ class Key:
     doc: str = ""
     color: str | None = None
     keys: list[Key] | None = field(default=None)
+    seen: tuple[Any, ...] = ()
 
 
-def design_keys(marker: DesignKeys, config: EnvConfig, support: Any) -> list[Key]:
-    """The keys ``marker`` stands for in this design."""
+def design_keys(
+    marker: DesignKeys, config: EnvConfig, support: Any, episodes: Sequence[Any] = ()
+) -> list[Key]:
+    """The keys ``marker`` stands for in this design. ``episodes``, sampled
+    from it, give each key what it holds at run time (:attr:`Key.seen`)."""
     build = _SOURCES.get(marker.source)
     if build is None:
         raise ValueError(f"no DesignKeys source {marker.source!r} is described")
-    return build(marker.batched, config, support)
+    return build(marker.batched, config, support, tuple(episodes))
 
 
-def _observation(batched: bool, config: EnvConfig, _support: Any) -> list[Key]:
+def _observation(batched: bool, config: EnvConfig, _support: Any, _episodes: tuple) -> list[Key]:
     return _parts(observation_parts(config), batched)
 
 
-def _state(batched: bool, config: EnvConfig, _support: Any) -> list[Key]:
+def _state(batched: bool, config: EnvConfig, _support: Any, _episodes: tuple) -> list[Key]:
     return _parts(state_parts(config), batched)
 
 
@@ -74,7 +82,7 @@ def _parts(parts_fields: dict[str, list[Any]], batched: bool) -> list[Key]:
     return parts
 
 
-def _action(batched: bool, config: EnvConfig, _support: Any) -> list[Key]:
+def _action(batched: bool, config: EnvConfig, _support: Any, _episodes: tuple) -> list[Key]:
     fields = list(config.action_fields)
     keys = []
     for name, f in zip(unique_names_of(fields), fields):
@@ -97,21 +105,35 @@ def _action(batched: bool, config: EnvConfig, _support: Any) -> list[Key]:
     return keys
 
 
-def _queryable(batched: bool, _config: EnvConfig, support: Any) -> list[Key]:
-    return _queryables(support, type)
+def _queryable(batched: bool, _config: EnvConfig, support: Any, episodes: tuple) -> list[Key]:
+    return _queryables(support, type, episodes)
 
 
-def _queryable_result(batched: bool, _config: EnvConfig, support: Any) -> list[Key]:
-    return _queryables(support, lambda q: getattr(q, "result_type", None))
+def _queryable_result(batched: bool, _config: EnvConfig, support: Any, _episodes: tuple) -> list[Key]:
+    # A result is made per aircraft as the env runs: no episode holds one.
+    return _queryables(support, lambda q: getattr(q, "result_type", None), ())
 
 
-def _bounds(_batched: bool, _config: EnvConfig, support: Any) -> list[Key]:
+def _bounds(_batched: bool, _config: EnvConfig, support: Any, episodes: tuple) -> list[Key]:
     from bluesky_sandbox.sim.bounds import RegionBounds  # noqa: PLC0415
 
     return [
-        Key(name, RegionBounds, type(b.footprint).__name__.removesuffix("Footprint"), _doc(RegionBounds))
+        Key(
+            name,
+            RegionBounds,
+            type(b.footprint).__name__.removesuffix("Footprint"),
+            _doc(RegionBounds),
+            seen=_seen(episodes, "shapes", name),
+        )
         for name, b in (getattr(support, "bounds", None) or {}).items()
     ]
+
+
+def _seen(episodes: tuple, attr: str, name: str) -> tuple[Any, ...]:
+    """What each of ``episodes`` holds under ``name`` in its ``attr`` mapping."""
+    return tuple(
+        held[name] for held in (getattr(e, attr, None) or {} for e in episodes) if name in held
+    )
 
 
 _SOURCES = {
@@ -125,7 +147,7 @@ _SOURCES = {
 }
 
 
-def _queryables(support: Any, value: Any) -> list[Key]:
+def _queryables(support: Any, value: Any, episodes: tuple) -> list[Key]:
     keys = []
     for name, queryable in support.queryables.items():
         result = value(queryable)
@@ -136,6 +158,7 @@ def _queryables(support: Any, value: Any) -> list[Key]:
                 getattr(result, "__qualname__", ""),
                 _doc(type(queryable)),
                 color=getattr(queryable, "color", None) or None,
+                seen=_seen(episodes, "queryables", name),
             )
         )
     return keys

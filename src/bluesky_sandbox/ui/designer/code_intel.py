@@ -28,6 +28,8 @@ import typing
 from collections.abc import Callable, Iterable
 from typing import Annotated, Any, Union, get_args, get_origin
 
+import numpy as np
+
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.task import DesignKeys, TaskInfoProvider
@@ -81,11 +83,29 @@ def _class_of(key: str) -> type:
 def code_intel(spec: DesignSpec) -> dict[str, Any]:
     """Types and scopes for every code block of ``spec``."""
     config = build_design_config(spec)
-    support = build_scenario(spec).support()
-    table = TypeTable(config, support)
+    scenario = build_scenario(spec)
+    episodes = _sampled_episodes(scenario)
+    # After the samples: support() restores the geometry they drew into.
+    support = scenario.support()
+    table = TypeTable(config, support, episodes)
     names: dict[str, list[dict[str, Any]]] = {}
     scopes = _scopes(spec, config, table, names)
     return {"ok": True, "scopes": scopes, "names": names, "types": table.types}
+
+
+#: Episodes sampled to see what the design's keys hold at run time - a shape
+#: drawn anew each episode, or of a sampled size, is not what the support holds.
+_SAMPLED_EPISODES = 3
+
+
+def _sampled_episodes(scenario: Any) -> tuple[Any, ...]:
+    """A few of ``scenario``'s episodes, seeded so completion is the same from
+    edit to edit. None where it cannot sample yet - code mid-edit: its keys are
+    then described by their declared types alone; diagnostics name the error."""
+    try:
+        return tuple(scenario.sample(np.random.default_rng(seed)) for seed in range(_SAMPLED_EPISODES))
+    except Exception:  # noqa: BLE001 - completion never fails on the design's code
+        return ()
 
 
 # --------------------------------------------------------------------------- #
@@ -186,11 +206,12 @@ def _doc(obj: Any) -> str:
 class TypeTable:
     """Types by key, described from classes and from the design's keys."""
 
-    def __init__(self, config: EnvConfig | None, support: Any) -> None:
+    def __init__(self, config: EnvConfig | None, support: Any, episodes: tuple[Any, ...] = ()) -> None:
         self.types: dict[str, dict[str, Any]] = {}
         self._depth: dict[str, int] = {}
         self._config = config
         self._support = support
+        self._episodes = episodes
 
     # --- references -----------------------------------------------------------
     def ref(self, annotation: Any, depth: int = _DEPTH) -> str | None:
@@ -254,14 +275,23 @@ class TypeTable:
             type=self.ref(returns, depth),
             params=params,
         )
-        # A keyed argument picks the result when the return type does not say.
-        if keyed is not None and _unwrap(returns)[0] in (
-            Any,
-            None,
-            inspect.Signature.empty,
+        # A keyed argument picks the result when the return type does not say,
+        # or when each key's type is the return type, narrowed - a shape by name.
+        if keyed is not None and (
+            _unwrap(returns)[0] in (Any, None, inspect.Signature.empty)
+            or self._each_narrows(keyed, member["type"])
         ):
             member["returns_by_key"] = keyed
         return member
+
+    def _each_narrows(self, keyed: str, returns: str | None) -> bool:
+        """Whether every key of ``keyed`` holds ``returns`` or a narrowing of it
+        (:meth:`narrowed` keys a narrowing ``returns[...]``)."""
+        items = self.types.get(keyed, {}).get("items") or []
+        return returns is not None and bool(items) and all(
+            (item.get("type") or "") == returns or (item.get("type") or "").startswith(f"{returns}[")
+            for item in items
+        )
 
     def _members(self, cls: type, depth: int) -> dict[str, Any]:
         cls_hints = hints(cls)
@@ -310,6 +340,41 @@ class TypeTable:
             described["items"] = items
         return described
 
+    def narrowed(self, annotation: Any, values: tuple[Any, ...], depth: int) -> str | None:
+        """``annotation``'s type key, with each annotated member narrowed to
+        the most specific class ``values`` - what one key held in sampled
+        episodes - all hold there: a disk shape's ``footprint`` is a
+        ``DiskFootprint``, a shape drawn differently each episode only as far
+        as its draws agree. Plain ``ref`` where nothing narrows."""
+        key = self.ref(annotation, depth)
+        described = self.types.get(key) if key else None
+        if not values or described is None or described.get("partial"):
+            return key
+        cls = _unwrap(annotation)[0]
+        annotated = hints(cls)
+        overrides: dict[str, tuple[str, type]] = {}
+        for member in described["attrs"]:
+            name = member["name"]
+            if name not in annotated or not all(hasattr(v, name) for v in values):
+                continue
+            held = tuple(getattr(v, name) for v in values)
+            shared = _shared_class(held)
+            inner = self.narrowed(shared, held, depth - 1) if depth > 0 else None
+            if inner is not None and inner != member.get("type"):
+                overrides[name] = (inner, shared)
+        if not overrides:
+            return key
+        narrowed = f"{key}[{', '.join(f'{n}={k}' for n, (k, _c) in sorted(overrides.items()))}]"
+        if narrowed not in self.types:
+            attrs = [
+                {**m, "type": overrides[m["name"]][0], "detail": label(overrides[m["name"]][1])}
+                if m["name"] in overrides
+                else m
+                for m in described["attrs"]
+            ]
+            self.types[narrowed] = {**described, "attrs": attrs}
+        return narrowed
+
     # --- the design's keys ----------------------------------------------------
     def design(self, marker: DesignKeys, depth: int) -> str:
         """The key of a synthetic type whose items are the design's keys."""
@@ -318,7 +383,7 @@ class TypeTable:
         # Without a design (a type described on its own) the keys are the
         # design's, already described with it.
         if key not in self.types and self._config is not None:
-            keys = design_keys(marker, self._config, self._support)
+            keys = design_keys(marker, self._config, self._support, self._episodes)
             self._closed(key, marker.source, keys, depth)
         return key
 
@@ -337,12 +402,20 @@ class TypeTable:
                     "field",
                     detail=k.detail,
                     doc=k.doc,
-                    type=self.ref(k.value, depth),
+                    type=self.narrowed(k.value, k.seen, depth),
                 )
             if k.color:
                 item["color"] = k.color
             items.append(item)
         self.types[key]["items"] = items
+
+
+def _shared_class(values: tuple[Any, ...]) -> type:
+    """The most specific class every one of ``values`` is an instance of."""
+    return next(
+        (c for c in type(values[0]).__mro__ if all(isinstance(v, c) for v in values[1:])),
+        object,
+    )
 
 
 def _public_names(cls: type) -> set[str]:

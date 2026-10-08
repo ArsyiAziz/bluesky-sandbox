@@ -152,7 +152,9 @@ class StepBatch:
         return self._query(name, self.acidx)
 
     def shape(self, name: Annotated[str, DesignKeys("shapes", batched=True)]) -> RegionBounds:
-        """The design's shape ``name`` - an area or a point - in this episode's frame."""
+        """The design's shape ``name`` - an area or a point - in this episode's
+        frame: geometry. To query it per aircraft (inside now, during the step,
+        time inside), add a query region on it."""
         try:
             return self._shapes[name]
         except KeyError as exc:
