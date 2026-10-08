@@ -139,7 +139,7 @@ def test_a_hand_worked_encounter(env, encounter, field, expected):
     run_cases(env, _SITUATIONS.values(), [Case(encounter, field, expected, _CLOSE, of="INTR")]).assert_ok()
     # The field's own plain statement of the value agrees with the hand answer.
     at = place(env, _SITUATIONS[encounter])
-    assert float(field._expected_pair(at["OWN"], at["INTR"])) == pytest.approx(
+    assert float(field.expected_pair(at["OWN"], at["INTR"])) == pytest.approx(
         expected, rel=1e-2, abs=1e-6
     )
 
