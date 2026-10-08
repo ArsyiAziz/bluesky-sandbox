@@ -133,8 +133,9 @@ def test_each_situation_is_placed_for_the_tab_to_draw():
     assert (own["acid"], own["lat"], own["lon"]) == ("OWN", 52.0, 4.0)
     # 10 nm east of the ownship, as the checks place it.
     assert intr["lat"] == pytest.approx(52.0, abs=1e-3) and intr["lon"] == pytest.approx(4.0 + 10 / 60 / 0.6157, rel=1e-3)
-    broken = _tests()
-    broken["situations"][0]["aircraft"][1].pop("bearing_deg")
-    assert "give one of" in TestClient(create_app()).post(
-        "/api/spec/test/situations", json={"spec": _design(broken).to_dict()}
-    ).json()["error"]
+    # One being written does not hide the rest: each is placed on its own.
+    tests = _tests()
+    tests["situations"].append({"name": "unfinished", "aircraft": [{"acid": "A", "lat": 52.0, "lon": 4.0}]})
+    body = TestClient(create_app()).post("/api/spec/test/situations", json={"spec": _design(tests).to_dict()}).json()
+    assert list(body["situations"]) == ["head-on"]
+    assert body["errors"] == ["tests: situation 'unfinished', aircraft 'A' needs track_deg, gs_kts, alt_ft, actype"]

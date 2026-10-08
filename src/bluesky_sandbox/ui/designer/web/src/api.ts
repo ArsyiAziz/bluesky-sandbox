@@ -4,6 +4,14 @@ import type { Intel, Problem } from "./code/intel";
 // Typed client for the designer API. Paths are relative so the Vite dev proxy
 // (and the static-served production build) both work without configuration.
 
+// A test situation's aircraft, placed (see /api/spec/test/situations).
+export type PlacedAircraft = { acid: string; lat: number; lon: number; track_deg: number; alt_ft: number };
+export type TestSituations = { ok: boolean; errors?: string[]; situations?: Record<string, PlacedAircraft[]> };
+// One result of a test run: a field checked against itself, or a case.
+export type FieldCheckResult = { kind: "field"; field: string; ok: boolean; findings: string[] };
+export type CaseRunResult = { kind: "case"; index: number; ok: boolean; got: number | number[] | null; error: string | null };
+export type TestResult = FieldCheckResult | CaseRunResult;
+
 export type SpecDict = Record<string, any>;
 
 export interface ValidateResult {
@@ -359,6 +367,45 @@ export const api = {
       }
     }
     throw new Error("the episode run ended early");
+    }),
+
+  // Where each test situation's aircraft are, for the Tests tab to draw.
+  testSituations: (spec: SpecDict) =>
+    trackedFetch("/api/spec/test/situations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec }),
+    }).then((r) => jsonOrThrow<TestSituations>(r)),
+
+  // The design's field checks, then its test cases, streamed: each result is
+  // handed over as it is known.
+  testDesign: async (spec: SpecDict, onResult: (r: TestResult) => void, signal: AbortSignal): Promise<void> =>
+    during(labelFor("/api/spec/test"), async () => {
+      const r = await fetch("/api/spec/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec }),
+        signal,
+      });
+      if (!r.ok || !r.body) await jsonOrThrow(r);
+      const reader = r.body!.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += value;
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          const item = JSON.parse(line) as TestResult | { kind: "done" } | { kind: "error"; error: string };
+          if (item.kind === "done") return;
+          if (item.kind === "error") throw new Error(item.error);
+          onResult(item);
+        }
+      }
+      throw new Error("the test run ended early");
     }),
 
   sample: (spec: SpecDict, seed = 0, atS = 0, acid: string | null = null, maxAgents = 3, maxIntruders = 25) =>

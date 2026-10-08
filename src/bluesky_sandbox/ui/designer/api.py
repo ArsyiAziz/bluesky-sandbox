@@ -50,7 +50,7 @@ from . import runner as _runner
 from . import spec as _spec
 from .builder import BuildError, build_design_config, build_scenario
 from .code_intel import code_intel, describe_type, forget_type_checking_names
-from .design_tests import design_cases, design_situations
+from .design_tests import design_cases, situation_of
 from .diagnostics import diagnostics
 from .mdp import mdp_summary
 from .preview import airspace_warnings, alert_hued_colors, scenario_preview
@@ -445,21 +445,23 @@ def create_app() -> FastAPI:
     @app.post("/api/spec/test/situations")
     def test_situations(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         """Where each situation's aircraft are - ``{name: [{acid, lat, lon,
-        track_deg, alt_ft}]}`` - for the Tests tab to draw; ``error`` for a
-        broken one."""
+        track_deg, alt_ft}]}`` - for the Tests tab to draw; each situation on
+        its own, so one being written does not hide the rest (``errors``)."""
         spec = _parse_spec(body.get("spec", body))
-        try:
-            situations = design_situations(spec)
-        except ValueError as e:
-            return {"ok": False, "error": str(e)}
-        out = {}
-        for s in situations:
+        out: dict[str, Any] = {}
+        errors: list[str] = []
+        for i, d in enumerate((spec.tests or {}).get("situations") or []):
+            try:
+                s = situation_of(d, i)
+            except ValueError as e:
+                errors.append(str(e))
+                continue
             at = positions(s)
             out[s.name] = [
                 {"acid": a.acid, "lat": at[a.acid][0], "lon": at[a.acid][1], "track_deg": a.track_deg, "alt_ft": a.alt_ft}
                 for a in s.aircraft
             ]
-        return {"ok": True, "situations": out}
+        return {"ok": not errors, "situations": out, "errors": errors}
 
     @app.post("/api/spec/test")
     def test_design(body: dict[str, Any] = Body(...)) -> StreamingResponse:

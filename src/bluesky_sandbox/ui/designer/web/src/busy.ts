@@ -8,6 +8,8 @@ const SHOW_AFTER_MS = 300;
 // What each request is doing, by its path: in the words the status bar uses.
 const LABELS: [RegExp, string][] = [
   [/^\/api\/catalog/, "Loading the aircraft types and fields…"],
+  [/^\/api\/spec\/test\/situations/, "Placing the test situations…"],
+  [/^\/api\/spec\/test/, "Running the design's tests…"],
   [/^\/api\/spec\/sample/, "Flying the sampled episode…"],
   [/^\/api\/spec\/episode/, "Flying the episode…"],
   [/^\/api\/spec\/validate/, "Building the design…"],

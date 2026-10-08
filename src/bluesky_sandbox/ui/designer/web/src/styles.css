@@ -4994,3 +4994,156 @@ button:disabled {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* The Tests tab: situations placed by hand, cases, each field against itself. */
+.tests-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.tests-section {
+  margin: 16px 0;
+}
+.tests-section > h3 {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+.tests-situation {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.tests-situation-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.tests-situation-head .form-input {
+  max-width: 240px;
+}
+.tests-situation-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.tests-aircraft {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+.tests-aircraft-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.tests-aircraft-row.ownship .tests-acid {
+  font-weight: 600;
+}
+.tests-acid {
+  width: 72px;
+}
+.tests-aircraft-row .numfield.inline input {
+  width: 72px;
+}
+.numfield.missing > span {
+  color: var(--danger);
+}
+.tests-sketch {
+  width: 180px;
+  height: 180px;
+  flex: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+div.tests-sketch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8px;
+}
+.tests-sketch-range {
+  fill: none;
+  stroke: var(--border-subtle);
+  stroke-dasharray: 3 3;
+}
+.tests-sketch-own {
+  fill: var(--accent);
+}
+.tests-sketch-other {
+  fill: var(--muted);
+}
+.tests-sketch-label,
+.tests-sketch-scale {
+  font-size: 9px;
+  fill: var(--text);
+}
+.tests-sketch-scale {
+  fill: var(--muted);
+}
+.tests-cases td {
+  vertical-align: middle;
+}
+.tests-cases tr.ok .tests-got {
+  color: var(--success-text);
+}
+.tests-cases tr.failed .tests-got {
+  color: var(--danger);
+}
+.tests-tolerance {
+  white-space: nowrap;
+}
+.tests-tolerance input {
+  width: 64px;
+}
+.tests-take {
+  margin-left: 6px;
+  font-size: 11px;
+  padding: 0 6px;
+}
+.tests-fields {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tests-fields li {
+  padding: 2px 0;
+}
+.tests-fields li.ok > span {
+  color: var(--success-text);
+}
+.tests-fields li.failed > span {
+  color: var(--danger);
+}
+/* One column across the page: tables want the width, not a card's. */
+.tests-page {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.tests-cases {
+  table-layout: auto;
+}
+.tests-cases select.form-input {
+  min-width: 96px;
+}
+.tests-cases .picker {
+  min-width: 220px;
+}
+.tests-cases input[aria-label="expected"] {
+  min-width: 96px;
+}
+.tests-cases input[aria-label="note"] {
+  min-width: 140px;
+}
+.tests-got {
+  white-space: nowrap;
+}

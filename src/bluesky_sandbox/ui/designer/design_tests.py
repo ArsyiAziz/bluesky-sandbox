@@ -29,7 +29,7 @@ from bluesky_sandbox.checks import Aircraft, Case, Situation, Tolerance
 from .emit import _Emitter, field_imports
 from .spec import DesignSpec, FieldRef, SpecError
 
-__all__ = ["cases_module", "design_cases", "design_situations"]
+__all__ = ["cases_module", "design_cases", "design_situations", "situation_of"]
 
 
 def _names(cls: type) -> set[str]:
@@ -38,28 +38,43 @@ def _names(cls: type) -> set[str]:
 
 def design_situations(spec: DesignSpec) -> list[Situation]:
     """The design's situations, each as :mod:`bluesky_sandbox.checks` takes it."""
-    out = []
-    for i, d in enumerate((spec.tests or {}).get("situations") or []):
-        where = f"tests: situation {d.get('name') or i + 1!r}" if isinstance(d, dict) else f"tests: situation {i + 1}"
-        if not isinstance(d, dict) or not d.get("name"):
-            raise SpecError(f"{where} needs a name")
-        aircraft = []
-        for k, a in enumerate(d.get("aircraft") or []):
-            unknown = set(a) - _names(Aircraft) if isinstance(a, dict) else {"(not a mapping)"}
-            if unknown:
-                raise SpecError(f"{where}, aircraft {k + 1}: no {', '.join(sorted(unknown))}")
-            try:
-                aircraft.append(Aircraft(**a))
-            except (TypeError, ValueError) as e:
-                raise SpecError(f"{where}, aircraft {k + 1}: {e}") from e
-        try:
-            out.append(Situation(str(d["name"]), tuple(aircraft), seed=int(d.get("seed") or 0)))
-        except ValueError as e:
-            raise SpecError(f"{where}: {e}") from e
+    out = [situation_of(d, i) for i, d in enumerate((spec.tests or {}).get("situations") or [])]
     names = [s.name for s in out]
     if len(names) != len(set(names)):
         raise SpecError("tests: two situations share a name")
     return out
+
+
+def situation_of(d: Any, index: int) -> Situation:
+    """Situation ``d`` - the ``index``-th - as :mod:`bluesky_sandbox.checks`
+    takes it; a :class:`SpecError` saying where, for one that is not one."""
+    where = f"tests: situation {d.get('name') or index + 1!r}" if isinstance(d, dict) else f"tests: situation {index + 1}"
+    if not isinstance(d, dict) or not d.get("name"):
+        raise SpecError(f"{where} needs a name")
+    needed = [
+        f.name
+        for f in dataclasses.fields(Aircraft)
+        if f.name != "_" and f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+    ]
+    aircraft = []
+    for k, a in enumerate(d.get("aircraft") or []):
+        what = f"{where}, aircraft {a.get('acid') or k + 1!r}" if isinstance(a, dict) else f"{where}, aircraft {k + 1}"
+        if not isinstance(a, dict):
+            raise SpecError(f"{what} is not a mapping")
+        unknown = set(a) - _names(Aircraft)
+        if unknown:
+            raise SpecError(f"{what}: no {', '.join(sorted(unknown))}")
+        missing = [name for name in needed if a.get(name) is None]
+        if missing:
+            raise SpecError(f"{what} needs {', '.join(missing)}")
+        try:
+            aircraft.append(Aircraft(**a))
+        except (TypeError, ValueError) as e:
+            raise SpecError(f"{what}: {e}") from e
+    try:
+        return Situation(str(d["name"]), tuple(aircraft), seed=int(d.get("seed") or 0))
+    except ValueError as e:
+        raise SpecError(f"{where}: {e}") from e
 
 
 def design_cases(spec: DesignSpec) -> list[tuple[dict[str, Any], FieldRef]]:
