@@ -607,7 +607,7 @@ export default function MapTab({
       .catalogOnce()
       .then((c) => {
         if (c?.colors) {
-          setColorPalette(c.colors);
+          setColorPalette(c.colors, c.reserved_hues ?? []);
           if (ready) {
             refreshDeck();
             refreshLabels();

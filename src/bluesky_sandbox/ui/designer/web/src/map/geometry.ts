@@ -31,10 +31,11 @@ export const NAMED: Record<string, RGBA> = {
   slate: [148, 163, 184, 255], violet: [167, 139, 250, 255],
 };
 
-// A stable palette to color anonymous/named routes by index.
+// A stable palette to color anonymous/named routes by index - none near an
+// alert's color (common/palette.py).
 const ROUTE_PALETTE: RGBA[] = [
-  NAMED.cyan, NAMED.orange, NAMED.lime, NAMED.magenta,
-  NAMED.yellow, NAMED.green, NAMED.blue, NAMED.red,
+  NAMED.cyan, NAMED.lime, NAMED.magenta, NAMED.yellow,
+  NAMED.green, NAMED.blue, NAMED.white, NAMED.slate,
 ];
 
 // The authoritative name→color palette, populated from the catalog (the same
@@ -49,25 +50,60 @@ function parseHex(value: string): RGBA | null {
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255, 255];
 }
 
-export function setColorPalette(colors: Record<string, string>) {
+// The hue bands (deg, start to end going up) kept for alerts - conflict,
+// loss of separation, violation - from the catalog: a design color in one is
+// drawn at its nearer edge, as the drivers draw it (common/palette.py).
+let RESERVED_HUES: [number, number][] = [];
+
+export function setColorPalette(colors: Record<string, string>, reservedHues: [number, number][] = []) {
   const next: Record<string, RGBA> = {};
   for (const [name, hex] of Object.entries(colors)) {
     const rgb = parseHex(hex);
     if (rgb) next[name.trim().toLowerCase()] = rgb;
   }
   CATALOG_PALETTE = next;
+  RESERVED_HUES = reservedHues;
+}
+
+const within = (hue: number, start: number, end: number) =>
+  (((hue - start) % 360) + 360) % 360 <= (((end - start) % 360) + 360) % 360;
+
+// A design color as the drivers draw it: outside every alert's hue band.
+export function overlayRgb([r, g, b, a]: RGBA): RGBA {
+  const max = Math.max(r, g, b) / 255;
+  const min = Math.min(r, g, b) / 255;
+  const s = max === 0 ? 0 : (max - min) / max;
+  if (s < 0.25 || max === min) return [r, g, b, a];
+  const d = max - min;
+  const [rn, gn, bn] = [r / 255, g / 255, b / 255];
+  let h = max === rn ? ((gn - bn) / d) % 6 : max === gn ? (bn - rn) / d + 2 : (rn - gn) / d + 4;
+  h = ((h * 60) + 360) % 360;
+  for (const [start, end] of RESERVED_HUES) {
+    if (!within(h, start, end)) continue;
+    const down = (((h - start) % 360) + 360) % 360;
+    const up = (((end - h) % 360) + 360) % 360;
+    const hue = down <= up ? (start - 1 + 360) % 360 : (end + 1) % 360;
+    const c = max * s;
+    const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+    const m = max - c;
+    const [r1, g1, b1] =
+      hue < 60 ? [c, x, 0] : hue < 120 ? [x, c, 0] : hue < 180 ? [0, c, x]
+      : hue < 240 ? [0, x, c] : hue < 300 ? [x, 0, c] : [c, 0, x];
+    return [Math.round((r1 + m) * 255), Math.round((g1 + m) * 255), Math.round((b1 + m) * 255), a];
+  }
+  return [r, g, b, a];
 }
 
 export function cssToRgb(name?: string): RGBA {
-  if (!name) return NAMED.orange;
+  if (!name) return NAMED.cyan;
   const n = name.trim().toLowerCase();
   const hex = parseHex(n);
-  if (hex) return hex;
-  // Prefer the catalog palette (matches the drivers); fall back to the built-in
-  // names for internal colors and the moment before the catalog has loaded.
+  if (hex) return overlayRgb(hex);
+  // Prefer the catalog palette (as the drivers draw it); fall back to the
+  // built-in names for internal colors and the moment before it has loaded.
   if (CATALOG_PALETTE[n]) return CATALOG_PALETTE[n];
-  if (NAMED[n]) return NAMED[n];
-  return NAMED.orange;
+  if (NAMED[n]) return overlayRgb(NAMED[n]);
+  return NAMED.cyan;
 }
 
 export function point(lon: number, lat: number, props: Record<string, any>): GeoJSON.Feature {

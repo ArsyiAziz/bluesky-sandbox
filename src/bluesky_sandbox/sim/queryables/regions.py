@@ -106,8 +106,10 @@ class QueryRegion:
         The spatial (and optional altitude) region to test (``bounds``, its
         older name, still works).
     color:
-        Display color name recognized by drivers (e.g. ``"orange"``,
-        ``"cyan"``, ``"#FF8800"``).  Defaults to ``"orange"``.
+        Display color name recognized by drivers (e.g. ``"cyan"``,
+        ``"green"``, ``"#22AA88"``).  Defaults to ``"cyan"``. Aircraft inside
+        are drawn in it, so a color near an alert's hue is drawn clear of it
+        (see ``ui.drivers.common.palette``).
     render_shape:
         Whether the region polygon is drawn on the map.  ``True`` by
         default; set ``False`` to keep the region as a query-only
@@ -147,7 +149,7 @@ class QueryRegion:
 
     shape: Bounds
     result_type: ClassVar[type[RegionResult]] = RegionResult
-    color: str = "orange"
+    color: str = "cyan"
     render_shape: bool = True
     render_label: bool = True
     track_temporal_state: bool = False

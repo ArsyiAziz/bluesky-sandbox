@@ -1,6 +1,8 @@
 // Color selector for design elements (queryables, …). The renderers accept a
-// palette name ("red") or a "#rrggbb" literal, so this offers named swatches
-// plus a native custom-color input. The palette comes from the catalog.
+// palette name ("cyan") or a "#rrggbb" literal, so this offers named swatches
+// plus a native custom-color input. The palette comes from the catalog - as the
+// drivers draw it; names near an alert's color (red, orange, purple) are drawn
+// in another, so they are not offered.
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { useRefresh } from "../../refresh";
@@ -21,10 +23,17 @@ export function ColorPicker({
   onChange: (color: string) => void;
 }) {
   const [palette, setPalette] = useState<Record<string, string>>({});
+  const [hidden, setHidden] = useState<string[]>([]);
 
   const refreshKey = useRefresh();
   useEffect(() => {
-    api.catalogOnce().then((c) => setPalette(c?.colors ?? {})).catch(() => setPalette({}));
+    api
+      .catalogOnce()
+      .then((c) => {
+        setPalette(c?.colors ?? {});
+        setHidden(c?.alert_colors ?? []);
+      })
+      .catch(() => setPalette({}));
   }, [refreshKey]);
 
   const isSelected = (name: string, hex: string) =>
@@ -32,7 +41,7 @@ export function ColorPicker({
 
   return (
     <div className="color-picker">
-      {Object.entries(palette).map(([name, hex]) => (
+      {Object.entries(palette).filter(([name]) => !hidden.includes(name)).map(([name, hex]) => (
         <button
           key={name}
           type="button"

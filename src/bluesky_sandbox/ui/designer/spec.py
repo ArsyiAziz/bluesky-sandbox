@@ -857,7 +857,7 @@ def _queryable_load(d: dict[str, Any]) -> Queryable:
     if t == "query_region":
         return QueryRegion(
             _bounds_load(shape_of(d)),
-            color=d.get("color", "orange"),
+            color=d.get("color", "cyan"),
             render_shape=d.get("render_shape", True),
             render_label=d.get("render_label", True),
             track_temporal_state=d.get("track_temporal_state", False),

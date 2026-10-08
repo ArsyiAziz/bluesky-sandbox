@@ -876,7 +876,7 @@ export function deckLayers(
             reach_radius_nm: t.reach_radius_nm,
             alt_tolerance_ft: t.alt_tolerance_ft,
             speed_tolerance_kts: t.speed_tolerance_kts,
-            color: t.color ?? "orange",
+            color: t.color ?? "cyan",
           },
           shapes.faces,
           shapes.edges,

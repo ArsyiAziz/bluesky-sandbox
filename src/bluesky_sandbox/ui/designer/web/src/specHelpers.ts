@@ -240,7 +240,7 @@ export const defaultRegion = (lat = 52.0, lon = 4.75, altitude?: SpecDict | null
 export const defaultQueryRegion = (lat = 52.0, lon = 4.75, altitude?: SpecDict | null): SpecDict => ({
   type: "query_region",
   shape: defaultRegion(lat, lon, altitude),
-  color: "orange",
+  color: "cyan",
   render_shape: true,
   render_label: true,
   track_temporal_state: false,

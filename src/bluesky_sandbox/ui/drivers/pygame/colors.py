@@ -9,21 +9,26 @@ from __future__ import annotations
 
 import pygame
 
+from bluesky_sandbox.ui.drivers.common.palette import BACKDROP_RGB, Backdrop, overlay_rgb, state_rgb
+
 # Sky-blue background, black aircraft, primary overlay colors - taken from
 # bluesky-gym's _render_frame for a familiar look.
-SKY_BLUE   = (135, 206, 235)
+#: What pygame draws its scene on: the state colors are its light-backdrop
+#: shades (common.palette), the same states Panda3D shows on navy.
+BACKDROP   = Backdrop.LIGHT
+SKY_BLUE   = BACKDROP_RGB[BACKDROP]
 BLACK      = (0, 0, 0)
 GREEN      = (30, 150, 30)
-RED        = (220, 20, 60)    # predicted conflict
-CONF        = (255, 140,   0)    # predicted conflict
-LOS        = (140,  0, 20)    # loss of separation - darker, more urgent
-VIOLATION  = (150,  70, 220)    # task/path constraint violation
+CONF       = state_rgb("conflict", BACKDROP)   # predicted conflict - orange
+LOS        = state_rgb("los", BACKDROP)        # loss of separation - red
+VIOLATION  = state_rgb("violation", BACKDROP)  # task/path constraint violation
+PAUSED     = state_rgb("paused", BACKDROP)     # the stopped clock, in the status
 LOS_ALPHA  = 90               # 0-255; fill opacity for LoS protection zones
 GRAY       = (80, 80, 80)
 DIVIDER    = (60, 60, 60)
 GRID       = (90, 110, 130)   # subtle gray-blue for FL gridlines on sky-blue bg
 PROT_ZONE  = (90, 90, 110)    # protection zone - gray when not in conflict
-HIGHLIGHT  = (255, 215, 30)   # yellow ring on the hovered aircraft (every view)
+HIGHLIGHT  = state_rgb("selected", BACKDROP)  # yellow ring on the hovered aircraft (every view)
 
 
 def fill_alpha_circle(
@@ -85,7 +90,7 @@ NAMED_COLORS: dict[str, tuple[int, int, int]] = {
     "green":   ( 30, 150,  30),
     "blue":    ( 30,  80, 200),
     "cyan":    (  0, 200, 200),
-    "yellow":  (240, 220,  30),
+    "yellow":  (235, 235,  30),  # 60 deg: clear of the conflict alert's hue
     "orange":  (255, 140,   0),
     "purple":  (160,  70, 200),
     "magenta": (220,  60, 200),
@@ -97,15 +102,12 @@ NAMED_COLORS: dict[str, tuple[int, int, int]] = {
 
 
 def named(name: str) -> tuple[int, int, int]:
-    """Return the RGB triple for a named color (defaults to GRAY when unknown)."""
+    """The RGB triple a design color - a name or ``#rrggbb`` - is drawn in
+    (GRAY when unknown): kept clear of the alert hues (common.palette)."""
     value = name.strip()
     if len(value) == 7 and value.startswith("#"):
         try:
-            return (
-                int(value[1:3], 16),
-                int(value[3:5], 16),
-                int(value[5:7], 16),
-            )
+            return overlay_rgb((int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)))
         except ValueError:
             pass
-    return NAMED_COLORS.get(value.lower(), GRAY)
+    return overlay_rgb(NAMED_COLORS.get(value.lower(), GRAY))

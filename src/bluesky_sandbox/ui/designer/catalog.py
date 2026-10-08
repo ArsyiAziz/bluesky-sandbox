@@ -858,15 +858,38 @@ def colors() -> dict[str, str]:
     except Exception:
         _named = {
             "red": (220, 20, 60), "green": (30, 150, 30), "blue": (30, 80, 200),
-            "cyan": (0, 200, 200), "yellow": (240, 220, 30), "orange": (255, 140, 0),
+            "cyan": (0, 200, 200), "yellow": (235, 235, 30), "orange": (255, 140, 0),
             "purple": (160, 70, 200), "magenta": (220, 60, 200),
             "white": (255, 255, 255), "black": (0, 0, 0), "gray": (80, 80, 80),
         }
+    from bluesky_sandbox.ui.drivers.common.palette import overlay_rgb  # noqa: PLC0415
+
+    # As drawn: a name near an alert's hue is drawn clear of it.
     return {
-        name: "#%02x%02x%02x" % tuple(rgb)
+        name: "#%02x%02x%02x" % overlay_rgb(tuple(rgb))
         for name, rgb in _named.items()
         if name != "violation"  # internal status color, not a design choice
     }
+
+
+def alert_colors() -> list[str]:
+    """The named colors drawn in another hue than their name - near an
+    alert's: the picker leaves them out (see ``common.palette``)."""
+    from bluesky_sandbox.ui.drivers.common.palette import overlay_rgb  # noqa: PLC0415
+
+    try:
+        from bluesky_sandbox.ui.drivers.pygame.colors import NAMED_COLORS as _named  # noqa: PLC0415
+    except Exception:
+        return ["red", "orange", "purple"]
+    return sorted(n for n, rgb in _named.items() if n != "violation" and overlay_rgb(tuple(rgb)) != tuple(rgb))
+
+
+def reserved_hues() -> list[list[float]]:
+    """The hue bands (deg) kept for alerts, for the map to draw custom colors
+    as the drivers do."""
+    from bluesky_sandbox.ui.drivers.common.palette import reserved_hues as _bands  # noqa: PLC0415
+
+    return [[float(a), float(b)] for a, b in _bands()]
 
 
 def drivers() -> list[dict[str, Any]]:
@@ -969,6 +992,8 @@ def catalog(model: str | None = None) -> dict[str, Any]:
         "scenario_hooks": scenario_hooks(),
         "drivers": drivers(),
         "colors": colors(),
+        "alert_colors": alert_colors(),
+        "reserved_hues": reserved_hues(),
         "distributions": distributions(),
         "conflict": conflict_methods(),
         "bluesky_defaults": bluesky_defaults(),

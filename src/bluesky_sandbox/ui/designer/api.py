@@ -50,7 +50,7 @@ from .builder import BuildError, build_design_config, build_scenario
 from .code_intel import code_intel, describe_type, forget_type_checking_names
 from .diagnostics import diagnostics
 from .mdp import mdp_summary
-from .preview import airspace_warnings, scenario_preview
+from .preview import airspace_warnings, alert_hued_colors, scenario_preview
 from .evaluation import evaluation_catalog
 from .recording import record_catalog
 from .spec import DesignSpec, SpecError
@@ -276,6 +276,12 @@ def create_app() -> FastAPI:
         out: dict[str, Any] = {"ok": True, "summary": summary}
         if warnings:
             out["warnings"] = [f"outside the airspace: {', '.join(warnings)}"]
+        shifted = alert_hued_colors(spec)
+        if shifted:
+            out.setdefault("warnings", []).append(
+                "near an alert's color: "
+                + ", ".join(f"{where} ({color} as {drawn})" for where, color, drawn in shifted)
+            )
         return out
 
     @app.post("/api/spec/code-intel")

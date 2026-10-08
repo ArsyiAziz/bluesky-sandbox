@@ -312,3 +312,51 @@ def airspace_warnings(episode) -> list[str]:
         if bounds_outside(region.shape):
             out.append(f"spawn '{region.name or i}'")
     return out
+
+
+def alert_hued_colors(spec: DesignSpec) -> list[tuple[str, str, str]]:
+    """``(where, color, drawn)`` for each color the design names that the
+    drivers draw in another hue - one near an alert's (``common.palette``):
+    where in the design it is, the color, and the ``#rrggbb`` drawn."""
+    from bluesky_sandbox.ui.drivers.common.palette import overlay_rgb  # noqa: PLC0415
+
+    from .catalog import colors as _palette  # noqa: PLC0415
+
+    named = _palette()
+    raw = _raw_palette()
+    out: list[tuple[str, str, str]] = []
+
+    def walk(value: Any, where: str) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                path = f"{where}.{key}" if where else str(key)
+                if key == "color" and isinstance(item, str):
+                    rgb = _rgb_of(item, raw)
+                    if rgb is not None and overlay_rgb(rgb) != rgb:
+                        out.append((where or "design", item, named.get(item.lower()) or "#%02x%02x%02x" % overlay_rgb(rgb)))
+                else:
+                    walk(item, path)
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                walk(item, f"{where}[{i}]")
+
+    walk({"queryables": spec.queryables, "shapes": spec.shapes, "spawn": spec.spawn}, "")
+    return out
+
+
+def _raw_palette() -> dict[str, tuple[int, int, int]]:
+    try:
+        from bluesky_sandbox.ui.drivers.pygame.colors import NAMED_COLORS  # noqa: PLC0415
+    except Exception:
+        return {}
+    return {name: tuple(rgb) for name, rgb in NAMED_COLORS.items()}
+
+
+def _rgb_of(value: str, palette: dict[str, tuple[int, int, int]]) -> tuple[int, int, int] | None:
+    text = value.strip().lower()
+    if len(text) == 7 and text.startswith("#"):
+        try:
+            return int(text[1:3], 16), int(text[3:5], 16), int(text[5:7], 16)
+        except ValueError:
+            return None
+    return palette.get(text)

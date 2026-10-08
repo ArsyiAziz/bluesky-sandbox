@@ -608,7 +608,8 @@ class RenderableBuilder:
         if airspace_bounds is not None:
             yield BoundsResource(
                 bounds=airspace_bounds,
-                color="red",
+                # Neutral: red is the loss-of-separation alert's.
+                color="white",
                 label="AIRSPACE",
                 kind="airspace",
             )
