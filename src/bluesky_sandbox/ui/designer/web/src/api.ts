@@ -384,6 +384,13 @@ export const api = {
     return fetch("/api/refresh", { method: "POST" }).then((r) => jsonOrThrow<{ ok: boolean }>(r));
   },
 
+  // A type the code editor reached, described one level down (its members'
+  // types named, `partial`), by its key in the code intel.
+  pythonType: (key: string) =>
+    fetch(`/api/python/type?key=${encodeURIComponent(key)}`).then((r) =>
+      jsonOrThrow<{ types: Record<string, any> }>(r),
+    ),
+
   pythonModuleMembers: (moduleName: string) =>
     fetch(`/api/python/module-members?module=${encodeURIComponent(moduleName)}`).then((r) =>
       jsonOrThrow<{ module: string; members: PythonMember[] }>(r),

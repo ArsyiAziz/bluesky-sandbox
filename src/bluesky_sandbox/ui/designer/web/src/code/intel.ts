@@ -31,8 +31,16 @@ export type Member = {
   color?: string;
 };
 
-// `closed`: the items are all there are - a design's keys.
-export type TypeInfo = { name: string; doc?: string; attrs: Member[]; items?: Member[]; closed?: boolean };
+// `closed`: the items are all there are - a design's keys. `partial`: named,
+// not yet described - the editor asks for it when an expression reaches it.
+export type TypeInfo = {
+  name: string;
+  doc?: string;
+  attrs: Member[];
+  items?: Member[];
+  closed?: boolean;
+  partial?: boolean;
+};
 
 // A problem the backend found in a block, 1-based in the block's own text.
 export type Problem = { line: number; column: number; end_column?: number; message: string; severity: string };
@@ -210,6 +218,12 @@ export class Resolver {
 
   isAlias(name: string): boolean {
     return this.aliases.has(name);
+  }
+
+  // The chain a `name = <chain>` line gives `name`, if it has one.
+  aliasChain(name: string): Chain | null {
+    const alias = this.aliases.get(name);
+    return alias ? chainBefore(alias.tokens, alias.tokens.length) : null;
   }
 
   // Each step's result, left to right; stops where a step does not resolve.

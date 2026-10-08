@@ -83,9 +83,18 @@ def test_the_info_dict_has_its_keys_as_items(intel):
 
 
 def test_hooks_and_task_info_share_the_setup_modules_names(intel):
-    assert (
-        intel["scopes"]["hook:reward"]["names"] == intel["scopes"]["task_info"]["names"]
-    )
+    setup_names = {m["name"] for m in intel["names"][intel["scopes"]["task_info"]["names"]]}
+    hook_names = {m["name"] for m in intel["names"][intel["scopes"]["hook:reward"]["names"]]}
+    assert setup_names <= hook_names
+
+
+def test_a_hook_body_has_the_types_its_hooks_name(intel):
+    # A readout row, a control state: no import line needed.
+    hook_names = {m["name"] for m in intel["names"][intel["scopes"]["hook:reward"]["names"]]}
+    assert {"AircraftReadoutItem", "AircraftControlState", "WaypointReadoutItem"} <= hook_names
+
+
+def test_the_setup_modules_names_are_described(intel):
     setup = {m["name"]: m for m in intel["names"]["setup"]}
     assert {"np", "SCALE", "root", "LIMIT", "CONFIG", "_half"} <= set(setup)
     assert setup["np"]["module"] == "numpy"

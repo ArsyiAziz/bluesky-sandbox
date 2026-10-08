@@ -1219,19 +1219,7 @@ def _setup_py(body: str, typing_imports: str = "") -> str:
     code, same import-time behavior; only the file boundary moved. The in-process
     builder runs the same ``body`` (:func:`.setup_code.setup_source`).
     """
-    return f'''"""Module-level setup for this generated task.
-
-Helpers, constants and task-info providers used by the hooks in ``env.py``.
-Split out so ``env.py`` stays readable as the task's behavior; edit either
-file, or regenerate both from ``design.json``.
-
-One consequence of the split: ``env.py`` imports these names, so it holds
-*references*. A hook that MUTATES shared state behaves exactly as before -
-``_CACHE.clear()`` and ``_CACHE[k] = v`` reach the object everything else
-reads. A hook that REBINDS one - ``_CACHE = {{}}``, even under ``global`` -
-now rebinds only ``env.py``'s name, and the helpers here keep using the
-original object. Mutate; never reassign.
-"""
+    return f'''"""Module-level setup for this generated task."""
 
 {PRELUDE}{typing_imports}
 {body}
@@ -1377,10 +1365,20 @@ def main() -> None:
     if used:
         joined = ",\n    ".join(used)
         setup_import = f"from .setup import (\n    {joined},\n)"
+    # The library types the hooks name without importing them (a readout
+    # row, a control state): in scope in every hook body, as in the designer.
+    api = sorted(
+        (_names_used(plain_body) & set(setup_code.hook_api_names())) - exports - already_bound
+    )
+    api_import = ""
+    if api:
+        joined = ",\n    ".join(api)
+        api_import = f"from bluesky_sandbox import (\n    {joined},\n)"
     header = "\n".join(
         part
         for part in (
             base_imports,
+            api_import,
             task_info_imports,
             setup_import,
             _typing_imports(env_render).strip("\n"),

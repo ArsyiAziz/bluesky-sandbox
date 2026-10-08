@@ -852,7 +852,9 @@ def compile_scenario_hooks(spec: DesignSpec) -> dict[str, Callable[..., Any]]:
     hooks = {k: v for k, v in (spec.scenario_hooks or {}).items() if v.strip()}
     if not hooks:
         return {}
-    namespace: dict[str, Any] = {}
+    # The library names the generated scenario.py imports, so a hook runs here
+    # with what it has there (setup_code.SCENARIO_API).
+    namespace: dict[str, Any] = dict(setup_code.scenario_api_names())
     if spec.scenario_setup.strip():
         try:
             exec(compile(spec.scenario_setup, "<scenario_setup>", "exec"), namespace)

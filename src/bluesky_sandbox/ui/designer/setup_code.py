@@ -184,3 +184,100 @@ def _defined(task_info_setup: str, hook_setup: str) -> set[str]:
 
 def _is_import(line: str) -> bool:
     return line.strip().startswith(("import ", "from "))
+
+
+def hook_api_names() -> dict[str, type]:
+    """The library types the env hooks' signatures name - ``AircraftReadoutItem``,
+    ``AircraftControlState``, ... - by name: in scope in every hook body, as the
+    generated ``env.py`` imports whichever its hooks use. Found from the hooks
+    themselves, so a new hook's types come with it."""
+    global _HOOK_API
+    if _HOOK_API is None:
+        _HOOK_API = _hook_api()
+    return dict(_HOOK_API)
+
+
+_HOOK_API: dict[str, type] | None = None
+
+
+def _hook_api() -> dict[str, type]:
+    import inspect  # noqa: PLC0415
+    import typing  # noqa: PLC0415
+
+    import bluesky_sandbox  # noqa: PLC0415
+    from bluesky_sandbox.env import BlueskyEnv  # noqa: PLC0415
+
+    found: dict[str, type] = {}
+
+    # Held, not only their ids: a freed alias's id is reused by the next.
+    seen: dict[int, object] = {}
+
+    def walk(hint: object) -> None:
+        if hint is None or id(hint) in seen:
+            return
+        seen[id(hint)] = hint
+        if isinstance(hint, type):
+            name = hint.__name__
+            if hint.__module__.startswith("bluesky_sandbox") and getattr(bluesky_sandbox, name, None) is hint:
+                found[name] = hint
+            return
+        for arg in typing.get_args(hint):
+            walk(arg)
+        # A type alias (``AircraftReadouts``): what it stands for.
+        walk(getattr(hint, "__value__", None))
+
+    for cls in inspect.getmro(BlueskyEnv):
+        for fn in vars(cls).values():
+            if not getattr(fn, "__overridable__", False):
+                continue
+            try:
+                hints = typing.get_type_hints(fn)
+            except Exception:  # noqa: BLE001 - an unresolvable hint names nothing
+                continue
+            for hint in hints.values():
+                walk(hint)
+    # Each readout row type's parts, which a hook builds the rows from.
+    for name in ("WaypointReadoutTarget", "WaypointReadoutNamespace", "WaypointReadoutKey"):
+        obj = getattr(bluesky_sandbox, name, None)
+        if isinstance(obj, type):
+            found[name] = obj
+    return found
+
+
+#: The library names generated scenario code imports - and so what the
+#: scenario setup and a scenario hook's body have in scope, in the designer too.
+SCENARIO_API: dict[str, tuple[str, ...]] = {
+    "bluesky_sandbox.sim.bounds": (
+        "AnnularSectorFootprint", "BooleanFootprint", "BoxFootprint", "ConstantAltitudeBand",
+        "DiskFootprint", "LatLon", "LinearAltitudeBand", "PointFootprint", "PolygonFootprint",
+        "RadialAltitudeBand", "RegionBounds", "SectorFootprint", "VertexAltitudeBand",
+        "GeneratedFootprint", "Blob", "ConvexPolygon", "VoronoiSectors", "PlacedFootprint",
+        "InRegion", "MovingFootprint", "Drift", "Spin", "Grow",
+    ),
+    "bluesky_sandbox.sim.sampling.distributions": ("Bounded", "Categorical"),
+    "bluesky_sandbox.sim.queryables": ("QueryRegion", "Waypoint"),
+    "bluesky_sandbox.sim.spawn": ("SpawnConfig", "SpawnRegion"),
+}
+
+
+def scenario_api_imports() -> str:
+    """:data:`SCENARIO_API` as import lines, for a generated module."""
+    lines = []
+    for module, names in SCENARIO_API.items():
+        if len(names) <= 4:
+            lines.append(f"from {module} import {', '.join(names)}")
+            continue
+        body = textwrap.fill(", ".join(names) + ",", width=88, initial_indent="    ", subsequent_indent="    ")
+        lines.append(f"from {module} import (\n{body}\n)")
+    return "\n".join(lines)
+
+
+def scenario_api_names() -> dict[str, object]:
+    """:data:`SCENARIO_API` by name: the objects themselves."""
+    import importlib  # noqa: PLC0415
+
+    return {
+        name: getattr(importlib.import_module(module), name)
+        for module, names in SCENARIO_API.items()
+        for name in names
+    }

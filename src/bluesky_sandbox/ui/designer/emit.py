@@ -15,6 +15,7 @@ from bluesky_sandbox.interface.fields.observations import queryable as _queryabl
 from bluesky_sandbox.interface.wrappers.observations import normalizer as _norm
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
+from . import setup_code
 from . import spec as _spec
 from .builder import expand_region_members
 from .spec import (
@@ -845,17 +846,9 @@ def emit_scenario_sources(spec: DesignSpec) -> dict[str, str]:
         else ""
     )
     generator_import = "".join(f"import {m}\n" for m in sorted(em.generator_modules))
-    imports = f'''{generator_import}{scipy_import}from bluesky_sandbox.sim.bounds import (
-    AnnularSectorFootprint, BooleanFootprint, BoxFootprint, ConstantAltitudeBand,
-    DiskFootprint, LatLon, LinearAltitudeBand, PointFootprint, PolygonFootprint,
-    RadialAltitudeBand, RegionBounds, SectorFootprint, VertexAltitudeBand,
-    GeneratedFootprint, Blob, ConvexPolygon, VoronoiSectors, PlacedFootprint,
-    InRegion, MovingFootprint, Drift, Spin, Grow,
-)
-from bluesky_sandbox.sim.sampling.distributions import Bounded, Categorical
-{envelope_import.rstrip()}
-from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
-from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion'''
+    # The library names scenario code has in scope - the design's and the
+    # scenario hooks' alike (setup_code.SCENARIO_API).
+    imports = f"{generator_import}{scipy_import}{envelope_import}{setup_code.scenario_api_imports()}"
     return {
         "imports": imports.rstrip(),
         "regions": "{\n            " + regions + "\n        }",

@@ -32,7 +32,7 @@ from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.task import DesignKeys, TaskInfoProvider
 
-from . import setup_code
+from . import scenario_api, setup_code
 from .builder import build_design_config, build_scenario, run_setup_module
 from .design_keys import Key, design_keys
 from .spec import SCENARIO_HOOKS, DesignSpec
@@ -399,17 +399,30 @@ def _scopes(
             "names": setup,
         },
     }
+    # A hook body sees the setup's names and the library types the hooks name.
+    api = setup_code.hook_api_names()
+    names["hook"] = names["setup"] + _module_names(
+        importlib.import_module("bluesky_sandbox"), sorted(set(api) - {m["name"] for m in names["setup"]}), table
+    )
     for name, hook in _hooks(task):
         params = _params(hook, table, clean=True)
         params.insert(
             0, _member("self", "parameter", detail=task.__name__, type=table.ref(task))
         )
-        scopes[f"hook:{name}"] = {"params": params, "names": setup}
-    names["scenario"] = _source_names(spec.scenario_setup or "")
+        scopes[f"hook:{name}"] = {"params": params, "names": "hook"}
+    # Scenario code: its setup's names, and the library names it has in scope
+    # (setup_code.SCENARIO_API); each hook's parameters typed.
+    defined = {m["name"] for m in _source_names(spec.scenario_setup or "")}
+    names["scenario"] = _source_names(spec.scenario_setup or "") + [
+        _describe_value(name, value, table)
+        for name, value in sorted(setup_code.scenario_api_names().items())
+        if name not in defined
+    ]
     scenario_names = "scenario"
     scopes["scenario_setup"] = {"params": [], "names": scenario_names}
     for name, (args, *_rest) in SCENARIO_HOOKS.items():
-        params = [_member(arg, "parameter") for arg in args]
+        signature = scenario_api.SIGNATURES.get(name)
+        params = _params(signature, table) if signature else [_member(arg, "parameter") for arg in args]
         scopes[f"scenario:{name}"] = {"params": params, "names": scenario_names}
     for filename, source in (spec.code or {}).items():
         stem = filename.removesuffix(".py")

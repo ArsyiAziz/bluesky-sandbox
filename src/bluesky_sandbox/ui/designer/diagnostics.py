@@ -83,11 +83,15 @@ def _blocks(spec: DesignSpec) -> Iterator[Block]:
                 f"task_info:{entry.name.strip()}", entry.body, setup_names, entry_params
             )
     hooks = dict(_hooks(BlueskyEnv))
+    # A hook body also sees the library types the hooks name.
+    hook_names = setup_names | frozenset(setup_code.hook_api_names())
     for name, body in (env.hooks or {}).items():
         if name in hooks and body.strip():
             params = ("self", *_param_names(hooks[name], clean=True))
-            yield Block(f"hook:{name}", body, setup_names, params)
-    scenario_names = frozenset(_names(spec.scenario_setup or ""))
+            yield Block(f"hook:{name}", body, hook_names, params)
+    # The scenario setup's names, and the library names scenario code has in
+    # scope (setup_code.SCENARIO_API).
+    scenario_names = frozenset(_names(spec.scenario_setup or "")) | frozenset(setup_code.scenario_api_names())
     yield Block("scenario_setup", spec.scenario_setup or "", scenario_names)
     for name, body in (spec.scenario_hooks or {}).items():
         if name in SCENARIO_HOOKS and body.strip():

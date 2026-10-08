@@ -5,6 +5,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { api, type SpecDict } from "../api";
 import {
   blockKey,
+  type Chain,
   chainBefore,
   chainText,
   type Intel,
@@ -17,6 +18,7 @@ import {
   scopeKey,
   type Token,
   tokenize,
+  type TypeInfo,
 } from "./intel";
 
 let latest: Intel | null = null;
@@ -25,6 +27,57 @@ let registered = false;
 let intelChanged: any = null;
 let monacoApi: any = null;
 const moduleMembers = new Map<string, Promise<Member[]>>();
+
+// Types filled in as completion reached them, by key. A class's members do not
+// depend on the design, so they are kept across intel refreshes and asked for
+// once.
+const described = new Map<string, Promise<Record<string, TypeInfo>>>();
+const describedTypes: Record<string, TypeInfo> = {};
+
+function applyDescribed(intel: Intel, types: Record<string, TypeInfo>) {
+  for (const [key, info] of Object.entries(types)) {
+    const have = intel.types[key];
+    if (!have || (have.partial && !info.partial)) intel.types[key] = info;
+  }
+}
+
+function describeType(key: string): Promise<Record<string, TypeInfo>> {
+  let pending = described.get(key);
+  if (!pending) {
+    pending = api
+      .pythonType(key)
+      .then((r) => r.types as Record<string, TypeInfo>)
+      // A type that cannot be described is left as it is, and not asked again.
+      .catch(() => ({ [key]: { name: key.split(".").pop() ?? key, attrs: [] } }))
+      .then((types) => {
+        Object.assign(describedTypes, types);
+        return types;
+      });
+    described.set(key, pending);
+  }
+  return pending;
+}
+
+// Fill in every type `chain` passes through that the intel only named, a level
+// at a time, until it resolves as far as it can - so completion goes as deep as
+// an expression does, without the intel describing every type up front.
+async function describeAlong(resolver: Resolver, chain: Chain | null, seen = new Set<string>()): Promise<void> {
+  if (!chain) return;
+  const alias = resolver.aliasChain(chain.root.text);
+  if (alias && !seen.has(chain.root.text)) {
+    seen.add(chain.root.text);
+    await describeAlong(resolver, alias, seen);
+  }
+  for (let round = 0; round < 16; round += 1) {
+    const partial = resolver
+      .walk(chain)
+      .map((r) => r.type)
+      .filter((key): key is string => !!key && !!resolver.type(key)?.partial);
+    if (!partial.length) return;
+    const results = await Promise.all(partial.map(describeType));
+    results.forEach((types) => applyDescribed(resolver.intel, types));
+  }
+}
 
 const listeners = new Set<() => void>();
 
@@ -53,7 +106,10 @@ export function useCodeIntel(spec: SpecDict | null, refreshKey = 0) {
         .codeIntel(spec)
         .then((intel) => {
           if (canceled) return;
-          latest = intel?.ok ? (intel as Intel) : latest;
+          if (intel?.ok) {
+            latest = intel as Intel;
+            applyDescribed(latest, describedTypes);
+          }
           intelChanged?.fire?.();
           listeners.forEach((listener) => listener());
           markAll();
@@ -344,6 +400,7 @@ export function registerPythonIntel(monaco: any) {
 
       // Inside an open string: the key of `x["` or of a keyed call `f("`.
       if (last?.kind === "string" && !last.closed && before) {
+        await describeAlong(resolver, chainBefore(tokens, tokens.length - 2));
         const target = resolveBefore(resolver, tokens, tokens.length - 2);
         if (before.text === "[") return { suggestions: suggest(resolver.type(target?.type)?.items ?? []) };
         if (before.text === "(") return { suggestions: suggest(resolver.argumentKeys(target, 0)) };
@@ -351,6 +408,7 @@ export function registerPythonIntel(monaco: any) {
       }
       // Right after `[`: the keys, quoted.
       if (last?.text === "[") {
+        await describeAlong(resolver, chainBefore(tokens, tokens.length - 1));
         const target = resolveBefore(resolver, tokens, tokens.length - 1);
         return { suggestions: suggest(resolver.type(target?.type)?.items ?? [], '"') };
       }
@@ -358,6 +416,7 @@ export function registerPythonIntel(monaco: any) {
       const dot = last?.text === "." ? tokens.length - 1 : before?.text === "." && last?.kind === "name" ? tokens.length - 2 : -1;
       if (dot >= 0) {
         const chain = chainBefore(tokens, dot);
+        await describeAlong(resolver, chain);
         const target = chain ? resolver.resolve(chain) : null;
         if (target?.module) return { suggestions: suggest(await membersOfModule(target.module)) };
         return { suggestions: suggest(resolver.type(target?.type)?.attrs ?? []) };

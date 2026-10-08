@@ -688,6 +688,11 @@ _HOOK_SCAFFOLDS: dict[str, str] = {
         "# Replaces truncated: a design defines one of the two.\n"
         "return [False] * len(batch)"
     ),
+    "define_aircraft_readouts": (
+        "# Rows for this aircraft's readout in the drivers, in order: {label: value}.\n"
+        "# acid is its callsign; self.agent_context(idx) gives its context.\n"
+        "return {\"ACID\": acid}"
+    ),
     "define_agent_context": (
         "# Build the per-aircraft `context.data` payload (any object).\n"
         "# Available: self.episode_queryables, acid (callsign), acidx (traffic index).\n"
