@@ -7,6 +7,8 @@
 // are pure transforms on the step-list — so every edit yields a valid
 // series-parallel route (no fragile graph→step compilation).
 
+import { shares } from "../shares";
+
 export type WpStep = { waypoint: string; speed_kts?: number; alt_ft?: number };
 export type Subroute = { route: string };
 export type Choice = { choice: RouteStep[][]; weights?: number[] };
@@ -103,15 +105,17 @@ function layoutStep(step: RouteStep, addr: Addr, col: number, rowTop: number): S
     const mergeCol = col + 1 + maxOptCols;
     nodes.push({ id: branchId, kind: "branch", label: "⎇", addr, x: col * COL, y: midRow * ROW, optionCount: options.length });
     nodes.push({ id: mergeId, kind: "merge", label: "", addr: null, of: addr, x: mergeCol * COL, y: midRow * ROW });
+    // Each option's share of the aircraft through the branch.
+    const pct = shares(options.map((_, oi) => Number(step.weights?.[oi] ?? 1)));
     options.forEach((_, oi) => {
-      const w = step.weights?.[oi];
+      const w = pct[oi]; // uniform too: every branch says how it splits
       const entries = optEntries[oi].length ? optEntries[oi] : [mergeId];
       for (const e of entries) {
         edges.push({
           id: `e:${branchId}->${e}`,
           source: branchId,
           target: e,
-          label: w != null ? `w ${w}` : undefined,
+          label: w != null ? `${w}%` : undefined,
           choiceAddr: addr,
           optionIndex: oi,
         });

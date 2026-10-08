@@ -5,6 +5,7 @@
 // a drag edits it: from a node's dot into space adds a step after it, onto a
 // later node on its path branches around the steps between; a node dragged
 // along its path moves there; a waypoint dropped on a line is inserted there.
+import { shares } from "../shares";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
@@ -51,7 +52,7 @@ import {
 // What a dragged waypoint chip carries.
 const STEP_MIME = "application/x-route-step";
 
-const emptySpawn = (): SpecDict => ({ type: "spawn_config", regions: [], aircraft_type: null, route: null, routes: {} });
+const emptySpawn = (): SpecDict => ({ type: "spawn_config", regions: [], route: null, routes: {} });
 
 type NodeData = {
   label: string;
@@ -512,6 +513,7 @@ function RouteStepInspector({
           {choice.choice.map((opt: RouteStep[], oi: number) => (
             <div className="route-opt-row" key={oi}>
               <span className="muted small">opt {oi + 1}</span>
+              <span className="type-share" title="its weight: shares are each weight over the sum, so 3, 1 is 75 %, 25 %">
               <input
                 type="number"
                 min={0}
@@ -522,6 +524,8 @@ function RouteStepInspector({
                 defaultValue={Number(choice.weights?.[oi] ?? 1)}
                 onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) onSetWeight(oi, v); }}
               />
+              <span className="type-share-pct">{shares(choice.choice.map((_: RouteStep[], j: number) => Number(choice.weights?.[j] ?? 1)))[oi]} %</span>
+              </span>
               <button className="chip-x" title="remove option" onClick={() => onRemoveOption(oi)}>✕</button>
             </div>
           ))}

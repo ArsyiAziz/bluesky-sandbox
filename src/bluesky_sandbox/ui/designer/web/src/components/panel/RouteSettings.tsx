@@ -2,6 +2,7 @@
 // per-region route override control. Routes are ordered lists of waypoint
 // queryable names. Hovering a library row highlights that route on the map; the
 // eye toggle hides it from the map (view-only).
+import { shares } from "../../shares";
 import { useState } from "react";
 import type { SpecDict } from "../../api";
 import { NumField } from "../ShapeEditor";
@@ -349,8 +350,7 @@ function BranchEditor({
         <div className="route-branch-option" key={bi}>
           <div className="route-branch-option-head">
             <span className="route-branch-label">option {bi + 1}</span>
-            <label className="branch-weight" title="relative likelihood (weight)">
-              w
+            <label className="branch-weight type-share" title="its weight: shares are each weight over the sum, so 3, 1 is 75 %, 25 %">
               <input
                 type="number"
                 min={0}
@@ -362,6 +362,7 @@ function BranchEditor({
                   if (Number.isFinite(v)) setWeight(bi, v);
                 }}
               />
+              <span className="type-share-pct">{shares(branches.map((_, j) => weightAt(j)))[bi]} %</span>
             </label>
             <button className="chip-x" title="remove option" onClick={() => removeBranch(bi)}>✕</button>
           </div>
@@ -491,19 +492,23 @@ export function RouteSpecControl({
       )}
       {mode === "sample" && (
         <div className="route-weights">
-          {routeNames.map((name) => (
-            <NumField
-              key={name}
-              label={name}
-              min={0.01}
-              step={0.25}
-              value={Number(route?.weights?.[name] ?? 1)}
-              onChange={(v) => {
-                const weights = { ...(route?.weights ?? {}) };
-                weights[name] = Math.max(0.01, v);
-                onChange({ type: "categorical", weights });
-              }}
-            />
+          {routeNames.map((name, i) => (
+            <span className="route-weight-row" key={name}>
+              <NumField
+                label={name}
+                min={0.01}
+                step={0.25}
+                value={Number(route?.weights?.[name] ?? 1)}
+                onChange={(v) => {
+                  const weights = { ...(route?.weights ?? {}) };
+                  weights[name] = Math.max(0.01, v);
+                  onChange({ type: "categorical", weights });
+                }}
+              />
+              <span className="type-share-pct" title="its share of this region's aircraft">
+                {shares(routeNames.map((n) => Number(route?.weights?.[n] ?? 1)))[i]} %
+              </span>
+            </span>
           ))}
         </div>
       )}
