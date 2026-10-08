@@ -201,6 +201,8 @@ def _design_test(package: str) -> str:
     return f'''"""The design's own checks: each field against itself, and each test case
 (``cases.py``)."""
 
+import warnings
+
 import pytest
 
 from bluesky_sandbox.checks import check_fields, run_cases
@@ -208,7 +210,12 @@ from {package}.cases import CASES, SITUATIONS
 
 
 def test_each_field_agrees_with_itself(design_env):
-    check_fields(design_env).assert_ok()
+    report = check_fields(design_env)
+    # What is worth knowing without failing - a field outside its bounds.
+    for r in report.results:
+        for note in r.notes:
+            warnings.warn(f"{{r.field}}: {{note}}", stacklevel=1)
+    report.assert_ok()
 
 
 @pytest.mark.parametrize(

@@ -5194,3 +5194,7 @@ div.tests-sketch {
   margin: 2px 0 0 16px;
   white-space: pre-wrap;
 }
+.tests-note {
+  color: var(--warning-text);
+  margin-left: 16px;
+}

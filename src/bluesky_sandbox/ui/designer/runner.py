@@ -796,8 +796,11 @@ def main() -> None:
     env = Env(render_mode=None)
     base = env.unwrapped
     try:
-        for r in check_fields(base).results:
-            _emit("field", {{"field": r.field, "ok": r.ok, "findings": list(r.findings[:5])}})
+        report = check_fields(base)
+        for finding in report.episode_findings:
+            _emit("field", {{"field": "(episode)", "ok": False, "findings": [finding], "notes": []}})
+        for r in report.results:
+            _emit("field", {{"field": r.field, "ok": r.ok, "findings": list(r.findings[:5]), "notes": list(r.notes)}})
         for i, case in enumerate(CASES):
             r = run_cases(base, SITUATIONS, [case]).results[0]
             _emit("case", {{"index": i, "ok": r.ok, "got": _plain(r.got), "error": r.error}})

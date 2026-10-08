@@ -67,8 +67,8 @@ class BulkOff(_Alt):
 
 
 @dataclass(frozen=True)
-class MeansMetres(_Alt):
-    """Agrees with itself; says it means metres: its statement catches it."""
+class MeansMeters(_Alt):
+    """Agrees with itself; says it means meters: its statement catches it."""
 
     meta = ObsMeta("alt_means_m", Unit.FT, ObsQuantity.ALTITUDE)
 
@@ -94,6 +94,51 @@ class AltAbove(PairObsField):
         return self._configured_bounds()
 
 
+@dataclass(frozen=True)
+class SometimesNaN(_Alt):
+    """Not a number for the aircraft above 9,000 ft: it breaks training."""
+
+    meta = ObsMeta("alt_nan_ft", Unit.FT, ObsQuantity.ALTITUDE)
+
+    def get(self, idx: Any) -> Any:
+        value = super().get(idx)
+        return float("nan") if value > 9_000 else value
+
+    def get_many(self, indices: Any) -> Any:
+        return np.array([self.get(i) for i in indices])
+
+
+@dataclass(frozen=True)
+class Noisy(_Alt):
+    """Draws its noise from an unseeded generator: no run repeats it."""
+
+    meta = ObsMeta("alt_noisy_ft", Unit.FT, ObsQuantity.ALTITUDE)
+
+    def get(self, idx: Any) -> Any:
+        return self.get_many([idx])[0]
+
+    def get_many(self, indices: Any) -> Any:
+        return super().get_many(indices) + np.random.default_rng().random()
+
+
+@dataclass(frozen=True)
+class Cramped(_Alt):
+    """Bounds narrower than the traffic it reads."""
+
+    meta = ObsMeta("alt_cramped_ft", Unit.FT, ObsQuantity.ALTITUDE)
+    high: float = 5_000.0
+
+
+@dataclass(frozen=True)
+class AltAboveUndefinedForItself(AltAbove):
+    """NaN for an aircraft with itself - the one pair no observation holds."""
+
+    meta = ObsMeta("alt_above_self_nan_ft", Unit.FT, ObsQuantity.ALTITUDE, is_pair=True)
+
+    def get_pair(self, own_idx: int, other_idx: Any) -> Any:
+        return float("nan") if int(other_idx) == int(own_idx) else super().get_pair(own_idx, other_idx)
+
+
 @pytest.fixture(scope="module")
 def report():
     env = BlueskyEnv(
@@ -101,8 +146,8 @@ def report():
         config=EnvConfig(
             dt=5.0,
             obs_fields=[obs.LatDeg(), States(normalizer=MinMaxNormalizer()), StatesUnderItsOlderName()],
-            intruder_obs_fields=[AltAbove(normalizer=MinMaxNormalizer())],
-            state_fields=[BulkOff(), MeansMetres()],
+            intruder_obs_fields=[AltAbove(normalizer=MinMaxNormalizer()), AltAboveUndefinedForItself()],
+            state_fields=[BulkOff(), MeansMeters(), SometimesNaN(), Noisy(), Cramped()],
             action_fields=[act.HdgDeltaDeg(low=-30, high=30)],
         ),
     )
@@ -111,7 +156,7 @@ def report():
 
 
 def test_fields_that_agree_with_themselves_pass(report):
-    for name in ("LatDeg", "States", "StatesUnderItsOlderName", "AltAbove"):
+    for name in ("LatDeg", "States", "StatesUnderItsOlderName", "AltAbove", "AltAboveUndefinedForItself"):
         assert report[name].ok, report[name].findings
 
 
@@ -121,8 +166,8 @@ def test_a_bulk_path_that_disagrees_is_named(report):
 
 
 def test_a_field_that_means_something_else_than_it_states_is_named(report):
-    assert not report["MeansMetres"].ok
-    assert all("bulk vs expected" in f for f in report["MeansMetres"].findings)
+    assert not report["MeansMeters"].ok
+    assert all("bulk vs expected" in f for f in report["MeansMeters"].findings)
 
 
 def test_every_list_the_config_holds_is_checked(report):
@@ -133,3 +178,20 @@ def test_every_list_the_config_holds_is_checked(report):
 def test_an_older_name_for_expected_still_states_it():
     assert StatesUnderItsOlderName.states_expected()
     assert not _Alt.states_expected()
+
+
+def test_a_value_that_is_not_a_number_fails(report):
+    assert not report["SometimesNaN"].ok
+    assert any("not a number" in f for f in report["SometimesNaN"].findings)
+
+
+def test_a_field_that_differs_on_the_same_seed_fails(report):
+    assert not report["Noisy"].ok
+    assert any("not repeatable" in f for f in report["Noisy"].findings)
+
+
+def test_a_value_outside_its_bounds_is_noted_not_failed(report):
+    cramped = report["Cramped"]
+    assert cramped.ok
+    assert cramped.notes and "outside its bounds" in cramped.notes[0] and "bounds 0 to 5,000" in cramped.notes[0]
+    assert not report["LatDeg"].notes

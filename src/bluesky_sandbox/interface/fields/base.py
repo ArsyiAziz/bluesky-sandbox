@@ -472,6 +472,15 @@ class _BoundedField:
         )
 
 
+def _bounds_rows(bounds: Callable[[int], tuple[Any, Any]], idx: list[int], width: tuple[int, ...]):
+    """``bounds`` for each aircraft of ``idx``, as two arrays of rows of
+    ``width`` - a scalar bound broadcast over a field's components."""
+    rows = [bounds(i) for i in idx]
+    low = np.array([np.broadcast_to(np.asarray(b[0], dtype=np.float64), width) for b in rows]).reshape(len(idx), *width)
+    high = np.array([np.broadcast_to(np.asarray(b[1], dtype=np.float64), width) for b in rows]).reshape(len(idx), *width)
+    return low, high
+
+
 @dataclass(frozen=True)
 class StepContext:
     """What a stateful field needs to update itself for one env step.
@@ -558,6 +567,18 @@ class ObsField(_BoundedField, ABC):
             if self.states_expected():
                 found += beyond_rounding(bulk[k], self.expected(i), f"aircraft {i}: bulk vs expected")
         return found
+
+    def values_and_bounds(self, indices: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Its values for the aircraft at ``indices`` - ``(values, low, high,
+        defined)``, arrays of one shape: each value, the bounds it is held to,
+        and whether it is one (every value is, for an ownship field)."""
+        idx = [int(i) for i in indices]
+        if not idx:
+            empty = np.zeros((0, 1))
+            return empty, empty, empty, empty.astype(bool)
+        values = np.array(self.get_many(idx), dtype=np.float64).reshape(len(idx), -1)
+        low, high = _bounds_rows(self.bounds, idx, values.shape[1:])
+        return values, low, high, np.ones(values.shape, dtype=bool)
 
     def values_about(self, own: int, others: Any) -> Any:
         """The raw values an intruder block holds for ``own``: each of
@@ -765,6 +786,23 @@ class PairObsField(_BoundedField, ABC):
         if subset:
             found += differs(self.get_pair_matrix(np.array(subset)), matrix[1::3], "a subset of ownships' rows")
         return found
+
+    def values_and_bounds(self, indices: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Its values for the aircraft at ``indices``, each with every live
+        aircraft - ``(values, low, high, defined)``, arrays of one shape - an
+        aircraft with itself undefined (NaN)."""
+        idx = [int(i) for i in indices]
+        n = bs.traf.ntraf
+        if not idx:
+            empty = np.zeros((0, n))
+            return empty, empty, empty, empty.astype(bool)
+        values = np.array(self.get_pair_matrix(np.array(idx)), dtype=np.float64).reshape(len(idx), n, -1)
+        defined = np.ones(values.shape, dtype=bool)
+        for row, own in enumerate(idx):
+            defined[row, own] = False
+        values[~defined] = np.nan
+        low, high = _bounds_rows(self.bounds, idx, values.shape[2:])
+        return values, low[:, None], high[:, None], defined
 
     def values_about(self, own: int, others: Any) -> Any:
         """The raw values an intruder block holds for ``own``: its pairs with

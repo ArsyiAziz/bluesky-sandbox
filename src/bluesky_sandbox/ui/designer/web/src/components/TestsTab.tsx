@@ -329,8 +329,9 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
           <h3>Field checks</h3>
           {fieldResults === null ? (
             <div className="muted small">
-              Not run yet. Each field's batch values are compared with its one-at-a-time values, and with its{" "}
-              <code>expected</code> if it defines one.
+              Not run yet. Each field is read over a sampled episode: its batch values against its one-at-a-time values
+              (and its <code>expected</code>, if it defines one), no NaN or infinite values, the same values on a second
+              run with the same seed. Values outside its bounds are noted.
             </div>
           ) : (
             <ul className="tests-fields">
@@ -338,6 +339,11 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
                 <li key={r.field} className={r.ok ? "ok" : "failed"}>
                   <span aria-hidden="true">{r.ok ? "✓" : "✗"}</span> {r.field}
                   {!r.ok && <div className="error-text small">{r.findings.join("; ")}</div>}
+                  {(r.notes ?? []).map((n) => (
+                    <div key={n} className="tests-note small">
+                      {n}
+                    </div>
+                  ))}
                 </li>
               ))}
               {running && (
