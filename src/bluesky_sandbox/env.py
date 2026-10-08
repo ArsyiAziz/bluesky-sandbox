@@ -15,7 +15,7 @@ from bluesky_sandbox.core.base_environment import (
     overridable,
 )
 from bluesky_sandbox.core.batch import StepBatch
-from bluesky_sandbox.interface.fields.base import EnvObsField, ObsField
+from bluesky_sandbox.interface.fields.base import EnvBound, ObsField
 from bluesky_sandbox.interface.task import (
     AgentStepContext,
     AircraftReadouts,
@@ -338,7 +338,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
                 "read_aircraft_obs_field expects an ObsField class or instance, "
                 f"got {field!r}."
             )
-        if isinstance(field_obj, EnvObsField):
+        if isinstance(field_obj, EnvBound):
             field_obj = field_obj.bind_env(self)
         return field_obj
 

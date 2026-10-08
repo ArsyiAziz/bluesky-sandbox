@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 import bluesky as bs
 import numpy as np
@@ -13,8 +13,7 @@ from bluesky_sandbox.interface.fields.actions.clearance import expand_clearances
 from bluesky_sandbox.interface.fields.actions.mask import check_action_masks
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
-    EnvObsField,
-    EnvPairObsField,
+    EnvBound,
     ObsField,
     PairObsField,
 )
@@ -54,18 +53,6 @@ def _flatten_obs_fields(fields):
         else:
             out.append(entry)
     return out
-
-
-def _bind_env_obs_fields(
-    env,
-    fields: Sequence[ObsField | PairObsField],
-) -> list[ObsField | PairObsField]:
-    return [
-        field.bind_env(env)
-        if isinstance(field, EnvObsField | EnvPairObsField)
-        else field
-        for field in fields
-    ]
 
 
 #: The model this process asked for. ``bs.settings.performance_model`` is not a
@@ -308,26 +295,14 @@ class EnvConfig:
     task_info_providers: list[TaskInfoProvider] = field(default_factory=list)
 
     def bind_env(self, env) -> None:
-        """Bind environment-aware observation fields to an env instance."""
-        self.obs_fields = _bind_env_obs_fields(env, self.obs_fields)
-        if self.intruder_obs_fields is not None:
-            self.intruder_obs_fields = _bind_env_obs_fields(
-                env,
-                self.intruder_obs_fields,
-            )
-        if self.critic_obs_fields is not None:
-            self.critic_obs_fields = _bind_env_obs_fields(env, self.critic_obs_fields)
-        if self.critic_intruder_obs_fields is not None:
-            self.critic_intruder_obs_fields = _bind_env_obs_fields(
-                env,
-                self.critic_intruder_obs_fields,
-            )
-        if self.state_fields is not None:
-            self.state_fields = _bind_env_obs_fields(env, self.state_fields)
-        if self.intruder_state_fields is not None:
-            self.intruder_state_fields = _bind_env_obs_fields(
-                env, self.intruder_state_fields
-            )
+        """Bind every field in this config that reads its environment
+        (:class:`EnvBound`) - observations, state and actions alike - to
+        ``env``."""
+        for config_field in fields(self):
+            value = getattr(self, config_field.name)
+            if isinstance(value, (list, tuple)) and any(isinstance(v, EnvBound) for v in value):
+                bound = [v.bind_env(env) if isinstance(v, EnvBound) else v for v in value]
+                setattr(self, config_field.name, type(value)(bound))
 
     def __post_init__(self) -> None:
         # Each Clearance becomes the parts it declares: the action, its

@@ -7,12 +7,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import MISSING, dataclass, fields, replace
 from dataclasses import field as dataclass_field
 from enum import StrEnum
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
 
 import bluesky as bs
 import numpy as np
 
 from .grid import Grid
+
+if TYPE_CHECKING:
+    from bluesky_sandbox.interface.task import AgentStepContext
 
 ContextT = TypeVar("ContextT")
 
@@ -596,15 +599,25 @@ class ObsField(_BoundedField, ABC):
 
 
 @dataclass(frozen=True)
-class EnvObsField(ObsField, ABC):
-    """Observation field that reads task-specific state from its environment.
+class EnvBound:
+    """A field that reads its environment - the design's shapes, its
+    queryables, an aircraft's whole context - beyond the traffic arrays every
+    field reads. The environment binds every field that is one as it builds,
+    whatever its kind: an observation, a pair, a state field, an action.
 
-    Task constructors bind these fields while building ``EnvConfig``. Task
-    authors can then write custom observation fields as normal ``ObsField``
-    subclasses without passing ``env=self`` into every field constructor.
+    :meth:`agent_context` is the context the hooks get, for the aircraft at
+    ``idx``. Read it knowing when the field runs:
+
+    - in an observation, ``context.obs`` holds only the fields computed before
+      this one this step - read shapes, queries, position and separation;
+    - in an action, it is the state the action is applied from, before the
+      step it commands.
+
+    It is one aircraft's. A field that computes for many at once reads
+    ``bound_env.query_batch(...)`` and ``bound_env.episode_shapes`` instead.
     """
 
-    env: Any | None = dataclass_field(default=None, compare=False)
+    env: Any | None = dataclass_field(default=None, compare=False, kw_only=True)
 
     def bind_env(self, env: Any):
         return replace(self, env=env)
@@ -614,6 +627,20 @@ class EnvObsField(ObsField, ABC):
         if self.env is None:
             raise RuntimeError(f"{self.__class__.__name__} is not bound to an env.")
         return self.env
+
+    def agent_context(self, idx: int) -> AgentStepContext:
+        """The hooks' context for the aircraft at ``idx``: its shapes, queries,
+        position, separation and the task's own ``data``."""
+        return self.bound_env.agent_context(idx)
+
+
+@dataclass(frozen=True)
+class EnvObsField(ObsField, EnvBound, ABC):
+    """An observation field that reads its environment (:class:`EnvBound`).
+
+    Custom fields subclass it as they would ``ObsField``, without passing
+    ``env=self`` into each constructor: the environment binds them.
+    """
 
 
 @dataclass(frozen=True)
@@ -704,23 +731,9 @@ class PairObsField(_BoundedField, ABC):
 
 
 @dataclass(frozen=True)
-class EnvPairObsField(PairObsField, ABC):
-    """Pair observation field that reads task-specific state from its environment.
-
-    Task constructors bind these fields while building ``EnvConfig``, matching
-    :class:`EnvObsField` for ownship fields.
-    """
-
-    env: Any | None = dataclass_field(default=None, compare=False)
-
-    def bind_env(self, env: Any):
-        return replace(self, env=env)
-
-    @property
-    def bound_env(self) -> Any:
-        if self.env is None:
-            raise RuntimeError(f"{self.__class__.__name__} is not bound to an env.")
-        return self.env
+class EnvPairObsField(PairObsField, EnvBound, ABC):
+    """An intruder observation field that reads its environment
+    (:class:`EnvBound`), as :class:`EnvObsField` is for ownship fields."""
 
 
 @dataclass(frozen=True)
@@ -891,3 +904,10 @@ class ActionField(_BoundedField, ABC):
 
     def __call__(self, idx: int, value: float) -> None:
         self.set(idx, value)
+
+
+@dataclass(frozen=True)
+class EnvActionField(ActionField, EnvBound, ABC):
+    """An action that reads its environment (:class:`EnvBound`): one that
+    commands toward a shape or a queryable - direct to the nearest gate - as
+    :class:`EnvObsField` reads them."""

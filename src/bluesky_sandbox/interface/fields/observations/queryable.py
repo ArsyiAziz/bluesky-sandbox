@@ -29,6 +29,10 @@ from ..base import (
 
 @dataclass(frozen=True)
 class QueryableObsField(_BroadcastObs, EnvObsField):
+    """An observation of the queryable named ``query_name``: each aircraft's
+    query result (:meth:`query_result`), or one attribute of it for many at
+    once (``_column``)."""
+
     query_name: str = ""
     low: float = 0.0
     high: float = 1.0
@@ -64,6 +68,9 @@ class QueryableObsField(_BroadcastObs, EnvObsField):
 
 @dataclass(frozen=True)
 class WaypointResultObsField(QueryableObsField):
+    """An observation of a waypoint queryable: its result checked to be a
+    :class:`WaypointResult`."""
+
     def waypoint_result(self, idx: int) -> WaypointResult:
         result = self.query_result(idx)
         if not isinstance(result, WaypointResult):
