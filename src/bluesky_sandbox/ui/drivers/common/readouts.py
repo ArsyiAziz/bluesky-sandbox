@@ -17,7 +17,7 @@ from bluesky_sandbox.interface.task import (
     WaypointReadoutItem,
     aircraft_readout_items,
 )
-from bluesky_sandbox.sim.performance.speeds import crossover_display
+from bluesky_sandbox.sim.performance.speeds import as_cas_ms, crossover_display
 
 
 #: Above this altitude a label gives Mach, the speed flown there; below, CAS.
@@ -289,7 +289,9 @@ class AircraftReadoutMixin:
                 try:
                     speed_ms = float(speeds[wp_idx])
                     if math.isfinite(speed_ms) and speed_ms >= 0.0:
-                        speed_kts = speed_ms / kts
+                        # A Mach (a scenario's route) as its CAS at the fix.
+                        at_m = float(bs.traf.alt[idx]) if alt_ft is None else alt_ft * ft
+                        speed_kts = float(as_cas_ms(speed_ms, at_m)) / kts
                 except (IndexError, TypeError, ValueError):
                     pass
                 reached = wp_idx < active_idx

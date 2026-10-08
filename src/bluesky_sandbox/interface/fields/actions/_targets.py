@@ -21,7 +21,7 @@ import numpy as np
 from bluesky.tools.aero import kts
 
 from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms as _cas_ceiling_ms
-from bluesky_sandbox.sim.performance.speeds import crossover_speed_state
+from bluesky_sandbox.sim.performance.speeds import crossover_speed_state, selected_cas_ms
 
 from .._common import _M_TO_FT, _MIN_DYNAMIC_SPAN, _MS_TO_KTS
 from .._route import _active_route_waypoint
@@ -235,8 +235,9 @@ class _SpeedAxis:
         return float(bs.traf.cas[idx])
 
     def _held_si(self, idx: int) -> float | None:
-        # A speed clearance turns VNAV's speed guidance off.
-        return None if bool(bs.traf.swvnavspd[idx]) else float(bs.traf.selspd[idx])
+        # A speed clearance turns VNAV's speed guidance off. Above the
+        # crossover the hold is a Mach: read as the CAS it is there.
+        return None if bool(bs.traf.swvnavspd[idx]) else float(selected_cas_ms(idx)[0])
 
     def _command(self, idx: int, target: float) -> None:
         target_kts = target * (_MS_TO_KTS / self._scale)

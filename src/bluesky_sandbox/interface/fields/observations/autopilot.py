@@ -19,6 +19,8 @@ from .._common import (
     _InMeters,
     _InMetersPerSecond,
 )
+from bluesky_sandbox.sim.performance.speeds import selected_cas_ms
+
 from ..base import ObsField, ObsMeta, ObsQuantity, Unit
 from .kinematics import (
     _Altitude,
@@ -68,22 +70,23 @@ class _ApAltitudeError(_AltitudeEnvelopeBounds, _UnitField):
         return self._dynamic_or_configured_bounds(resolve)
 
 
+# The selected speed as CAS: above the crossover BlueSky holds a Mach there.
 @dataclass(frozen=True)
 class _ApCas(_CasEnvelopeBounds, _Speed):
     def _si_values(self, indices: np.ndarray) -> np.ndarray:
-        return bs.traf.selspd[indices]
+        return selected_cas_ms(indices)
 
     def _si_expected(self, idx: int) -> float:
-        return float(bs.traf.selspd[idx])
+        return float(selected_cas_ms(idx)[0])
 
 
 @dataclass(frozen=True)
 class _ApCasError(_CasEnvelopeBounds, _Speed):
     def _si_values(self, indices: np.ndarray) -> np.ndarray:
-        return bs.traf.selspd[indices] - bs.traf.cas[indices]
+        return selected_cas_ms(indices) - bs.traf.cas[indices]
 
     def _si_expected(self, idx: int) -> float:
-        return float(bs.traf.selspd[idx]) - float(bs.traf.cas[idx])
+        return float(selected_cas_ms(idx)[0]) - float(bs.traf.cas[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         # Symmetric about the current speed, wide enough to reach either end

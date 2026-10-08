@@ -15,9 +15,9 @@ from bluesky.tools.geo import kwikqdrdist
 from .._common import _InFeet, _InKnots
 from .._route import _active_route_waypoint
 from ..base import ActionMeta, ActionMode, ControlAxis, Unit
+from .crossover import _SpeedAboveCrossover
 from ._targets import (
     _AltitudeAxis,
-    _CrossoverSpeedAxis,
     _DeltaTarget,
     _FromRouteWaypoint,
     _HeadingTarget,
@@ -126,7 +126,7 @@ class ActiveRouteWaypointSpdDeltaKts(
 
 @dataclass(frozen=True)
 class ActiveRouteWaypointSpdDeltaCrossover(
-    _InKnots, _FromRouteWaypoint, _CrossoverSpeedAxis, _DeltaTarget
+    _InKnots, _FromRouteWaypoint, _SpeedAboveCrossover, _DeltaTarget
 ):
     """Regime-aware speed command relative to the waypoint's speed constraint.
 

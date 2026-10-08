@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import bluesky as bs
 import numpy as np
-from bluesky.tools.aero import crossoveralt, kts, vcas2mach, vmach2cas
+from bluesky.tools.aero import casmach_thr, crossoveralt, ft, kts, vcas2mach, vcasormach, vmach2cas
 
 _MS_TO_KTS = 1.0 / kts
 # Symmetric-error scale floors, so a target pinned against an envelope edge still
@@ -64,6 +64,81 @@ class CrossoverSpeedState:
         return -1.0 if x < -1.0 else min(x, 1.0)
 
 
+@dataclass(frozen=True)
+class Crossover:
+    """A speed schedule's crossover: the altitude where ``cas_kts`` and
+    ``mach`` are the same speed - below it the speed is flown as a CAS, above
+    it as a Mach, the way a jet climbs at 300 kt then cruises at M0.78. The
+    altitude depends on the schedule alone, not on the aircraft or its speed,
+    so slowing down above it stays in Mach.
+
+    Without one, the crossover is each aircraft's Mmo: Mach only where the CAS
+    held would pass it (see :func:`above_crossover`)."""
+
+    cas_kts: float = 300.0
+    mach: float = 0.78
+    #: How far past the crossover (ft) an aircraft changes regime: within it,
+    #: it stays in the one it holds - a level-off near the crossover does not
+    #: flip it back and forth.
+    margin_ft: float = 300.0
+
+    def __post_init__(self) -> None:
+        if not float(self.cas_kts) > 0.0:
+            raise ValueError(f"Crossover cas_kts must be > 0, got {self.cas_kts!r}")
+        if not 0.0 < float(self.mach) < 1.0:
+            raise ValueError(f"Crossover mach must be in (0, 1), got {self.mach!r}")
+        if not float(self.margin_ft) >= 0.0:
+            raise ValueError(f"Crossover margin_ft must be >= 0, got {self.margin_ft!r}")
+
+    @property
+    def altitude_m(self) -> float:
+        """Where the schedule's CAS and Mach meet (m)."""
+        return float(crossoveralt(float(self.cas_kts) * kts, float(self.mach)))
+
+    def above(self, indices) -> np.ndarray:
+        """Whether each aircraft in ``indices`` is in the Mach regime: past the
+        crossover by more than ``margin_ft``, above; short of it by more,
+        below; within, the regime of the speed it holds (a Mach, or a CAS)."""
+        idx = np.atleast_1d(np.asarray(indices, dtype=np.intp))
+        alt = np.asarray(bs.traf.alt, dtype=np.float64)[idx]
+        margin = float(self.margin_ft) * ft
+        holds_mach = is_mach(np.asarray(bs.traf.selspd, dtype=np.float64)[idx])
+        regime = np.where(
+            alt >= self.altitude_m + margin, True, np.where(alt <= self.altitude_m - margin, False, holds_mach)
+        )
+        return regime
+
+    def handover(self, indices) -> list[tuple[int, float]]:
+        """The speed holds to change for aircraft in ``indices`` that have
+        passed the crossover, as an FMS does - and BlueSky does not: climbing,
+        a CAS held becomes the Mach it is there; descending, a Mach held
+        becomes its CAS - the same true airspeed, within the envelope. Each
+        ``(index, speed)``, the speed as ``SPD`` takes it. Aircraft whose speed
+        VNAV governs are left to it."""
+        idx = np.atleast_1d(np.asarray(indices, dtype=np.intp))
+        if idx.size == 0:
+            return []
+        traf = bs.traf
+        alt = np.asarray(traf.alt, dtype=np.float64)[idx]
+        selected = np.asarray(traf.selspd, dtype=np.float64)[idx]
+        held = ~np.asarray(traf.swvnavspd, dtype=bool)[idx]
+        mach = is_mach(selected)
+        limit = np.asarray(traf.perf.mmo, dtype=np.float64)[idx]
+        margin = float(self.margin_ft) * ft
+        out: list[tuple[int, float]] = []
+        for k, i in enumerate(idx):
+            if not held[k] or selected[k] <= 0.0:
+                continue
+            if alt[k] >= self.altitude_m + margin and not mach[k]:
+                value = min(float(vcas2mach(selected[k], alt[k])), float(limit[k]))
+                out.append((int(i), round(value, 4)))
+            elif alt[k] <= self.altitude_m - margin and mach[k]:
+                cas = float(vmach2cas(selected[k], alt[k]))
+                cas = min(max(cas, float(traf.perf.vmin[i])), float(traf.perf.vmax[i]))
+                out.append((int(i), cas / kts))
+        return out
+
+
 def cas_ceiling_ms(idx: int) -> float:
     """Highest *feasible* CAS (m/s) at the aircraft's current altitude: the lower
     of the performance CAS limit and Mmo-expressed-as-CAS (which falls with
@@ -90,6 +165,62 @@ def crossover_display(idx: int, cas_ms: float, alt_m: float) -> tuple[bool, floa
     return in_mach, mach
 
 
+#: How close to Mmo counts as at it. A target CAS clamped to the Mmo ceiling
+#: is Mach-limited by definition; rounding must not decide its regime.
+_AT_MMO = 1e-6
+
+
+def _mach_regime(alt_m, target_cas_ms, mmo):
+    """Whether a target CAS is held as Mach at ``alt_m``: above its crossover
+    altitude against Mmo - put directly, the target is at or past Mmo there
+    (the same rule, without the round trip through ``crossoveralt``, whose
+    inverse is not exact)."""
+    return np.asarray(vcas2mach(target_cas_ms, alt_m)) >= np.asarray(mmo) - _AT_MMO
+
+
+def is_mach(speed) -> np.ndarray:
+    """Whether each of ``speed`` is a Mach, as BlueSky reads a speed: above
+    0.1 and below its CAS/Mach threshold (``casmach_thr``, m/s)."""
+    speed = np.asarray(speed, dtype=np.float64)
+    return (speed > 0.1) & (speed < casmach_thr)
+
+
+def as_cas_ms(speed, alt_m) -> np.ndarray:
+    """``speed`` - a CAS (m/s) or a Mach, told apart as BlueSky does - as a
+    CAS (m/s) at ``alt_m``: BlueSky's own ``vcasormach``."""
+    return np.asarray(vcasormach(np.asarray(speed, dtype=np.float64), np.asarray(alt_m, dtype=np.float64))[1])
+
+
+def selected_cas_ms(indices) -> np.ndarray:
+    """The autopilot's selected speed, as CAS (m/s), for each aircraft in
+    ``indices``. After a Mach ``SPD`` - above the crossover - BlueSky holds the
+    Mach number there, not a CAS: converted at the aircraft's altitude."""
+    idx = np.atleast_1d(np.asarray(indices, dtype=np.intp))
+    alt = np.asarray(bs.traf.alt, dtype=np.float64)[idx]
+    return as_cas_ms(np.asarray(bs.traf.selspd, dtype=np.float64)[idx], alt)
+
+
+def above_crossover(indices, target_cas_ms=None, crossover: Crossover | None = None) -> np.ndarray:
+    """Whether each aircraft in ``indices`` is in the Mach regime: above
+    ``crossover``'s altitude where one is given; otherwise for its target CAS
+    (m/s; default its selected speed), the decision the crossover speed command
+    makes (:func:`crossover_speed_state`) - target clamped to the feasible
+    envelope, above ``crossoveralt(target, Mmo)``."""
+    if crossover is not None:
+        return crossover.above(indices)
+    idx = np.atleast_1d(np.asarray(indices, dtype=np.intp))
+    target = selected_cas_ms(idx) if target_cas_ms is None else np.broadcast_to(
+        np.asarray(target_cas_ms, dtype=np.float64), idx.shape
+    )
+    alt = np.asarray(bs.traf.alt, dtype=np.float64)[idx]
+    mmo = np.asarray(bs.traf.perf.mmo, dtype=np.float64)[idx]
+    vmin = np.asarray(bs.traf.perf.vmin, dtype=np.float64)[idx]
+    vmax = np.asarray(bs.traf.perf.vmax, dtype=np.float64)[idx]
+    ceiling = np.minimum(vmax, vmach2cas(mmo, alt))
+    target = np.minimum(np.maximum(target, vmin), ceiling)
+    return _mach_regime(alt, target, mmo)
+
+
 def crossover_speed_state(idx: int, target_cas_ms: float) -> CrossoverSpeedState:
     """Regime-aware speed state for a target CAS (m/s), mirroring the crossover
     speed command: clamp the target to the feasible envelope ``[vmin, ceiling]``,
@@ -102,7 +233,7 @@ def crossover_speed_state(idx: int, target_cas_ms: float) -> CrossoverSpeedState
     vmax = float(bs.traf.perf.vmax[idx])
     target_ms = min(max(float(target_cas_ms), vmin), cas_ceiling_ms(idx))
     target_mach = min(float(vcas2mach(target_ms, alt)), mmo)
-    in_mach = alt > float(crossoveralt(target_ms, mmo))
+    in_mach = bool(_mach_regime(alt, target_ms, mmo))
 
     cas_diff_kts = (float(bs.traf.cas[idx]) - target_ms) * _MS_TO_KTS
     mach_diff = float(bs.traf.M[idx]) - target_mach

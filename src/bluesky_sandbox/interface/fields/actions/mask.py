@@ -15,6 +15,7 @@ from bluesky.tools.aero import ft, kts
 from bluesky.tools.geo import kwikqdrdist
 
 from .._route import _active_route_waypoint
+from ._targets import _issue_crossover_speed
 from .._state import (
     _ActionMaskBacked,
     action_lock,
@@ -328,7 +329,8 @@ def _resume_axis(idx: int, acid: str, axis: ControlAxis) -> None:
     elif axis is ControlAxis.ALTITUDE and alt_m is not None:
         bs.stack.stack(f"ALT {acid} {alt_m / ft:.1f}")
     elif axis is ControlAxis.SPEED and spd_ms is not None:
-        bs.stack.stack(f"SPD {acid} {spd_ms / kts:.1f}")
+        # Mach above the crossover, CAS below - as the crossover actions do.
+        _issue_crossover_speed(idx, spd_ms / kts)
 
 
 def check_action_masks(action_fields: Iterable[Any]) -> None:

@@ -33,6 +33,7 @@ from .models import (
     type_limits,
 )
 from .speeds import (
+    Crossover,
     CrossoverSpeedState,
     cas_ceiling_ms,
     cas_tolerance_as_mach,
@@ -54,6 +55,7 @@ __all__ = [
     "bada_install_hint",
     "bada_aircraft_types",
     "load_perf_bada",
+    "Crossover",
     "CrossoverSpeedState",
     "EnvelopeSample",
     "cas_ceiling_ms",

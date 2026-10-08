@@ -18,8 +18,8 @@ from ..base import (
     SwitchActionMixin,
     Unit,
 )
+from .crossover import _SpeedAboveCrossover
 from ._targets import (
-    _CrossoverSpeedAxis,
     _DeltaTarget,
     _HeadingTarget,
 )
@@ -192,7 +192,7 @@ class ApSpdDeltaKts(SpdDeltaKts):
 
 
 @dataclass(frozen=True)
-class ApSpdDeltaCrossover(_InKnots, _CrossoverSpeedAxis, _DeltaTarget):
+class ApSpdDeltaCrossover(_InKnots, _SpeedAboveCrossover, _DeltaTarget):
     """Autopilot speed relative to *current* CAS, regime-aware (CAS/Mach crossover).
 
     The autopilot counterpart of :class:`ActiveRouteWaypointSpdDeltaCrossover`:

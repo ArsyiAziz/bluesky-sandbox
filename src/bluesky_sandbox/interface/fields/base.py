@@ -824,6 +824,13 @@ class ActionField(_BoundedField, ABC):
         fixed by construction (whole steps) clips to."""
         return self.bounds(idx)
 
+    def acting(self, idx: int) -> Any:
+        """The action as it acts for the aircraft at ``idx`` now: itself, or -
+        an action that changes unit with the regime, as a crossover speed
+        action does above its crossover - what its normalizer and grid apply
+        to (``bounds``, ``reach``, ``nominal``, ``normalizer``, ``grid``)."""
+        return self
+
     def __post_init__(self) -> None:
         super().__post_init__()
         if not isinstance(self.meta, ActionMeta):

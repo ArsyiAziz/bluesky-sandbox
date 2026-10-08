@@ -150,7 +150,10 @@ def _normalize_field_values_batch(field, values, idx: int) -> np.ndarray:
 
 def _denormalize_action_value(field, values, idx: int):
     """The value ``field`` is set to: the policy's values through its
-    normalizer, then on its grid."""
+    normalizer, then on its grid - those of the action as it acts now (a
+    crossover speed action above its crossover: in Mach)."""
+    acting = getattr(field, "acting", None)
+    field = field if acting is None else acting(idx)
     value = _denormalized(field, values, idx)
     grid = getattr(field, "grid", None)
     return value if grid is None else grid.apply(field, value, idx)

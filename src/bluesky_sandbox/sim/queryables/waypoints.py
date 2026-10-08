@@ -20,6 +20,7 @@ from bluesky_sandbox.interface.task import (
     UnavailableStepTime,
 )
 from bluesky_sandbox.sim.performance.speeds import (
+    as_cas_ms,
     crossover_speed_state,
     within_speed_tolerance,
 )
@@ -423,7 +424,9 @@ class Waypoint:
             alt_ft = None
         try:
             raw_spd = float(route.wpspd[route_idx])
-            speed_kts = raw_spd / kts if raw_spd >= 0.0 else None
+            # A Mach (a scenario's route) as its CAS at the fix's altitude.
+            at_m = float(bs.traf.alt[acidx]) if alt_ft is None else alt_ft * ft
+            speed_kts = float(as_cas_ms(raw_spd, at_m)) / kts if raw_spd >= 0.0 else None
         except (IndexError, TypeError, ValueError):
             speed_kts = None
         return WaypointTarget(

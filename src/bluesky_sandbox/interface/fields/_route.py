@@ -13,6 +13,8 @@ import numpy as np
 from bluesky.tools.aero import nm, vtas2cas
 from bluesky.tools.geo import kwikqdrdist
 
+from bluesky_sandbox.sim.performance.speeds import as_cas_ms
+
 from ._state import arrival_time
 
 
@@ -92,10 +94,15 @@ def _active_route_waypoint(
         return None
     if not (np.isfinite(lat) and np.isfinite(lon)):
         return None
+    alt = _route_constraint(route.wpalt, target)
     speed = _route_constraint(route.wpspd, target)
-    if speed is None:
+    if speed is not None:
+        # A fix's speed may be a Mach (a scenario's route): as CAS, at the
+        # fix's altitude - else the aircraft's - read as BlueSky reads it.
+        speed = float(as_cas_ms(speed, float(bs.traf.alt[idx]) if alt is None else alt))
+    else:
         speed = _scheduled_cas_ms(idx, target, offset)
-    return (lat, lon, _route_constraint(route.wpalt, target), speed)
+    return (lat, lon, alt, speed)
 
 
 def _scheduled_cas_ms(idx: int, route_index: int, offset: int) -> float | None:

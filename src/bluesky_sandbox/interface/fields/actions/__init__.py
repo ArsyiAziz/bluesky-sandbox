@@ -15,6 +15,7 @@ from ..base import (
     Unit,
 )
 from ..grid import Grid
+from .crossover import Crossover, MachRegime
 from .autopilot import (
     ApAltDeltaFt,
     ApAltDeltaM,
@@ -63,6 +64,8 @@ __all__ = [
     "SwitchActionMixin",
     "Unit",
     "Grid",
+    "Crossover",
+    "MachRegime",
     "HdgDeg",
     "HdgDeltaDeg",
     "ApHdgDeltaDeg",

@@ -24,6 +24,8 @@ from .._common import (
     _InMeters,
     _InMetersPerSecond,
 )
+from bluesky_sandbox.sim.performance.speeds import Crossover, above_crossover
+
 from ..base import ObsField, ObsMeta, ObsQuantity, Unit
 
 
@@ -395,17 +397,56 @@ class CrossoverAltMarginFt(_BroadcastObs, ObsField):
     meta = ObsMeta("crossover_alt_margin_ft", Unit.FT, ObsQuantity.ALTITUDE)
     low: Annotated[float, "crossover-margin ft normalization scale (low)"] = -20000.0
     high: Annotated[float, "crossover-margin ft normalization scale (high)"] = 20000.0
+    crossover: Annotated[
+        Crossover | None,
+        "the speed schedule's crossover; None = each aircraft's CAS against its Mmo",
+    ] = None
 
     def _values(self, indices: Any) -> Any:
         i = _indices_array(indices)
-        cas = np.asarray(bs.traf.cas, dtype=np.float64)[i]
         alt = np.asarray(bs.traf.alt, dtype=np.float64)[i]
+        if self.crossover is not None:
+            return (alt - self.crossover.altitude_m) * _M_TO_FT
+        cas = np.asarray(bs.traf.cas, dtype=np.float64)[i]
         mmo = np.asarray(bs.traf.perf.mmo, dtype=np.float64)[i]
         return (alt - np.asarray(crossoveralt(cas, mmo))) * _M_TO_FT
 
     def _expected(self, idx: int) -> Any:
+        if self.crossover is not None:
+            return (float(bs.traf.alt[idx]) - self.crossover.altitude_m) / ft
         cas, mmo = float(bs.traf.cas[idx]), float(bs.traf.perf.mmo[idx])
         return (float(bs.traf.alt[idx]) - float(crossoveralt(cas, mmo))) / ft
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return self._configured_bounds()
+
+
+@dataclass(frozen=True)
+class AboveCrossover(_BroadcastObs, ObsField):
+    """Whether the aircraft is above the CAS/Mach crossover for the speed it is
+    holding: 1 in the Mach regime - speed commanded and checked as Mach - 0 in
+    the CAS regime. The same decision the crossover speed actions and waypoint
+    speed constraints make (from the selected speed, not the current one), so
+    the flag the policy sees is the regime its next speed command is in.
+    ``CrossoverAltMarginFt`` says how deep into it.
+
+    Given a speed schedule's ``crossover`` - the one a crossover speed action's
+    :class:`~bluesky_sandbox.interface.fields.actions.MachRegime` has - it is
+    whether the aircraft is above that altitude: the regime that action acts in."""
+
+    meta = ObsMeta("above_crossover", Unit.SWITCH, ObsQuantity.SPEED)
+    low: Annotated[float, "flag normalization scale (low)"] = 0.0
+    high: Annotated[float, "flag normalization scale (high)"] = 1.0
+    crossover: Annotated[
+        Crossover | None,
+        "the speed schedule's crossover; None = the speed held against Mmo",
+    ] = None
+
+    def _values(self, indices: Any) -> Any:
+        return above_crossover(_indices_array(indices), crossover=self.crossover).astype(np.float64)
+
+    def _expected(self, idx: int) -> Any:
+        return float(above_crossover(idx, crossover=self.crossover)[0])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
