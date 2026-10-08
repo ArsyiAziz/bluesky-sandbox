@@ -1421,6 +1421,9 @@ class DesignSpec:
     # ``@staticmethod`` on the generated Scenario, so the body sees only its
     # declared arguments plus ``scenario_setup``'s module scope.
     scenario_hooks: dict[str, str] = field(default_factory=dict)
+    # Test cases - situations placed by hand and the value each field should
+    # give in them: ``{"situations": [...], "cases": [...]}`` (design_tests).
+    tests: dict[str, Any] = field(default_factory=dict)
     nav_cycle: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     version: int = _SPEC_VERSION
@@ -1439,6 +1442,8 @@ class DesignSpec:
             "code": dict(self.code),
             "scenario_setup": self.scenario_setup,
             "scenario_hooks": dict(self.scenario_hooks),
+            # Only a design with tests carries the key.
+            **({"tests": copy.deepcopy(self.tests)} if self.tests else {}),
         }
 
     @classmethod
@@ -1484,6 +1489,7 @@ class DesignSpec:
             # Absent in pre-scenario-hook designs: empty is the no-op.
             scenario_setup=str(d.get("scenario_setup") or ""),
             scenario_hooks=_validated_scenario_hooks(d.get("scenario_hooks") or {}),
+            tests=copy.deepcopy(d.get("tests") or {}),
             nav_cycle=d.get("nav_cycle"),
             metadata=dict(d.get("metadata", {})),
             version=version,

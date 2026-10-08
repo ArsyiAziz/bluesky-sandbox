@@ -12,13 +12,13 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import KW_ONLY, dataclass, replace
-from typing import Any
+from typing import Any, ClassVar
 
 import bluesky as bs
 from bluesky.tools.aero import ft, kts, vtas2cas, vtas2mach
 from bluesky.tools.geo import qdrpos
 
-__all__ = ["Aircraft", "Situation", "place", "without_traffic"]
+__all__ = ["Aircraft", "Situation", "place", "positions", "without_traffic"]
 
 
 @dataclass(frozen=True)
@@ -41,14 +41,21 @@ class Aircraft:
     bearing_deg: float | None = None
     vs_fpm: float = 0.0
 
+    #: The ways an aircraft is placed, each the fields given together: by
+    #: position, or by distance and bearing from an aircraft placed before it.
+    #: Exactly one - what the design schema and the Tests tab read too.
+    PLACEMENTS: ClassVar[tuple[tuple[str, ...], ...]] = (
+        ("lat", "lon"),
+        ("relative_to", "distance_nm", "bearing_deg"),
+    )
+
     def __post_init__(self) -> None:
-        absolute = self.lat is not None and self.lon is not None
-        relative = None not in (self.relative_to, self.distance_nm, self.bearing_deg)
-        if absolute == relative:
-            raise ValueError(
-                f"aircraft {self.acid!r}: give lat and lon, or relative_to, distance_nm "
-                "and bearing_deg - one of the two"
-            )
+        given = [[getattr(self, name) is not None for name in group] for group in self.PLACEMENTS]
+        whole = sum(all(g) for g in given)
+        partly = any(any(g) and not all(g) for g in given)
+        if whole != 1 or partly:
+            ways = " - or - ".join(", ".join(group) for group in self.PLACEMENTS)
+            raise ValueError(f"aircraft {self.acid!r}: give one of {ways}")
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,21 @@ class Situation:
         return self.aircraft[0].acid
 
 
+def positions(situation: Situation) -> dict[str, tuple[float, float]]:
+    """Where each of the situation's aircraft is, ``(lat, lon)`` by callsign:
+    its own position, or its distance and bearing from an aircraft placed
+    before it (great-circle, BlueSky's ``qdrpos``)."""
+    at: dict[str, tuple[float, float]] = {}
+    for a in situation.aircraft:
+        if a.relative_to is None:
+            at[a.acid] = (float(a.lat), float(a.lon))
+        else:
+            ref_lat, ref_lon = at[a.relative_to]
+            lat, lon = qdrpos(ref_lat, ref_lon, a.bearing_deg, a.distance_nm)
+            at[a.acid] = (float(lat), float(lon))
+    return at
+
+
 def place(env: Any, situation: Situation) -> dict[str, int]:
     """Reset ``env`` for the situation's episode and create its aircraft, each
     in exactly the state it gives. Their traffic indices, by callsign.
@@ -87,14 +109,10 @@ def place(env: Any, situation: Situation) -> dict[str, int]:
     The env's own traffic is created too, unless it runs
     :func:`without_traffic`."""
     env.reset(seed=situation.seed)
-    at: dict[str, tuple[float, float]] = {}
+    at = positions(situation)
     indices: dict[str, int] = {}
     for a in situation.aircraft:
-        if a.relative_to is None:
-            lat, lon = float(a.lat), float(a.lon)
-        else:
-            ref_lat, ref_lon = at[a.relative_to]
-            lat, lon = (float(v) for v in qdrpos(ref_lat, ref_lon, a.bearing_deg, a.distance_nm))
+        lat, lon = at[a.acid]
         tas, alt = a.gs_kts * kts, a.alt_ft * ft
         track = a.track_deg % 360.0
         acid = env.spawn(
@@ -118,7 +136,6 @@ def place(env: Any, situation: Situation) -> dict[str, int]:
         traf.M[idx] = vtas2mach(tas, alt)
         traf.alt[idx] = alt
         traf.vs[idx] = a.vs_fpm * ft / 60.0
-        at[a.acid] = (lat, lon)
         indices[a.acid] = idx
     return indices
 

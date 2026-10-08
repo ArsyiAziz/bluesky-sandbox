@@ -44,6 +44,7 @@ from .builder import (
     with_inferred_temporal_tracking,
 )
 from .catalog import hooks as _hook_catalog
+from .design_tests import cases_module
 from .emit import emit_env_sources, emit_scenario_sources
 from .evaluation import eval_render_mode, rl_evaluate_py, sb3_evaluate_py
 from .recording import (
@@ -140,6 +141,10 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
     files[f"{pkg}/config.py"] = _config_py(
         env_sources,
     )
+    # The design's test cases, run by bluesky_sandbox.checks.
+    cases = cases_module(spec, package=pkg)
+    if cases is not None:
+        files[f"{pkg}/cases.py"] = cases
     # The design's keys, typed for editors - when the design builds.
     typed = _task_types(spec)
     if typed is not None:

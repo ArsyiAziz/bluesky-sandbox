@@ -4,7 +4,7 @@ placed exactly (:mod:`.placement`)."""
 
 from .cases import Case, CaseResult, CasesReport, Tolerance, run_cases
 from .fields import FieldCheck, FieldsReport, check_fields, normalization_findings
-from .placement import Aircraft, Situation, place, without_traffic
+from .placement import Aircraft, Situation, place, positions, without_traffic
 
 __all__ = [
     "Aircraft",
@@ -18,6 +18,7 @@ __all__ = [
     "check_fields",
     "normalization_findings",
     "place",
+    "positions",
     "run_cases",
     "without_traffic",
 ]

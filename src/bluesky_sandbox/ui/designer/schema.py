@@ -52,6 +52,55 @@ def _names_or(code: dict[str, Any], what: str) -> dict[str, Any]:
     }
 
 
+def _dataclass_object(cls: type, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    """``cls``'s fields as a JSON object: each typed from its annotation,
+    unless ``overrides`` says otherwise; required where it has no default."""
+    hints = get_type_hints(cls)
+    fields = [f for f in dataclasses.fields(cls) if f.name != "_"]
+    overrides = overrides or {}
+    out: dict[str, Any] = {
+        "type": "object",
+        "properties": {f.name: overrides.get(f.name, _json_type(hints[f.name])) for f in fields},
+        "additionalProperties": False,
+    }
+    required = [
+        f.name
+        for f in fields
+        if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+    ]
+    if required:
+        out["required"] = required
+    return out
+
+
+def _tests_schema() -> dict[str, Any]:
+    """A design's test cases (see :mod:`.design_tests`), from the
+    :mod:`bluesky_sandbox.checks` classes they become."""
+    from bluesky_sandbox.checks import Aircraft, Case, Situation, Tolerance  # noqa: PLC0415
+
+    number_or_numbers = {"anyOf": [{"type": "number"}, {"type": "array", "items": {"type": "number"}}]}
+    aircraft = _dataclass_object(Aircraft)
+    # Placed exactly one way (Aircraft.PLACEMENTS).
+    aircraft["oneOf"] = [{"required": list(group)} for group in Aircraft.PLACEMENTS]
+    situation = _dataclass_object(Situation, {"aircraft": {"type": "array", "items": aircraft}})
+    case = _dataclass_object(
+        Case,
+        {
+            "field": {"$ref": "#/$defs/obs_ref"},
+            "expected": number_or_numbers,
+            "tolerance": _dataclass_object(Tolerance),
+        },
+    )
+    return {
+        "type": "object",
+        "properties": {
+            "situations": {"type": "array", "items": situation},
+            "cases": {"type": "array", "items": case},
+        },
+        "additionalProperties": False,
+    }
+
+
 @lru_cache(maxsize=1)
 def design_schema() -> dict[str, Any]:
     """The design file's JSON Schema (draft 2020-12)."""
@@ -253,6 +302,7 @@ def design_schema() -> dict[str, Any]:
                 },
                 "scenario hooks",
             ),
+            "tests": _tests_schema(),
             "nav_cycle": {"type": ["string", "null"]},
             "metadata": {"type": "object"},
         },

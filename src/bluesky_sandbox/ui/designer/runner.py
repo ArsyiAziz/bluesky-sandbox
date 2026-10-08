@@ -533,10 +533,19 @@ def warm(model: str = "openap") -> None:
 _JOB_IDS = itertools.count(1)
 
 
-def _job_lines(spec: DesignSpec, prefix: str, template: str, params: dict[str, Any], timeout_s: float) -> Iterator[str]:
+def _job_lines(
+    spec: DesignSpec,
+    prefix: str,
+    template: str,
+    params: dict[str, Any],
+    timeout_s: float,
+    *,
+    fresh: bool = False,
+) -> Iterator[str]:
     """Generate ``spec`` as a package of its own and run ``template`` against
-    it - in the warm worker when it is free, else in a process of its own -
-    yielding what the script prints."""
+    it - in the warm worker when it is free (unless ``fresh``: a job that must
+    start from a clean simulator), else in a process of its own - yielding
+    what the script prints."""
     package = f"{prefix}_{os.getpid()}_{next(_JOB_IDS)}"
     files = codegen.generate_task(spec, package)
     workdir = Path(tempfile.mkdtemp(prefix=f"bsd_{prefix}_"))
@@ -548,7 +557,7 @@ def _job_lines(spec: DesignSpec, prefix: str, template: str, params: dict[str, A
         script = workdir / f"_{prefix}.py"
         script.write_text(template.format(pkg=package, marker=_SAMPLE_MARKER, **params))
         model = str(getattr(spec.env, "performance_model", None) or "openap").lower()
-        if _WORKER.lock.acquire(blocking=False):
+        if not fresh and _WORKER.lock.acquire(blocking=False):
             try:
                 job = {"workdir": str(workdir), "package": package, "script": str(script)}
                 yield from _WORKER.run(model, job, timeout_s)
@@ -747,6 +756,68 @@ def episode_spawns(spec: DesignSpec, **kwargs: Any) -> dict[str, Any]:
         else:
             out = item["done"]
     return {**out, "aircraft": aircraft}
+
+
+# One-shot script: every field of the design checked against itself, then
+# each of its test cases, a line per result as it is known.
+_TESTS_TEMPLATE = '''\
+"""Auto-generated: a designed env's field checks and test cases."""
+from __future__ import annotations
+
+import json
+import math
+
+import numpy as np
+
+from bluesky_sandbox.checks import check_fields, run_cases
+from {pkg} import Env
+
+MARKER = {marker!r}
+try:
+    from {pkg}.cases import CASES, SITUATIONS
+except ImportError:
+    CASES, SITUATIONS = (), ()
+
+
+def _plain(value):
+    if value is None:
+        return None
+    array = np.asarray(value, dtype=np.float64).reshape(-1)
+    out = [v if math.isfinite(v) else None for v in array.tolist()]
+    return out[0] if np.ndim(value) == 0 else out
+
+
+def _emit(kind, payload):
+    print(MARKER + json.dumps({{"kind": kind, **payload}}), flush=True)
+
+
+def main() -> None:
+    env = Env(render_mode=None)
+    base = env.unwrapped
+    try:
+        for r in check_fields(base).results:
+            _emit("field", {{"field": r.field, "ok": r.ok, "findings": list(r.findings[:5])}})
+        for i, case in enumerate(CASES):
+            r = run_cases(base, SITUATIONS, [case]).results[0]
+            _emit("case", {{"index": i, "ok": r.ok, "got": _plain(r.got), "error": r.error}})
+    finally:
+        env.close()
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def iter_design_tests(spec: DesignSpec, *, timeout_s: float = 300.0) -> Iterator[dict[str, Any]]:
+    """The design's field checks, then its test cases - each result as it is
+    known: ``{"kind": "field", "field", "ok", "findings"}`` or ``{"kind":
+    "case", "index", "ok", "got", "error"}``. In a process of its own: a test
+    sets the simulator up as it needs, which no later job should inherit."""
+    build_design_config(spec)  # surface a broken design before starting anything
+    for line in _job_lines(spec, "designed_tests", _TESTS_TEMPLATE, {}, timeout_s, fresh=True):
+        if line.startswith(_SAMPLE_MARKER):
+            yield json.loads(line[len(_SAMPLE_MARKER):])
 
 
 def run_status() -> dict[str, Any]:

@@ -52,9 +52,9 @@ def test_a_tolerance_is_the_wider_of_absolute_and_relative():
 
 
 def test_an_aircraft_is_placed_one_way_or_the_other():
-    with pytest.raises(ValueError, match="one of the two"):
+    with pytest.raises(ValueError, match="give one of"):
         Aircraft("A", track_deg=0, **_LEVEL)
-    with pytest.raises(ValueError, match="one of the two"):
+    with pytest.raises(ValueError, match="give one of"):
         Aircraft("A", lat=0.0, lon=0.0, relative_to="B", distance_nm=1, bearing_deg=0, track_deg=0, **_LEVEL)
 
 

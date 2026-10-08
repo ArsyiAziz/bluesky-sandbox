@@ -6,6 +6,7 @@ code.
     my_design/
       design.json          the structure: shapes, elements, spawn, spaces, config
       design.schema.json   what design.json may hold - any JSON editor checks it
+      tests/cases.json     its test cases: situations, and what each field gives there
       code/
         hooks.py           the env hooks, as functions, after their setup
         task_info.py       the task-info entries, as functions, after their setup
@@ -48,6 +49,8 @@ __all__ = [
 
 DESIGN_FILE = "design.json"
 SCHEMA_FILE = "design.schema.json"
+#: The design's test cases (see :mod:`.design_tests`), beside its structure.
+CASES_FILE = "tests/cases.json"
 CODE_DIR = "code"
 HOOKS_FILE = "hooks.py"
 TASK_INFO_FILE = "task_info.py"
@@ -108,6 +111,8 @@ def write_folder(spec: DesignSpec, folder: str | Path) -> None:
     for stale in code_dir.glob("*.py"):
         if f"{CODE_DIR}/{stale.name}" not in files:
             stale.unlink()
+    if CASES_FILE not in files and (folder / CASES_FILE).is_file():
+        (folder / CASES_FILE).unlink()
     for rel, text in files.items():
         target = folder / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -130,6 +135,8 @@ def folder_files(spec: DesignSpec) -> dict[str, str]:
     }
     for name, source in spec.code.items():
         files[f"{CODE_DIR}/{name}"] = source if source.endswith("\n") or not source else source + "\n"
+    if spec.tests:
+        files[CASES_FILE] = json.dumps(spec.tests, indent=2) + "\n"
     return files
 
 
@@ -145,6 +152,7 @@ def _structure(spec: DesignSpec) -> dict[str, Any]:
     d["scenario_hooks"] = sorted(name for name, body in d.get("scenario_hooks", {}).items() if body.strip())
     d.pop("scenario_setup", None)
     d["code"] = sorted(d.get("code", {}))
+    d.pop("tests", None)  # in tests/cases.json
     spawn = d.get("spawn")
     if isinstance(spawn, dict) and spawn.get("sources"):
         spawn["sources"] = [{k: v for k, v in s.items() if k != "plan"} for s in spawn["sources"]]
@@ -255,6 +263,9 @@ def read_folder(folder: str | Path) -> DesignSpec:
     if isinstance(modules, dict):  # a design.json written whole
         modules = list(modules)
     d["code"] = {name: code(name) for name in modules}
+    cases = folder / CASES_FILE
+    if cases.is_file():
+        d["tests"] = json.loads(cases.read_text())
     return DesignSpec.from_dict(d)
 
 

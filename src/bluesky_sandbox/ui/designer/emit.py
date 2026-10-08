@@ -603,6 +603,33 @@ from bluesky_sandbox.interface.fields import queryables as qobs
     }
 
 
+def field_imports(em: _Emitter, package: str | None = None) -> str:
+    """The imports the field expressions ``em`` has written need: the field
+    modules, normalizers, any scipy distribution, and the design's own
+    modules - from ``package`` when the code is generated into one."""
+    scipy_import = (
+        f"from scipy.stats import {', '.join(sorted(em.scipy_names))}\n"
+        if em.scipy_names
+        else ""
+    )
+    if em.custom_imports:
+        if package:
+            custom_import = "".join(
+                f"import {package}.{m} as {m}\n" for m in sorted(em.custom_imports)
+            )
+        else:
+            custom_import = "".join(f"import {m}\n" for m in sorted(em.custom_imports))
+    else:
+        custom_import = ""
+
+    imports = f'''{scipy_import}from bluesky_sandbox.interface.fields import actions as act
+from bluesky_sandbox.interface.fields import observations as obs
+from bluesky_sandbox.interface.fields import queryables as qobs
+{_normalizer_import_line()}
+{custom_import}'''
+    return imports.rstrip()
+
+
 def emit_env_sources(spec: DesignSpec, package: str | None = None) -> dict[str, str]:
     """Return imports, env constants, and field expressions for a generated env.py."""
     em = _Emitter(package=package)
@@ -636,28 +663,8 @@ def emit_env_sources(spec: DesignSpec, package: str | None = None) -> dict[str, 
     )
     actions = em.field_tuple(env.action_fields, "act")
 
-    scipy_import = (
-        f"from scipy.stats import {', '.join(sorted(em.scipy_names))}\n"
-        if em.scipy_names
-        else ""
-    )
-    if em.custom_imports:
-        if package:
-            custom_import = "".join(
-                f"import {package}.{m} as {m}\n" for m in sorted(em.custom_imports)
-            )
-        else:
-            custom_import = "".join(f"import {m}\n" for m in sorted(em.custom_imports))
-    else:
-        custom_import = ""
-
-    imports = f'''{scipy_import}from bluesky_sandbox.interface.fields import actions as act
-from bluesky_sandbox.interface.fields import observations as obs
-from bluesky_sandbox.interface.fields import queryables as qobs
-{_normalizer_import_line()}
-{custom_import}'''
     return {
-        "imports": imports.rstrip(),
+        "imports": field_imports(em, package),
         "dt": repr(env.dt),
         "simdt": repr(env.simdt),
         "asas_dt": repr(env.asas_dt),
