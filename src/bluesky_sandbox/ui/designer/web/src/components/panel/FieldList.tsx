@@ -9,6 +9,7 @@ import { registerPythonIntel } from "../../code/pythonEditor";
 import { FieldPicker } from "./FieldPicker";
 import { Picker } from "./Picker";
 import { normalizerColor } from "../../normColors";
+import { editorTheme, useTheme } from "../../theme";
 
 export interface FieldOption {
   name: string;
@@ -412,6 +413,7 @@ function FieldConfigModal({
   onFieldChange: (field: SpecDict) => void;
   onClose: () => void;
 }) {
+  const { theme } = useTheme();
   const queryableSpec = option?.queryable_spec ?? option?.profile?.queryable_spec ?? null;
   const params = (option?.params ?? []).filter((p) => p.name !== "normalizer");
   const genericParams = params.filter((p) => !isQueryableParam(p.name, queryableSpec));
@@ -653,7 +655,7 @@ function FieldConfigModal({
                       onFieldChange({ ...field, field: `${moduleName}:${typed}` });
                     }
                   }}
-                  theme="vs-dark"
+                  theme={editorTheme(theme)}
                   options={{
                     minimap: { enabled: false },
                     fontSize: 12,

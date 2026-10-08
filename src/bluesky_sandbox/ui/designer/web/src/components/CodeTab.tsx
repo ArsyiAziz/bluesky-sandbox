@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
+import { editorTheme, useTheme } from "../theme";
 import { api, type SpecDict, type ValidateResult } from "../api";
 import type { Intel } from "../code/intel";
 import { AvailablePanel } from "../code/AvailablePanel";
@@ -54,6 +55,7 @@ export default function CodeTab({
   validation: ValidateResult | null;
   onShowSpaces: () => void;
 }) {
+  const { theme } = useTheme();
   const [generated, setGenerated] = useState<Record<string, string>>({});
   const codeTabRef = useRef<HTMLDivElement | null>(null);
   const [treeW, setTreeW, resetTreeW] = useStoredSize("designer.code.treeWidth", 220, 160, () => window.innerWidth * 0.3);
@@ -610,7 +612,7 @@ export default function CodeTab({
             else if (isSpec) onSpecTextChange(v ?? "");
             else if (isCode) updateCode(selected, v ?? "");
           }}
-          theme="vs-dark"
+          theme={editorTheme(theme)}
           options={{
             minimap: { enabled: false },
             fontSize: 13,

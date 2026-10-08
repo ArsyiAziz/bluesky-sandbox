@@ -1,10 +1,101 @@
-:root {
-  --bg: #1e1e1e;
-  --panel: #252526;
-  --border: #3c3c3c;
-  --text: #d4d4d4;
-  --muted: #888;
-  --accent: #3b82f6;
+/* The theme: every color the designer uses, by role. Dark is the default;
+   light overrides it. Both are drawn from the BlueSky Sandbox logo - its navy
+   (#12306e), sky (#45b6ff) and blue (#2d6cf6) - and text meets WCAG AA
+   (4.5:1) on every surface it sits on, control outlines 3:1. The theme is set
+   on <html data-theme> (see theme.ts). */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --font-ui: "Inter Variable", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-brand: "Space Grotesk Variable", "Inter Variable", system-ui, sans-serif;
+
+  --bg: #0e1626;
+  --panel: #131d31;
+  --surface-low: #101a2c;
+  --surface: #1a2640;
+  --surface-hover: #20304f;
+  --surface-tint: rgba(255, 255, 255, 0.03);
+  --sunken: #0b1220;
+  --raised: #1b2842;
+  --raised-hover: #25365a;
+  --overlay: rgba(19, 29, 49, 0.92);
+  --border: #26354f;
+  --border-subtle: #1f2c44;
+  --border-strong: #4a6390;
+  --text: #dbe4f3;
+  --text-strong: #ffffff;
+  --muted: #93a3c0;
+  --placeholder: #7586a3;
+
+  --accent: #2d6cf6;
+  --accent-hover: #3d7bff;
+  --on-accent: #ffffff;
+  --on-accent-muted: #e5edff;
+  --accent-text: #a9c8ff;
+  --accent-soft: #1a2f57;
+  --accent-border: #4a72b8;
+  --link: #7cb6ff;
+  --sky: #45b6ff;
+  --focus: #45b6ff;
+  --focus-ring: rgba(69, 182, 255, 0.35);
+  --shadow: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(3, 8, 18, 0.6);
+  --tooltip-bg: #1b2a44;
+  --tooltip-text: #f2f5f7;
+  --tooltip-border: rgba(255, 255, 255, 0.14);
+  --spinner-track: rgba(255, 255, 255, 0.35);
+  --header: #0b1322;
+
+  --success: #4ade80;
+  --success-bg: #12351f;
+  --success-soft: #1d3a2b;
+  --success-border: #2f6b47;
+  --success-text: #cfead8;
+  --run-bg: #1f6f43;
+  --run-border: #2c8a57;
+  --run-text: #eafff2;
+  --warning: #fbbf24;
+  --warning-text: #e5c07b;
+  --warning-soft: #2e2817;
+  --warning-border: #6b5a2a;
+  --warning-strong-bg: #7c5b13;
+  --warning-strong-text: #ffd98a;
+  --danger: #f87171;
+  --danger-bg: #3d1717;
+  --danger-soft: #4a2630;
+  --danger-border: #7a3a3a;
+  --danger-strong-bg: #7f1d1d;
+  --danger-text: #ffe5e5;
+
+  --syn-property: #9cdcfe;
+  --syn-function: #dcdcaa;
+  --syn-parameter: #c586c0;
+  --syn-class: #4ec9b0;
+  --node-teal-bg: #1f3a44;
+  --node-teal: #2f6b7e;
+  --node-purple-bg: #3a2f44;
+  --node-purple: #6b4f8e;
+  --node-green-bg: #243524;
+  --node-green: #3f6b3f;
+  --node-amber-bg: #44381f;
+  --node-amber: #8e6b2f;
+  --teal-text: #7fd0e0;
+  --teal-soft: rgba(127, 208, 224, 0.15);
+  --green-soft: rgba(143, 179, 106, 0.08);
+  --green-line: #8fb36a;
+  --green-border: #4a5a3a;
+  --green-text: #b6d48a;
+  --grid-line: #22314b;
+  --axis-line: #4c5f80;
+
+  /* Each kind of element's color - its header, badge, chips, as on the map. */
+  --kind-airspace: #5b9bff;
+  --kind-region: #f5a35c;
+  --kind-waypoint: #4fc4cf;
+  --kind-spawn: #4ade80;
+  --kind-bounds: #a3b1c9;
+  --kind-group: #b39dff;
+
   /* Normalizers in the MDP view, in catalog order (validated on --bg). */
   --norm-1: #3987e5;
   --norm-2: #d95926;
@@ -16,6 +107,99 @@
   --norm-8: #e66767;
   --norm-other: #6b6b6b;
   --norm-raw: #9a9a9a;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef3fa;
+  --panel: #ffffff;
+  --surface-low: #f8fafd;
+  --surface: #f3f6fb;
+  --surface-hover: #e8eef8;
+  --surface-tint: rgba(18, 48, 110, 0.03);
+  --sunken: #ffffff;
+  --raised: #f3f6fb;
+  --raised-hover: #e4ebf7;
+  --overlay: rgba(255, 255, 255, 0.94);
+  --border: #d6deeb;
+  --border-subtle: #e4e9f2;
+  --border-strong: #7d8eab;
+  --text: #13213a;
+  --text-strong: #0b1424;
+  --muted: #52617c;
+  --placeholder: #5f6e88;
+
+  --accent: #2d6cf6;
+  --accent-hover: #1f5ae0;
+  --on-accent: #ffffff;
+  --on-accent-muted: #e5edff;
+  --accent-text: #1d4fc4;
+  --accent-soft: #e2ebff;
+  --accent-border: #8fb0f0;
+  --link: #1d4fc4;
+  --sky: #1f8fd6;
+  --focus: #2d6cf6;
+  --focus-ring: rgba(45, 108, 246, 0.3);
+  --shadow: rgba(15, 23, 42, 0.16);
+  --scrim: rgba(15, 23, 42, 0.35);
+  --tooltip-bg: #13213a;
+  --tooltip-text: #f2f5f7;
+  --tooltip-border: rgba(255, 255, 255, 0.14);
+  --spinner-track: rgba(18, 48, 110, 0.25);
+  --header: #ffffff;
+
+  --success: #15803d;
+  --success-bg: #dcfce7;
+  --success-soft: #e3f5ea;
+  --success-border: #86c79d;
+  --success-text: #14532d;
+  --run-bg: #1a7a48;
+  --run-border: #156a3d;
+  --run-text: #ffffff;
+  --warning: #a16207;
+  --warning-text: #8a5a00;
+  --warning-soft: #fdf3dc;
+  --warning-border: #e0c27a;
+  --warning-strong-bg: #fdf0d5;
+  --warning-strong-text: #7a4e00;
+  --danger: #c62828;
+  --danger-bg: #fde8e8;
+  --danger-soft: #fdecee;
+  --danger-border: #e9a3a3;
+  --danger-strong-bg: #b91c1c;
+  --danger-text: #7f1d1d;
+
+  --syn-property: #001080;
+  --syn-function: #795e26;
+  --syn-parameter: #af00db;
+  --syn-class: #267f99;
+  --node-teal-bg: #e0f3f7;
+  --node-teal: #4a9fb3;
+  --node-purple-bg: #efe8f8;
+  --node-purple: #8a6bb8;
+  --node-green-bg: #e6f2e3;
+  --node-green: #5f9a5f;
+  --node-amber-bg: #fbf0dc;
+  --node-amber: #b98a3a;
+  --teal-text: #1d7487;
+  --teal-soft: rgba(29, 116, 135, 0.12);
+  --green-soft: rgba(95, 154, 95, 0.1);
+  --green-line: #5f9a5f;
+  --green-border: #b8d3b0;
+  --green-text: #3d6e2e;
+  --grid-line: #e1e7f0;
+  --axis-line: #9aa8bf;
+
+  --kind-airspace: #1d5fd6;
+  --kind-region: #b45309;
+  --kind-waypoint: #0e7f8a;
+  --kind-spawn: #15803d;
+  --kind-bounds: #52617c;
+  --kind-group: #6d4fd1;
+
+  --norm-4: #a86f00;
+  --norm-other: #6b6b6b;
+  --norm-raw: #858585;
 }
 
 * {
@@ -30,10 +214,38 @@ body,
 }
 
 body {
-  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  font-family: var(--font-ui);
   background: var(--bg);
   color: var(--text);
   font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Only for a screen reader. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* The first stop for a keyboard: past the toolbar, straight to the design. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -40px;
+  z-index: 1000;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.skip-link:focus {
+  top: 8px;
 }
 
 .app {
@@ -42,67 +254,408 @@ body {
   height: 100%;
 }
 
-/* Single row, never wraps and never pushes the window into a horizontal
-   scrollbar. Everything that can lose width does so in a deliberate order:
-   the brand ellipsises first, then the project name and load select shrink,
-   while the tabs and the run/generate actions keep their full size - losing
-   the buttons you came to press is worse than losing a label. */
+/* The header: the brand and the tabs (.toolbar-main), then the tools - undo,
+   the project, run / generate / valid (.toolbar-tools). One row where it all
+   fits; below that two, the tools under the tabs, so nothing is lost - the
+   buttons you came to press least of all. Within a row, what can give way
+   does so in a set order: the brand's subtitle, then its name, then the
+   project name and load select shrink, then the tab labels go to icons. A row
+   still too narrow scrolls rather than clipping. */
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: var(--panel);
+  gap: 6px 16px;
+  min-height: 52px;
+  padding: 0 12px;
+  background: var(--header);
   border-bottom: 1px solid var(--border);
-  flex-wrap: nowrap;
   min-width: 0;
-  /* Scroll rather than clip. `overflow: hidden` here hides the fact that a
-     child has been squeezed past its content, which paints text over its
-     neighbors instead of admitting it does not fit. */
+  /* The window's width, never the page's: a tab's content wider than the
+     window scrolls under the header, which stays put. */
+  max-width: 100vw;
+  position: sticky;
+  left: 0;
+}
+
+.toolbar-main,
+.toolbar-tools {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  /* Scroll rather than clip: `overflow: hidden` would paint a squeezed
+     child's text over its neighbors instead of admitting it does not fit. */
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
 }
-
-.toolbar > * {
+.toolbar-main {
+  gap: 10px;
+  flex: 0 0 auto;
+}
+.toolbar-tools {
+  gap: 8px;
+  flex: 1 1 auto;
+}
+.toolbar-main > *,
+.toolbar-tools > * {
   flex-shrink: 0;
 }
+/* The focus ring is drawn outside a control: room for it in a scrolling row. */
+.toolbar-main,
+.toolbar-tools {
+  padding: 4px 3px;
+  margin: -4px -3px;
+}
 
+@media (max-width: 1320px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px 12px;
+  }
+  .toolbar-main {
+    flex: none;
+  }
+}
+
+/* The logo's mark and its wordmark, set as text: "BlueSky" bold in sky blue,
+   "Sandbox" in the text color - as the lockup draws them. */
 .brand {
-  color: #fff;
-  margin-right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-right: 12px;
   flex-shrink: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  padding: 2px 6px 2px 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.brand:hover {
+  background: var(--surface-hover);
+}
+.brand-mark {
+  display: block;
+  flex: none;
+  border-radius: 50%;
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.1;
   white-space: nowrap;
 }
-
-.tabs {
-  display: flex;
-  gap: 4px;
+.brand-name {
+  font-family: var(--font-brand);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
+}
+.brand-name-blue {
+  font-weight: 700;
+  color: var(--sky);
+}
+.brand-app {
+  font-size: 11px;
+  color: var(--muted);
 }
 
-/* Below this the toolbar's controls need the brand's width, and the brand is
-   the one element carrying no function, so it goes first. */
-@media (max-width: 1240px) {
-  .brand {
+/* The brand is the one part of the header carrying no function, so it gives
+   way first - its mark stays. On one row it shares the width with the tools;
+   on two, the tabs' row is its own. */
+@media (max-width: 1600px) {
+  .brand-app {
+    display: none;
+  }
+}
+@media (max-width: 1420px) and (min-width: 1321px) {
+  .brand-text {
+    display: none;
+  }
+}
+@media (max-width: 1320px) and (min-width: 900px) {
+  .brand-app {
+    display: flex;
+  }
+}
+@media (max-width: 520px) {
+  .brand-text {
     display: none;
   }
 }
 
-.tab {
-  background: transparent;
-  color: var(--text);
-  border: 1px solid transparent;
-  padding: 4px 12px;
-  border-radius: 4px;
-  cursor: pointer;
+.tabs [role="tablist"] {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--surface-low);
+  border: 1px solid var(--border-subtle);
 }
 
+/* A tab: icon and label, 32px tall to hit. The open one is filled with the
+   accent; a hover lifts the others. */
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.tab svg {
+  flex: none;
+  opacity: 0.85;
+}
+.tab:not(.active):hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
 .tab.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
+  box-shadow: 0 1px 2px var(--shadow);
+}
+.tab.active svg {
+  opacity: 1;
+}
+@media (max-width: 720px) {
+  /* Icons only - the label stays, for a screen reader. */
+  .tab-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .tab {
+    padding: 0 9px;
+  }
+}
+
+/* A button in the status bar: on the accent, like its text. */
+.statusbar-btn {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--on-accent);
+  font-size: 12px;
+}
+.statusbar-btn:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: transparent;
+}
+.statusbar-btn:focus-visible {
+  outline-color: var(--on-accent);
+}
+
+/* About: the lockup, who made it, whose work it stands on. */
+.modal.about-modal {
+  width: 560px;
+  max-width: 92vw;
+  height: auto;
+  max-height: 88vh;
+}
+.about-body {
+  padding: 20px 24px 22px;
+  overflow-y: auto;
+  line-height: 1.55;
+}
+.about-body p {
+  margin: 0 0 10px;
+}
+.about-body a {
+  color: var(--link);
+}
+.about-lockup {
+  display: block;
+  height: 56px;
+  width: auto;
+  margin-bottom: 6px;
+}
+.about-lead {
+  font-family: var(--font-brand);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.about-version {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.about-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.about-section h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* The developers' cards: equal columns, equal heights. */
+.about-partners {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+.about-partner {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-height: 72px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-low);
+  color: var(--text);
+  text-decoration: none;
+}
+a.about-partner:hover {
+  border-color: var(--accent-border);
+}
+/* One row height for every card's logos, so the names below line up. */
+.about-partner-logos {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+}
+.about-partner-logo {
+  display: block;
+  width: auto;
+  max-width: 160px;
+  object-fit: contain;
+  object-position: left center;
+}
+.about-partner-name {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.about-partner-name strong {
+  font-family: var(--font-brand);
+  font-size: 14px;
+  color: var(--text-strong);
+}
+.about-partner-name span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.about-foot {
+  margin-top: 18px !important;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Light, dark, or the system's: in the status bar, on the accent. */
+.theme-switch {
+  display: flex;
+  gap: 2px;
+  margin: -2px -6px -2px 0;
+}
+.theme-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  width: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--on-accent-muted);
+}
+.theme-switch button:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--on-accent);
+}
+.theme-switch button.on {
+  background: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.5);
+  color: var(--on-accent);
+}
+.theme-switch button:focus-visible {
+  outline-color: var(--on-accent);
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+@media (max-width: 700px) {
+  .generate-more {
+    display: none;
+  }
+}
+/* Phone width: the project's two pairs a line each. */
+@media (max-width: 480px) {
+  .toolbar-tools > .toolbar-group {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .toolbar-tools .toolbar-group > .joined {
+    flex: 1 1 100%;
+  }
+}
+
+/* Narrower still, the tools take two lines: undo and the project, then the
+   design's actions, at the right. */
+@media (max-width: 680px) {
+  .toolbar-tools {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    overflow-x: visible;
+  }
+  .toolbar-tools > .spacer,
+  .toolbar-tools > .toolbar-divider {
+    display: none;
+  }
+  /* The design's actions on a line of their own, at the right. */
+  .toolbar-actions {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+  /* The project shares its line with undo, its fields giving way to fit. */
+  .toolbar-tools > .toolbar-group {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .toolbar-group > .joined {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .toolbar .toolbar-group .name-input {
+    flex: 1 1 120px;
+    min-width: 56px;
+  }
+  .toolbar .toolbar-group .load-select {
+    flex: 1 1 140px;
+    width: auto;
+    min-width: 88px;
+  }
 }
 
 .spacer {
@@ -110,9 +663,7 @@ body {
 }
 
 .undo-redo {
-  display: flex;
-  gap: 2px;
-  margin-left: 8px;
+  margin-left: 4px;
 }
 
 .undo-redo button {
@@ -156,31 +707,46 @@ body {
   color: var(--text);
 }
 :where(button) {
-  background: #2f2f31;
-  border: 1px solid #474749;
+  background: var(--raised);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 4px 10px;
   line-height: 16px;
   cursor: pointer;
 }
 :where(button:not(:disabled):hover) {
-  background: #3a3a3c;
-  border-color: #58585a;
+  background: var(--raised-hover);
+  border-color: var(--border-strong);
 }
 :where(select, input:not([type="checkbox"], [type="radio"], [type="range"])) {
-  background: #1b1b1c;
-  border: 1px solid #474749;
+  background: var(--sunken);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 4px 8px;
   line-height: 16px;
 }
 :where(input, textarea)::placeholder {
-  color: #6c6c6c;
+  color: var(--placeholder);
 }
-:where(button, select, input, textarea):focus-visible {
-  outline: none;
+/* Focus is a solid ring a keyboard user can always find: 2px, offset from
+   the control, in a color with 3:1 against every surface. */
+:where(button, select, input, textarea, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+:where(select, input, textarea):focus-visible {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1.5s !important;
+    transition-duration: 0s !important;
+  }
 }
 
 button:disabled {
@@ -233,34 +799,90 @@ button:disabled {
 }
 
 .generate-btn {
-  border-color: var(--accent);
-  color: #cfe3ff;
-}
-
-.generate-btn:not(:disabled):hover {
   background: var(--accent);
-  color: #fff;
-}
-
-.badge {
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
+  border-color: var(--accent);
+  color: var(--on-accent);
   font-weight: 600;
 }
 
+.generate-btn:not(:disabled):hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--on-accent);
+}
+
+/* The toolbar's controls: 32px tall, easy to hit. */
+.toolbar :where(button:not(.tab), input, .picker-trigger) {
+  min-height: 32px;
+  border-radius: 6px;
+}
+
+/* Joined: controls side by side as one - a field and its button, a pair of
+   buttons, a segmented choice. They share their borders and only the group's
+   outer corners are rounded. A hovered or focused member is raised, so its
+   whole border and focus ring show over its neighbors'. */
+.joined {
+  --joined-radius: 6px;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+.joined.joined > * {
+  margin: 0;
+  border-radius: 0;
+}
+.joined.joined > * + * {
+  margin-left: -1px;
+}
+.joined.joined > :first-child {
+  border-top-left-radius: var(--joined-radius);
+  border-bottom-left-radius: var(--joined-radius);
+}
+.joined.joined > :last-child {
+  border-top-right-radius: var(--joined-radius);
+  border-bottom-right-radius: var(--joined-radius);
+}
+.joined > :hover,
+.joined > :focus-visible,
+.joined > :focus-within {
+  position: relative;
+  z-index: 1;
+}
+/* A picker is a wrapper around its trigger: the trigger takes its corners. */
+.joined .picker-trigger {
+  border-radius: inherit;
+}
+.joined > .picker {
+  display: flex;
+}
+.joined > .picker > .picker-trigger {
+  flex: 1;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .badge.ok {
-  background: #14532d;
-  color: #4ade80;
+  background: var(--success-bg);
+  color: var(--success);
 }
 
 .badge.error {
-  background: #4c1d1d;
-  color: #f87171;
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 .badge.pending {
-  background: #333;
+  background: var(--raised);
   color: var(--muted);
 }
 
@@ -313,19 +935,19 @@ button:disabled {
   gap: 1px;
   padding: 5px 8px;
   margin-bottom: 4px;
-  border: 1px solid #363638;
+  border: 1px solid var(--border-subtle);
   border-radius: 4px;
-  background: #1f1f20;
+  background: var(--surface-low);
   cursor: pointer;
 }
 
 .route-list-row:hover {
-  border-color: #5a5a5c;
+  border-color: var(--border-strong);
 }
 
 .route-list-row.on {
   border-color: var(--accent);
-  background: #1d2a3d;
+  background: var(--accent-soft);
 }
 
 .route-list-name {
@@ -368,7 +990,7 @@ button:disabled {
 }
 
 .danger-btn {
-  color: #f87171;
+  color: var(--danger);
 }
 
 .route-delete-step {
@@ -377,8 +999,8 @@ button:disabled {
 }
 
 .danger-btn:not(:disabled):hover {
-  border-color: #f87171;
-  background: #3a1f1f;
+  border-color: var(--danger);
+  background: var(--danger-bg);
 }
 
 .route-graph-area {
@@ -446,9 +1068,9 @@ button:disabled {
   padding: 5px 9px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: #2a2a2b;
+  background: var(--surface);
   font-size: 12px;
-  color: var(--fg, #ddd);
+  color: var(--fg, var(--text));
   white-space: nowrap;
 }
 
@@ -457,11 +1079,11 @@ button:disabled {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
-.rf-waypoint { background: #1f3a44; border-color: #2f6b7e; }
-.rf-subroute { background: #3a2f44; border-color: #6b4f8e; }
-.rf-start { background: #243524; border-color: #3f6b3f; }
-.rf-branch { background: #44381f; border-color: #8e6b2f; border-radius: 50%; padding: 6px 8px; }
-.rf-merge { background: #333; border-radius: 50%; padding: 0; }
+.rf-waypoint { background: var(--node-teal-bg); border-color: var(--node-teal); }
+.rf-subroute { background: var(--node-purple-bg); border-color: var(--node-purple); }
+.rf-start { background: var(--node-green-bg); border-color: var(--node-green); }
+.rf-branch { background: var(--node-amber-bg); border-color: var(--node-amber); border-radius: 50%; padding: 6px 8px; }
+.rf-merge { background: var(--raised); border-radius: 50%; padding: 0; }
 
 .rf-node-x {
   background: none;
@@ -471,7 +1093,7 @@ button:disabled {
   font-size: 11px;
   padding: 0;
 }
-.rf-node-x:hover { color: #f87171; }
+.rf-node-x:hover { color: var(--danger); }
 
 /* A node's dots show on hover: drag from the right one to add or branch. */
 .rf-handle {
@@ -486,8 +1108,8 @@ button:disabled {
 .rf-merge:hover .rf-handle { opacity: 1; }
 .rf-handle.react-flow__handle-right:hover { background: var(--accent); }
 /* While a connection is dragged, the targets it may end on light up. */
-.react-flow__handle.connectingto.valid { opacity: 1; background: #4ade80; }
-.react-flow__handle.connectingto:not(.valid) { opacity: 1; background: #f87171; }
+.react-flow__handle.connectingto.valid { opacity: 1; background: var(--success); }
+.react-flow__handle.connectingto:not(.valid) { opacity: 1; background: var(--danger); }
 .rf-merge { width: 12px; height: 12px; }
 
 /* An edge's drop band, and the edge a waypoint is dragged over. */
@@ -526,7 +1148,7 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 6px 18px var(--shadow);
 }
 .route-popover input {
   width: 100%;
@@ -545,7 +1167,7 @@ button:disabled {
   padding: 4px 6px;
 }
 .route-popover-list button:hover {
-  background: #2a2d2e;
+  background: var(--surface-hover);
 }
 
 .map-area {
@@ -631,7 +1253,7 @@ button:disabled {
   top: 10px;
   left: 10px;
   z-index: 5;
-  background: rgba(37, 37, 38, 0.9);
+  background: var(--overlay);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
@@ -650,12 +1272,12 @@ button:disabled {
 }
 
 .map-error {
-  color: #f87171;
+  color: var(--danger);
   white-space: pre-wrap;
 }
 
 .map-warning {
-  color: #fbbf24;
+  color: var(--warning);
   white-space: pre-wrap;
 }
 
@@ -680,7 +1302,7 @@ button:disabled {
 
 .file-tree {
   flex: none;
-  background: #1b1b1b;
+  background: var(--sunken);
   border-right: 1px solid var(--border);
   overflow: auto;
   padding: 6px 0;
@@ -707,12 +1329,12 @@ button:disabled {
 }
 
 .file-item:hover {
-  background: #2a2d2e;
+  background: var(--surface-hover);
 }
 
 .file-item.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .file-name {
@@ -757,7 +1379,7 @@ button:disabled {
 }
 
 .error-text {
-  color: #f87171;
+  color: var(--danger);
   white-space: pre-wrap;
   font-size: 12px;
 }
@@ -844,14 +1466,14 @@ button:disabled {
   color: var(--text);
 }
 .eye-toggle.off {
-  color: #f87171;
+  color: var(--danger);
 }
 .lock-toggle {
   opacity: 0.5;
 }
 .lock-toggle.on {
   opacity: 1;
-  color: #fbbf24;
+  color: var(--warning);
 }
 
 /* Search box */
@@ -869,7 +1491,7 @@ button:disabled {
   padding: 0;
   max-height: 260px;
   overflow: auto;
-  background: #1b1b1b;
+  background: var(--sunken);
   border: 1px solid var(--border);
   border-radius: 4px;
 }
@@ -889,12 +1511,12 @@ button:disabled {
 }
 
 .search-results .result:hover {
-  background: #2a2d2e;
+  background: var(--surface-hover);
 }
 
 .search-results .add {
   border: none;
-  background: #2563eb;
+  background: var(--accent);
   border-radius: 0;
   padding: 5px 9px;
 }
@@ -909,13 +1531,13 @@ button:disabled {
 }
 
 .tag.apt {
-  background: #7c5b13;
-  color: #ffd98a;
+  background: var(--warning-strong-bg);
+  color: var(--warning-strong-text);
 }
 
 .tag.wpt {
-  background: #234;
-  color: #9cf;
+  background: var(--accent-soft);
+  color: var(--link);
 }
 
 /* Design (properties) panel */
@@ -949,7 +1571,7 @@ button:disabled {
   top: 50%;
   transform: translate(-50%, -50%);
   border-radius: 2px;
-  background: #5a5a5c;
+  background: var(--border-strong);
 }
 .resizer-x::after {
   width: 3px;
@@ -961,7 +1583,7 @@ button:disabled {
 }
 .resizer:hover::after,
 .resizer.dragging::after {
-  background: #fff;
+  background: var(--text-strong);
 }
 .resizer-x {
   width: 6px;
@@ -1004,12 +1626,12 @@ button:disabled {
   height: 28px;
   transform: translate(-50%, -50%);
   border-radius: 2px;
-  background: #5a5a5c;
+  background: var(--border-strong);
 }
 
 .panel-tabs {
   display: flex;
-  gap: 2px;
+  --joined-radius: 5px;
   position: sticky;
   top: 0;
   background: var(--panel);
@@ -1023,13 +1645,13 @@ button:disabled {
   flex: 1;
   padding: 5px 4px;
   font-size: 11px;
-  background: #2a2a2b;
+  background: var(--surface);
   border: 1px solid var(--border);
 }
 
 .panel-tab.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -1054,7 +1676,7 @@ button:disabled {
 }
 
 .card {
-  background: #2a2a2b;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 8px;
@@ -1207,11 +1829,11 @@ button:disabled {
   padding: 7px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: #2f2f31;
+  background: var(--raised);
 }
 
 .route-item:hover {
-  border-color: #5f7eb7;
+  border-color: var(--accent-border);
 }
 
 .route-item-head {
@@ -1264,8 +1886,8 @@ button:disabled {
   height: 15px;
   padding: 0 3px;
   border-radius: 8px;
-  background: #1f2733;
-  color: #8fb3e0;
+  background: var(--accent-soft);
+  color: var(--accent-text);
   font-size: 9px;
   font-weight: 700;
 }
@@ -1295,12 +1917,12 @@ button:disabled {
 .link {
   background: transparent;
   border: none;
-  color: #6ab0ff;
+  color: var(--link);
   padding: 2px 4px;
 }
 
 .link.danger {
-  color: #f87171;
+  color: var(--danger);
 }
 
 .radio {
@@ -1337,18 +1959,18 @@ button:disabled {
 }
 
 .subroute-chip {
-  background: #2f4a3a;
-  color: #cfead8;
+  background: var(--success-soft);
+  color: var(--success-text);
 }
 
 /* A {choice} branch step: full-width block within the step row, holding one
    editable option list per branch. */
 .route-branch {
   flex: 1 0 100%;
-  border: 1px solid #4a5a3a;
-  border-left: 3px solid #8fb36a;
+  border: 1px solid var(--green-border);
+  border-left: 3px solid var(--green-line);
   border-radius: 5px;
-  background: rgba(143, 179, 106, 0.08);
+  background: var(--green-soft);
   padding: 4px 6px 6px;
 }
 
@@ -1361,7 +1983,7 @@ button:disabled {
 .route-branch-title {
   font-size: 11px;
   font-weight: 700;
-  color: #b6d48a;
+  color: var(--green-text);
   letter-spacing: 0.04em;
 }
 
@@ -1382,7 +2004,7 @@ button:disabled {
 .route-branch-label {
   font-size: 10px;
   font-weight: 700;
-  color: #9bb0c8;
+  color: var(--muted);
   flex: 1;
 }
 
@@ -1407,22 +2029,22 @@ button:disabled {
 
 /* A waypoint step carrying a route-local crossing restriction. */
 .constrained-chip {
-  border: 1px solid #6a5a3a;
-  background: rgba(212, 175, 106, 0.12);
+  border: 1px solid var(--warning-border);
+  background: var(--warning-soft);
 }
 
 .route-xing {
   font-size: 9px;
   font-weight: 700;
-  color: #e0c48f;
-  background: #3a3324;
+  color: var(--warning-text);
+  background: var(--warning-soft);
   border-radius: 6px;
   padding: 0 4px;
   white-space: nowrap;
 }
 
 .chip-cfg.on {
-  color: #e0c48f;
+  color: var(--warning-text);
 }
 
 .route-xing-edit {
@@ -1505,7 +2127,7 @@ button:disabled {
 .geo-add {
   font-size: 11px;
   padding: 1px 7px;
-  background: #2a2a2b;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;
 }
@@ -1516,20 +2138,20 @@ button:disabled {
   gap: 7px;
   padding: 5px 8px;
   margin-bottom: 4px;
-  border: 1px solid #363638;
+  border: 1px solid var(--border-subtle);
   border-radius: 4px;
-  background: #1f1f20;
+  background: var(--surface-low);
   cursor: pointer;
   font-size: 12px;
 }
 
 .geo-row:hover {
-  border-color: #5a5a5c;
-  background: #262628;
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
 }
 
 .geo-row.selected {
-  background: #1d2a3d;
+  background: var(--accent-soft);
   border-color: var(--accent);
 }
 
@@ -1538,7 +2160,7 @@ button:disabled {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   color: var(--muted);
-  background: #1f1f20;
+  background: var(--surface-low);
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 1px 5px;
@@ -1571,7 +2193,7 @@ button:disabled {
   background: transparent;
   border: none;
   padding: 2px 0;
-  color: #6ab0ff;
+  color: var(--link);
 }
 .geo-back:hover {
   text-decoration: underline;
@@ -1579,10 +2201,10 @@ button:disabled {
 
 /* The spawn settings, folded: labels in one column, fields beside them. */
 .geo-settings {
-  border: 1px solid #363638;
+  border: 1px solid var(--border-subtle);
   border-radius: 4px;
   margin-bottom: 6px;
-  background: #1f1f20;
+  background: var(--surface-low);
 }
 .geo-settings > summary {
   padding: 5px 8px;
@@ -1591,7 +2213,7 @@ button:disabled {
   font-size: 12px;
 }
 .geo-settings[open] > summary {
-  border-bottom: 1px solid #363638;
+  border-bottom: 1px solid var(--border-subtle);
 }
 .geo-settings > :not(summary) {
   padding: 0 10px;
@@ -1657,7 +2279,7 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 5px;
   margin-bottom: 6px;
-  background: #242425;
+  background: var(--surface-low);
 }
 
 .field-group-head {
@@ -1709,7 +2331,7 @@ button:disabled {
 
 .coord-summary {
   margin-left: auto;
-  color: var(--fg, #ddd);
+  color: var(--fg, var(--text));
   font-size: 11px;
 }
 
@@ -1754,7 +2376,7 @@ button:disabled {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
-  color: #e5c07b;
+  color: var(--warning-text);
 }
 
 .hook-notice span {
@@ -1768,12 +2390,12 @@ button:disabled {
 }
 
 .hook-sig-def {
-  color: #9cdcfe;
+  color: var(--syn-property);
   font-weight: 600;
 }
 
 .hook-sig-name {
-  color: #dcdcaa; /* Monaco/VS function-name yellow */
+  color: var(--syn-function); /* Monaco/VS function-name yellow */
   font-weight: 700;
 }
 
@@ -1825,9 +2447,9 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: #1f6f43;
-  border-color: #2c8a57;
-  color: #eafff2;
+  background: var(--run-bg);
+  border-color: var(--run-border);
+  color: var(--run-text);
   font-weight: 600;
 }
 
@@ -1837,7 +2459,7 @@ button:disabled {
 
 .view-toggles {
   display: flex;
-  gap: 2px;
+  --joined-radius: 4px;
 }
 
 .run-modal {
@@ -1881,7 +2503,7 @@ button:disabled {
 }
 
 .run-status.error {
-  color: #f08a8a;
+  color: var(--danger);
 }
 
 /* Pulsing dot while the run is live. */
@@ -1889,7 +2511,7 @@ button:disabled {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #5ad17a;
+  background: var(--success);
   flex: none;
   animation: run-pulse 1.4s ease-in-out infinite;
 }
@@ -1907,7 +2529,7 @@ button:disabled {
 }
 
 .run-log-panel.crashed {
-  border-color: #7a3a3a;
+  border-color: var(--danger-border);
 }
 
 .run-log-head {
@@ -1920,12 +2542,12 @@ button:disabled {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-tint);
 }
 
 .run-log-panel.crashed .run-log-head {
-  color: #f0a0a0;
-  background: rgba(122, 58, 58, 0.18);
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .run-log {
@@ -1938,27 +2560,27 @@ button:disabled {
   line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #d8d8d8;
+  color: var(--text);
 }
 
 .view-toggle {
   font-size: 10px;
   padding: 3px 6px;
-  background: #2a2a2a;
+  background: var(--surface);
   color: var(--muted);
 }
 
 .view-toggle.on {
-  background: #2f4a3a;
-  color: #cfead8;
-  border-color: #3a6b4f;
+  background: var(--success-soft);
+  color: var(--success-text);
+  border-color: var(--success-border);
 }
 
 .spinner {
   width: 11px;
   height: 11px;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #fff;
+  border: 2px solid var(--spinner-track);
+  border-top-color: var(--text-strong);
   border-radius: 50%;
   display: inline-block;
   animation: spin 0.7s linear infinite;
@@ -1978,7 +2600,7 @@ button:disabled {
   gap: 6px;
   width: 100%;
   text-align: left;
-  background: #1b1b1c;
+  background: var(--sunken);
 }
 
 .picker-trigger.open {
@@ -2011,7 +2633,7 @@ button:disabled {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 24px var(--shadow);
   overflow: hidden;
 }
 
@@ -2057,7 +2679,7 @@ button:disabled {
 
 .picker-opt.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .picker-opt.disabled {
@@ -2071,7 +2693,7 @@ button:disabled {
 }
 
 .picker-opt.active.current .picker-opt-name::after {
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .picker-opt-name {
@@ -2085,7 +2707,7 @@ button:disabled {
 }
 
 .picker-opt.active .picker-opt-doc {
-  color: #e5edff;
+  color: var(--on-accent-muted);
 }
 
 .route-assign {
@@ -2132,7 +2754,7 @@ button:disabled {
 }
 
 .rel-badge {
-  color: #cfb06a;
+  color: var(--warning-text);
   font-size: 10px;
   font-weight: 600;
 }
@@ -2324,15 +2946,15 @@ button:disabled {
 
 .chip.member {
   cursor: pointer;
-  background: #2a2a2a;
+  background: var(--surface);
   color: var(--muted);
   border: 1px solid var(--border);
 }
 
 .chip.member.on {
-  background: #2f4a3a;
-  color: #cfead8;
-  border-color: #3a6b4f;
+  background: var(--success-soft);
+  color: var(--success-text);
+  border-color: var(--success-border);
 }
 
 .strategy-note {
@@ -2362,7 +2984,7 @@ button:disabled {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 4px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 6px 18px var(--shadow);
 }
 
 .field-picker-empty {
@@ -2395,7 +3017,7 @@ button:disabled {
 
 .field-picker-opt.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .field-picker-opt-name {
@@ -2412,8 +3034,8 @@ button:disabled {
 }
 
 .field-picker-opt.active .field-picker-opt-tag {
-  border-color: #e5edff;
-  color: #e5edff;
+  border-color: var(--on-accent-muted);
+  color: var(--on-accent-muted);
 }
 
 .field-picker-opt-doc {
@@ -2423,7 +3045,7 @@ button:disabled {
 }
 
 .field-picker-opt.active .field-picker-opt-doc {
-  color: #e5edff;
+  color: var(--on-accent-muted);
 }
 
 .chips {
@@ -2437,21 +3059,21 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: #2f3a4a;
-  color: #cfe3ff;
+  background: var(--accent-soft);
+  color: var(--accent-text);
   border-radius: 10px;
   padding: 2px 4px 2px 8px;
   font-size: 11px;
 }
 
 .invalid-chip {
-  border: 1px solid #ff6b6b;
-  background: #4a2630;
-  color: #ffe5e5;
+  border: 1px solid var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger-text);
 }
 
 .chip-sig {
-  color: #8ba6c9;
+  color: var(--accent-text);
   font-size: 10px;
   font-family: ui-monospace, monospace;
 }
@@ -2467,7 +3089,7 @@ button:disabled {
 .chip-x {
   background: transparent;
   border: none;
-  color: #9ab;
+  color: var(--muted);
   padding: 0 2px;
   font-size: 10px;
 }
@@ -2492,7 +3114,7 @@ button:disabled {
 .sample-table td {
   text-align: left;
   padding: 2px 4px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .sample-table th {
@@ -2504,7 +3126,7 @@ button:disabled {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2532,7 +3154,7 @@ button:disabled {
 }
 
 .modal-title {
-  color: #fff;
+  color: var(--text-strong);
   font-size: 14px;
   font-weight: 600;
 }
@@ -2562,7 +3184,7 @@ button:disabled {
 
 .file-list li.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .file-view {
@@ -2578,15 +3200,16 @@ button:disabled {
 /* Status bar */
 .statusbar {
   display: flex;
+  align-items: center;
   gap: 10px;
-  padding: 4px 10px;
+  padding: 5px 12px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 12px;
 }
 
 .statusbar.invalid {
-  background: #7f1d1d;
+  background: var(--danger-strong-bg);
 }
 
 .invalid-reason {
@@ -2600,7 +3223,7 @@ button:disabled {
 .chip-cfg {
   background: transparent;
   border: none;
-  color: #cfe3ff;
+  color: var(--accent-text);
   padding: 0 2px;
   font-size: 10px;
 }
@@ -2672,10 +3295,10 @@ button:disabled {
   padding: 10px;
   overflow: auto;
   max-height: 520px;
-  background: #1b1b1b;
+  background: var(--sunken);
   border: 1px solid var(--border);
   border-radius: 5px;
-  color: #d6e1f0;
+  color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
@@ -2705,7 +3328,7 @@ button:disabled {
 
 .trail-location {
   margin-left: 8px;
-  color: var(--muted, #8a93a3);
+  color: var(--muted, var(--muted));
 }
 
 .trail-entry .source-profile {
@@ -2751,14 +3374,14 @@ button:disabled {
   margin-top: 6px;
   padding: 7px 9px;
   text-align: left;
-  background: #2a2a2b;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 5px;
 }
 
 .code-ref-card:hover {
-  border-color: #5f7eb7;
-  background: #2f3137;
+  border-color: var(--accent-border);
+  background: var(--surface-hover);
 }
 
 .code-ref-title {
@@ -2767,7 +3390,7 @@ button:disabled {
 }
 
 .code-ref-open {
-  color: #9ec5ff;
+  color: var(--link);
   font-size: 11px;
 }
 
@@ -2819,10 +3442,10 @@ button:disabled {
   cursor: pointer;
 }
 .sampling-row:hover {
-  background: #2a2d2e;
+  background: var(--surface-hover);
 }
 .sampling-row.on {
-  background: #1d3a5c;
+  background: var(--accent-soft);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .sampling-row-h {
@@ -2907,7 +3530,7 @@ button:disabled {
 }
 .seg > button.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .checkbox-row {
@@ -2929,7 +3552,7 @@ button:disabled {
   padding: 3px 4px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: #272729;
+  background: var(--surface);
 }
 
 .stack-member .route-name {
@@ -2961,7 +3584,7 @@ button:disabled {
   line-height: 1.5;
   padding: 8px 10px;
   border-radius: 4px;
-  background: #1b1b1b;
+  background: var(--sunken);
   color: inherit;
   border: 1px solid var(--border);
 }
@@ -2978,11 +3601,11 @@ button:disabled {
   font-weight: 600;
   letter-spacing: 0.02em;
   vertical-align: 1px;
-  color: #2f7d8f;
-  background: rgba(47, 125, 143, 0.13);
+  color: var(--teal-text);
+  background: var(--teal-soft);
 }
 @media (prefers-color-scheme: dark) {
-  .picker-opt-badge { color: #7fd0e0; background: rgba(127, 208, 224, 0.15); }
+  .picker-opt-badge { color: var(--teal-text); background: var(--teal-soft); }
 }
 
 /* Hint marker: signals that a heading or label carries a hover explanation.
@@ -3025,10 +3648,10 @@ button:disabled {
   text-transform: none;
   white-space: normal;
   text-align: left;
-  color: #f2f5f7;
-  background: #1b2530;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  color: var(--tooltip-text);
+  background: var(--tooltip-bg);
+  border: 1px solid var(--tooltip-border);
+  box-shadow: 0 4px 14px var(--shadow);
   pointer-events: none;     /* never steals the hover that spawned it */
 }
 
@@ -3077,7 +3700,7 @@ button:disabled {
   background: transparent;
   cursor: pointer;
   font: inherit;
-  color: #d4d4d4;
+  color: var(--text);
 }
 
 .avail-name:hover {
@@ -3085,10 +3708,10 @@ button:disabled {
 }
 
 /* The same colors the editor gives these kinds. */
-.avail-parameter { color: #c586c0; }
-.avail-function { color: #dcdcaa; }
-.avail-class, .avail-module { color: #4ec9b0; }
-.avail-property, .avail-field { color: #9cdcfe; }
+.avail-parameter { color: var(--syn-parameter); }
+.avail-function { color: var(--syn-function); }
+.avail-class, .avail-module { color: var(--syn-class); }
+.avail-property, .avail-field { color: var(--syn-property); }
 
 .avail-detail {
   overflow: hidden;
@@ -3112,20 +3735,20 @@ button:disabled {
   column-gap: 8px;
   row-gap: 2px;
   padding: 5px 8px;
-  border: 1px solid #363638;
+  border: 1px solid var(--border-subtle);
   border-radius: 4px;
-  background: #1f1f20;
+  background: var(--surface-low);
   font-size: 12px;
   cursor: pointer;
 }
 
 .field-row:hover {
-  border-color: #5a5a5c;
-  background: #262628;
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
 }
 
 .field-row.invalid {
-  border-color: #f87171;
+  border-color: var(--danger);
 }
 
 /* After a move: what moved, what it means, and a way back. */
@@ -3135,9 +3758,9 @@ button:disabled {
   gap: 8px;
   margin: -2px 0 8px;
   padding: 6px 8px;
-  border: 1px solid #6b5a1f;
+  border: 1px solid var(--warning-border);
   border-radius: 4px;
-  background: #2b2616;
+  background: var(--warning-soft);
   font-size: 11px;
   line-height: 1.4;
 }
@@ -3148,7 +3771,7 @@ button:disabled {
 /* Its place in the list, and a grip to drag it by. */
 .field-row-grip {
   grid-column: 1;
-  color: #5a5a5c;
+  color: var(--border-strong);
   cursor: grab;
   font-size: 11px;
   line-height: 1;
@@ -3221,7 +3844,7 @@ button:disabled {
 }
 
 .field-row-x:hover {
-  color: #f87171;
+  color: var(--danger);
 }
 
 .field-row-params {
@@ -3381,7 +4004,7 @@ button:disabled {
 
 .mdp-row.lit td,
 .mdp-row.open td {
-  background: #2a2d2e;
+  background: var(--surface-hover);
 }
 
 .mdp-cols {
@@ -3416,7 +4039,7 @@ button:disabled {
 }
 
 .mdp-open > td {
-  background: #1b1b1b;
+  background: var(--sunken);
   padding: 10px 8px 12px;
   white-space: normal;
 }
@@ -3470,11 +4093,11 @@ button:disabled {
 }
 
 .mdp-grid {
-  stroke: #2c2c2c;
+  stroke: var(--grid-line);
 }
 
 .mdp-end {
-  stroke: #555;
+  stroke: var(--axis-line);
   stroke-dasharray: 2 3;
 }
 
@@ -3517,6 +4140,14 @@ button:disabled {
   align-items: start;
 }
 
+/* A column of cards, stacked without gaps. */
+.form-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
 /* A card: a titled, outlined group of settings. */
 .form-card {
   background: var(--panel);
@@ -3540,7 +4171,7 @@ button:disabled {
 .form-card-help {
   margin: 0;
   padding-top: 8px;
-  border-top: 1px solid #303030;
+  border-top: 1px solid var(--border-subtle);
   color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
@@ -3624,10 +4255,10 @@ button:disabled {
   width: 92px;
 }
 .generate-note.error b {
-  color: #f87171;
+  color: var(--danger);
 }
 .generate-note.warning b {
-  color: #fbbf24;
+  color: var(--warning);
 }
 .generate-note.info b {
   color: var(--muted);

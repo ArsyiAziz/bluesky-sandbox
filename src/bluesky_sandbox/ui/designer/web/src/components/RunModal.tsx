@@ -165,7 +165,7 @@ export default function RunModal({ spec, onClose }: { spec: SpecDict; onClose: (
           {(modeDriver?.views.length ?? 0) > 0 && (
             <div className="run-row">
               <span className="run-row-label">views</span>
-              <div className="view-toggles">
+              <div className="view-toggles joined">
                 {modeDriver!.views.map((v) => {
                   const on = views.includes(v);
                   return (

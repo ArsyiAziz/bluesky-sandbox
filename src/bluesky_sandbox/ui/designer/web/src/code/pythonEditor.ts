@@ -243,22 +243,41 @@ export function registerPythonIntel(monaco: any) {
   const completionKind = (kind: string) =>
     ({ module: K.Module, class: K.Class, function: K.Function, property: K.Property, field: K.Field, parameter: K.Variable, variable: K.Variable })[kind] ?? K.Value;
 
-  // Monaco styles a semantic token through the theme rule named after its type.
-  const colors: Record<string, string> = {
-    namespace: "4EC9B0",
-    class: "4EC9B0",
-    function: "DCDCAA",
-    property: "9CDCFE",
-    parameter: "C586C0",
-    variable: "D4D4D4",
+  // Monaco styles a semantic token through the theme rule named after its type;
+  // one set per designer theme, on that theme's editor background.
+  const themes: Record<string, { colors: Record<string, string>; background: string }> = {
+    "vs-dark": {
+      colors: {
+        namespace: "4EC9B0",
+        class: "4EC9B0",
+        function: "DCDCAA",
+        property: "9CDCFE",
+        parameter: "C586C0",
+        variable: "D4D4D4",
+      },
+      background: "#0b1220",
+    },
+    vs: {
+      colors: {
+        namespace: "267F99",
+        class: "267F99",
+        function: "795E26",
+        property: "001080",
+        parameter: "AF00DB",
+        variable: "13213A",
+      },
+      background: "#ffffff",
+    },
   };
-  monaco.editor.defineTheme("vs-dark", {
-    base: "vs-dark",
-    inherit: true,
-    rules: Object.entries(colors).map(([token, foreground]) => ({ token, foreground })),
-    colors: {},
-    semanticHighlighting: true,
-  });
+  for (const [name, { colors, background }] of Object.entries(themes)) {
+    monaco.editor.defineTheme(name, {
+      base: name as "vs" | "vs-dark",
+      inherit: true,
+      rules: Object.entries(colors).map(([token, foreground]) => ({ token, foreground })),
+      colors: { "editor.background": background, "editor.gutter.background": background },
+      semanticHighlighting: true,
+    });
+  }
 
   monaco.languages.registerDocumentSemanticTokensProvider("python", {
     getLegend: () => ({ tokenTypes: TOKEN_TYPES, tokenModifiers: [] }),

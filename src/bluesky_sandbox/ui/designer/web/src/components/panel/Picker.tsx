@@ -31,6 +31,7 @@ export function Picker({
   disabled = false,
   className = "",
   title,
+  ariaLabel,
 }: {
   value?: string;
   placeholder: string;
@@ -40,6 +41,8 @@ export function Picker({
   disabled?: boolean;
   className?: string;
   title?: string;
+  // What the picker is for, for a screen reader, when nothing visible says it.
+  ariaLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -193,6 +196,9 @@ export function Picker({
         type="button"
         ref={triggerRef}
         className={`picker-trigger ${open ? "open" : ""}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={onKeyDown}

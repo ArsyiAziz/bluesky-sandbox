@@ -1,9 +1,10 @@
 // Environment configuration: aircraft whitelist, timing, CD method, performance
 // model, the reward/termination/truncation code references, and the per-episode
 // airspace rotation editor.
+import { useEffect, useState } from "react";
 import type { SpecDict } from "../../api";
 import { Picker } from "./Picker";
-import { FormCard, FormRow, NumberInput } from "../form";
+import { FormCard, FormColumn, FormRow, NumberInput } from "../form";
 import { ValueField } from "./ValueField";
 import { designBounds, newGroupId } from "../../specHelpers";
 
@@ -141,8 +142,80 @@ export function RotationEditor({
   );
 }
 
-// Full env configuration: aircraft whitelist, timing, CD method, performance
-// model, and the reward/termination/truncation code references.
+// How strong the wind is: calm (none), steady (a mean wind), or gusting (with
+// turbulence) - read from the speeds themselves, nothing else saved.
+type WindMode = "calm" | "steady" | "gusting";
+const WIND_RANK: Record<WindMode, number> = { calm: 0, steady: 1, gusting: 2 };
+const windOf = (env: SpecDict): WindMode =>
+  (env.turbulence_kts ?? 0) > 0 ? "gusting" : (env.wind_kts ?? 0) > 0 ? "steady" : "calm";
+
+// The wind: none unless chosen. The fields show for the mode picked, and stay
+// while one is being typed - clearing the speed to retype it does not hide it;
+// only picking another mode does. A design whose values ask for more (one
+// loaded, or edited in the Code tab) shows its fields.
+function WindCard({ env, set }: { env: SpecDict; set: (patch: SpecDict) => void }) {
+  const [mode, setMode] = useState<WindMode>(() => windOf(env));
+  const saved = windOf(env);
+  useEffect(() => {
+    if (WIND_RANK[saved] > WIND_RANK[mode]) setMode(saved);
+  }, [saved, mode]);
+  const choose = (next: WindMode) => {
+    setMode(next);
+    const speed = (env.wind_kts ?? 0) > 0 ? env.wind_kts : 20;
+    const gust = (env.turbulence_kts ?? 0) > 0 ? env.turbulence_kts : 5;
+    if (next === "calm") set({ wind_kts: 0, turbulence_kts: 0 });
+    else if (next === "steady") set({ wind_kts: speed, turbulence_kts: 0 });
+    else set({ wind_kts: speed, turbulence_kts: gust });
+  };
+  return (
+    <FormCard
+      title="Wind"
+      help={
+        mode === "calm" ? undefined : (
+          <>Uniform, aviation-standard: the direction is where it blows <em>from</em> (270 is westerly, pushing aircraft east).{mode === "gusting" && " Turbulence adds a gust with that RMS, decorrelating over τ."} Applied at each reset.</>
+        )
+      }
+    >
+      <FormRow label="wind">
+        <Picker
+          searchable={false}
+          placeholder="calm"
+          value={mode}
+          onChange={(v) => choose((v || "calm") as WindMode)}
+          options={[
+            { value: "calm", description: "no wind" },
+            { value: "steady", description: "a uniform wind from one direction" },
+            { value: "gusting", description: "a uniform wind with turbulence" },
+          ]}
+        />
+      </FormRow>
+      {mode !== "calm" && (
+        <>
+          <FormRow label="direction" help="where it blows from">
+            <NumberInput unit="°" step={5} value={env.wind_dir_deg ?? 270} onChange={(v) => set({ wind_dir_deg: v ?? 270 })} />
+          </FormRow>
+          <FormRow label="speed" help="the mean">
+            <NumberInput unit="kt" step={5} min={0} value={env.wind_kts ?? 0} onChange={(v) => set({ wind_kts: v ?? 0 })} />
+          </FormRow>
+        </>
+      )}
+      {mode === "gusting" && (
+        <>
+          <FormRow label="turbulence" help="RMS">
+            <NumberInput unit="kt" step={1} min={0} value={env.turbulence_kts ?? 0} onChange={(v) => set({ turbulence_kts: v ?? 0 })} />
+          </FormRow>
+          <FormRow label="gust τ" help="how long a gust holds">
+            <NumberInput unit="s" step={5} min={0} value={env.gust_tau_s ?? 30} onChange={(v) => set({ gust_tau_s: v ?? 30 })} />
+          </FormRow>
+        </>
+      )}
+    </FormCard>
+  );
+}
+
+// Full env configuration, in two columns: what is flown - the simulation's
+// timing, the aircraft and their performance model - and the world it is flown
+// in: conflict detection, wind, automation.
 export function ConfigEditor({
   env,
   code,
@@ -169,127 +242,118 @@ export function ConfigEditor({
   const bs = catalog?.bluesky_defaults ?? {};
   return (
     <>
-      <FormCard title="Simulation" help="The step is how long one environment step lasts; the simulator advances in sim steps within it.">
-        <FormRow label="step (dt)" help="per environment step">
-          <NumberInput unit="s" step={0.1} min={0} value={env.dt} onChange={(v) => set({ dt: v })} />
-        </FormRow>
-        <FormRow label="sim step" help="per BlueSky update">
-          <NumberInput unit="s" step={0.01} min={0} placeholder={`${bs.simdt ?? "BlueSky"} (default)`}
-            value={env.simdt} onChange={(v) => set({ simdt: v })} />
-        </FormRow>
-        <FormRow label="conflict check" help="between detections; divides dt, a multiple of the sim step">
-          <NumberInput unit="s" step={env.simdt ?? bs.simdt} min={0} placeholder={`${bs.asas_dt ?? "BlueSky"} (default)`}
-            value={env.asas_dt} onChange={(v) => set({ asas_dt: v })} />
-        </FormRow>
-        <FormRow label="performance">
-          <Picker
-            searchable={false}
-            placeholder="openap"
-            value={env.performance_model ?? "openap"}
-            onChange={(v) => set({ performance_model: v })}
-            options={[{ value: "openap" }, { value: "bada" }]}
-          />
-        </FormRow>
-      </FormCard>
+      <FormColumn>
+        <FormCard title="Simulation" help="The step is how long one environment step lasts; the simulator advances in sim steps within it.">
+          <FormRow label="step (dt)" help="per environment step">
+            <NumberInput unit="s" step={0.1} min={0} value={env.dt} onChange={(v) => set({ dt: v })} />
+          </FormRow>
+          <FormRow label="sim step" help="per BlueSky update">
+            <NumberInput unit="s" step={0.01} min={0} placeholder={`${bs.simdt ?? "BlueSky"} (default)`}
+              value={env.simdt} onChange={(v) => set({ simdt: v })} />
+          </FormRow>
+          <FormRow label="performance">
+            <Picker
+              searchable={false}
+              placeholder="openap"
+              value={env.performance_model ?? "openap"}
+              onChange={(v) => set({ performance_model: v })}
+              options={[{ value: "openap" }, { value: "bada" }]}
+            />
+          </FormRow>
+        </FormCard>
 
-      <FormCard title="Aircraft" help="Each spawned aircraft's type is drawn from these.">
-        {availError ? (
-          <div className="error-text small">{model}: {availError}</div>
-        ) : (
-          <>
-            <label className="form-check" title="sample uniformly across every aircraft type in the model">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                disabled={available.length === 0}
-                onChange={(e) => set({ allowed_aircraft: e.target.checked ? [...available] : [] })}
-              />
-              every type in {model} ({available.length})
-            </label>
-            {!allSelected && (
-              <>
-                <div className="chips">
-                  {aircraft.map((ac, i) => (
-                    <span className="chip" key={`${ac}-${i}`}>
-                      {ac}
-                      <button className="chip-x" onClick={() => set({ allowed_aircraft: aircraft.filter((_, j) => j !== i) })}>
-                        ✕
-                      </button>
-                    </span>
-                  ))}
-                  {aircraft.length === 0 && <span className="muted">none yet</span>}
-                </div>
-                <Picker
-                  placeholder="+ add aircraft…"
-                  onChange={(v) => set({ allowed_aircraft: [...aircraft, v] })}
-                  options={available
-                    .filter((a) => !aircraftSet.has(a.toUpperCase()))
-                    .map((a) => ({ value: a }))}
+        <FormCard title="Aircraft" help="Each spawned aircraft's type is drawn from these.">
+          {availError ? (
+            <div className="error-text small">{model}: {availError}</div>
+          ) : (
+            <>
+              <label className="form-check" title="sample uniformly across every aircraft type in the model">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  disabled={available.length === 0}
+                  onChange={(e) => set({ allowed_aircraft: e.target.checked ? [...available] : [] })}
                 />
-              </>
-            )}
-          </>
-        )}
-      </FormCard>
+                every type in {model} ({available.length})
+              </label>
+              {!allSelected && (
+                <>
+                  <div className="chips">
+                    {aircraft.map((ac, i) => (
+                      <span className="chip" key={`${ac}-${i}`}>
+                        {ac}
+                        <button className="chip-x" onClick={() => set({ allowed_aircraft: aircraft.filter((_, j) => j !== i) })}>
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                    {aircraft.length === 0 && <span className="muted">none yet</span>}
+                  </div>
+                  <Picker
+                    placeholder="+ add aircraft…"
+                    onChange={(v) => set({ allowed_aircraft: [...aircraft, v] })}
+                    options={available
+                      .filter((a) => !aircraftSet.has(a.toUpperCase()))
+                      .map((a) => ({ value: a }))}
+                  />
+                </>
+              )}
+            </>
+          )}
+        </FormCard>
+      </FormColumn>
 
-      <FormCard title="Conflict detection" help="Detection always runs, for observations; resolution is off by default so the agent resolves. Unset values use BlueSky's. Applied at each reset.">
-        <FormRow label="method">
-          <Picker
-            searchable={false}
-            placeholder="CSTATEBASED"
-            value={env.cd_method ?? "CSTATEBASED"}
-            onChange={(v) => set({ cd_method: v })}
-            options={(catalog?.conflict?.cd_methods ?? ["CSTATEBASED", "STATEBASED"]).map((m: string) => ({ value: m }))}
-          />
-        </FormRow>
-        <FormRow label="resolution">
-          <Picker
-            searchable={false}
-            placeholder="off"
-            value={env.reso_method ?? "OFF"}
-            onChange={(v) => set({ reso_method: v === "OFF" ? null : v })}
-            options={(catalog?.conflict?.reso_methods ?? ["OFF", "MVP"]).map((m: string) => ({
-              value: m,
-              label: m === "OFF" ? "off (agent resolves)" : m,
-            }))}
-          />
-        </FormRow>
-        <FormRow label="zone radius">
-          <NumberInput unit="nm" step={0.5} min={0} placeholder="5 (default)" value={env.pz_radius_nm} onChange={(v) => set({ pz_radius_nm: v })} />
-        </FormRow>
-        <FormRow label="zone height">
-          <NumberInput unit="ft" step={100} min={0} placeholder="1000 (default)" value={env.pz_height_ft} onChange={(v) => set({ pz_height_ft: v })} />
-        </FormRow>
-        <FormRow label="lookahead">
-          <NumberInput unit="s" step={30} min={0} placeholder="300 (default)" value={env.lookahead_s} onChange={(v) => set({ lookahead_s: v })} />
-        </FormRow>
-      </FormCard>
+      <FormColumn>
+        <FormCard title="Conflict detection" help="Detection always runs, for observations; resolution is off by default so the agent resolves. Unset values use BlueSky's. Applied at each reset.">
+          <FormRow label="method">
+            <Picker
+              searchable={false}
+              placeholder="CSTATEBASED"
+              value={env.cd_method ?? "CSTATEBASED"}
+              onChange={(v) => set({ cd_method: v })}
+              options={(catalog?.conflict?.cd_methods ?? ["CSTATEBASED", "STATEBASED"]).map((m: string) => ({ value: m }))}
+            />
+          </FormRow>
+          <FormRow label="resolution">
+            <Picker
+              searchable={false}
+              placeholder="off"
+              value={env.reso_method ?? "OFF"}
+              onChange={(v) => set({ reso_method: v === "OFF" ? null : v })}
+              options={(catalog?.conflict?.reso_methods ?? ["OFF", "MVP"]).map((m: string) => ({
+                value: m,
+                label: m === "OFF" ? "off (agent resolves)" : m,
+              }))}
+            />
+          </FormRow>
+          <FormRow label="check every" help="between detections; divides dt, a multiple of the sim step">
+            <NumberInput unit="s" step={env.simdt ?? bs.simdt} min={0} placeholder={`${bs.asas_dt ?? "BlueSky"} (default)`}
+              value={env.asas_dt} onChange={(v) => set({ asas_dt: v })} />
+          </FormRow>
+          <FormRow label="zone radius">
+            <NumberInput unit="nm" step={0.5} min={0} placeholder="5 (default)" value={env.pz_radius_nm} onChange={(v) => set({ pz_radius_nm: v })} />
+          </FormRow>
+          <FormRow label="zone height">
+            <NumberInput unit="ft" step={100} min={0} placeholder="1000 (default)" value={env.pz_height_ft} onChange={(v) => set({ pz_height_ft: v })} />
+          </FormRow>
+          <FormRow label="lookahead">
+            <NumberInput unit="s" step={30} min={0} placeholder="300 (default)" value={env.lookahead_s} onChange={(v) => set({ lookahead_s: v })} />
+          </FormRow>
+        </FormCard>
 
-      <FormCard title="Wind" help={<>Uniform, aviation-standard: the direction is where it blows <em>from</em> (270 is westerly, pushing aircraft east). Turbulence adds a gust with that RMS, decorrelating over τ. Applied at each reset.</>}>
-        <FormRow label="direction" help="where it blows from">
-          <NumberInput unit="°" step={5} value={env.wind_dir_deg ?? 270} onChange={(v) => set({ wind_dir_deg: v ?? 270 })} />
-        </FormRow>
-        <FormRow label="speed" help="0 is calm">
-          <NumberInput unit="kt" step={5} min={0} value={env.wind_kts ?? 0} onChange={(v) => set({ wind_kts: v ?? 0 })} />
-        </FormRow>
-        <FormRow label="turbulence" help="RMS">
-          <NumberInput unit="kt" step={1} min={0} value={env.turbulence_kts ?? 0} onChange={(v) => set({ turbulence_kts: v ?? 0 })} />
-        </FormRow>
-        <FormRow label="gust τ" help="how long a gust holds">
-          <NumberInput unit="s" step={5} min={0} value={env.gust_tau_s ?? 30} onChange={(v) => set({ gust_tau_s: v ?? 30 })} />
-        </FormRow>
-      </FormCard>
+        <WindCard env={env} set={set} />
 
-      <FormCard title="Automation" help={<>What an aircraft on own navigation (LNAV + VNAV) does by itself, before any clearance.</>}>
-        <label className="form-check" title="a fix's arrival time (arrival slack on the waypoint) becomes a BlueSky RTA">
-          <input
-            type="checkbox"
-            checked={env.fly_arrival_times ?? false}
-            onChange={(e) => set({ fly_arrival_times: e.target.checked })}
-          />
-          meet arrival times (RTA): own navigation adjusts speed to be over each fix on time
-        </label>
-      </FormCard>
+        <FormCard title="Automation" help={<>What an aircraft on own navigation (LNAV + VNAV) does by itself.</>}>
+          <label className="form-check" title="a fix's arrival time (arrival slack on the waypoint) becomes a BlueSky RTA">
+            <input
+              type="checkbox"
+              checked={env.fly_arrival_times ?? false}
+              onChange={(e) => set({ fly_arrival_times: e.target.checked })}
+            />
+            meet arrival times (RTA): own navigation adjusts speed to be over each fix on time
+          </label>
+        </FormCard>
+      </FormColumn>
     </>
   );
 }

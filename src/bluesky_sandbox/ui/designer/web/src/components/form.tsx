@@ -16,6 +16,12 @@ export function Page({ title, intro, children }: { title: string; intro?: ReactN
   );
 }
 
+// A column of cards, stacked without gaps: a page of two keeps each card where
+// it is put at any width, one column under the other when narrow.
+export function FormColumn({ children }: { children: ReactNode }) {
+  return <div className="form-column">{children}</div>;
+}
+
 export function FormCard({
   title,
   help,
