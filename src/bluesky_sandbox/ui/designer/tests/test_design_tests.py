@@ -10,6 +10,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from bluesky_sandbox.checks import Case, Situation
+from bluesky_sandbox.cli import main as cli_main
 from bluesky_sandbox.ui.designer import codegen
 from bluesky_sandbox.ui.designer import spec as S
 from bluesky_sandbox.ui.designer.api import create_app
@@ -166,3 +167,62 @@ def test_half_an_action_case_is_refused():
     tests["cases"][0]["apply"] = {"field": "AltDeltaFt"}
     with pytest.raises(S.SpecError, match="an action and a value, or neither"):
         design_cases(_design(tests))
+
+
+_MY_TESTS = """import bluesky as bs
+
+
+def test_it_resets_with_aircraft(design_env):
+    design_env.reset(seed=0)
+    assert bs.traf.ntraf > 0
+
+
+def test_wrong_on_purpose(design_env):
+    design_env.reset(seed=0)
+    assert bs.traf.ntraf == 999, "not 999 aircraft"
+"""
+
+
+def _with_files(files: dict) -> S.DesignSpec:
+    tests = _tests()
+    tests["files"] = files
+    return _design(tests)
+
+
+def test_a_folder_keeps_test_files_as_files(tmp_path):
+    write_folder(_with_files({"test_mine.py": _MY_TESTS}), tmp_path)
+    assert (tmp_path / "tests" / "test_mine.py").read_text() == _MY_TESTS
+    assert "files" not in json.loads((tmp_path / CASES_FILE).read_text())
+    assert read_folder(tmp_path).tests["files"] == {"test_mine.py": _MY_TESTS}
+    write_folder(_with_files({}), tmp_path)  # dropped: the file goes too
+    assert not (tmp_path / "tests" / "test_mine.py").exists()
+
+
+@pytest.mark.parametrize(("name", "says"), [("mine.py", "test_<name>.py"), ("test_design.py", "the package's own")])
+def test_a_test_file_is_named_as_pytest_finds_it(name, says):
+    with pytest.raises(S.SpecError, match=says):
+        design_cases(_with_files({name: "pass\n"}))
+
+
+def test_a_package_runs_its_tests_with_pytest():
+    files = codegen.generate_task(_with_files({"test_mine.py": _MY_TESTS}), "pkg")
+    assert {"pkg/tests/conftest.py", "pkg/tests/test_design.py", "pkg/tests/test_mine.py"} <= set(files)
+    assert "def design_env" in files["pkg/tests/conftest.py"]
+    assert "check_fields(design_env)" in files["pkg/tests/test_design.py"]
+
+
+def test_the_designer_runs_the_test_files_after_the_cases():
+    response = TestClient(create_app()).post("/api/spec/test", json={"spec": _with_files({"test_mine.py": _MY_TESTS}).to_dict()})
+    tests = {r["name"]: r for r in map(json.loads, response.text.splitlines()) if r["kind"] == "test"}
+    assert tests["test_mine.py::test_it_resets_with_aircraft"]["ok"]
+    wrong = tests["test_mine.py::test_wrong_on_purpose"]
+    assert not wrong["ok"] and wrong["line"] == 11 and "not 999 aircraft" in wrong["error"]
+
+
+def test_the_command_line_runs_them_and_exits_as_pytest_does(tmp_path):
+    fixed = _tests()
+    fixed["cases"][1]["expected"] = 10_000  # what it flies at
+    write_folder(_design(fixed), tmp_path / "ok")
+    assert cli_main(["design", "test", str(tmp_path / "ok"), "-q", "-p", "no:warnings"]) == 0
+    write_folder(_with_files({"test_mine.py": _MY_TESTS}), tmp_path / "failing")
+    assert cli_main(["design", "test", str(tmp_path / "failing"), "-q", "-p", "no:warnings"]) == 1

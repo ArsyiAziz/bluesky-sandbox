@@ -284,6 +284,9 @@ A design is saved as a folder, its code as real Python modules:
 my_design/
   design.json          # the structure: shapes, elements, spawn, spaces, config
   design.schema.json   # what design.json may hold: any JSON editor completes and checks it
+  tests/
+    cases.json         # test cases: situations, and what a field should read in them
+    test_*.py          # your own pytest files; `design_env` is the design's env
   code/
     hooks.py           # the env hooks, as functions, after their setup
     task_info.py       # the task-info entries, as functions, after their setup
@@ -299,12 +302,17 @@ the file as the design runs it; it is rewritten on every save and never read
 back. A design saved earlier as one `.json` file stays one; it still shares
 best that way, and either form converts to the other.
 
+Tests are written in the Tests tab: situations, cases, and test files. A
+generated package holds them in its `tests/` folder, so `pytest` runs them there
+too.
+
 From the command line, without the designer:
 
 ```bash
 bluesky-sandbox design check   my_design                # build it; exit 1 on any error
 bluesky-sandbox design preview my_design --seed 3       # one episode's aircraft
 bluesky-sandbox design build   my_design --out tasks/   # its task package
+bluesky-sandbox design test    my_design                # field checks, cases, test files; exits as pytest does
 bluesky-sandbox design convert my_design.json my_design # a file to a folder, or back
 bluesky-sandbox design schema  --out design.schema.json
 ```

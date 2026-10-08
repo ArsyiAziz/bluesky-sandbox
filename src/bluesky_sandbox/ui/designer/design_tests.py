@@ -22,6 +22,7 @@ and :class:`~bluesky_sandbox.checks.Case` - read from them, so they cannot drift
 from __future__ import annotations
 
 import dataclasses
+import re
 from typing import Any
 
 from bluesky_sandbox.checks import Aircraft, Case, Situation, Tolerance
@@ -29,7 +30,20 @@ from bluesky_sandbox.checks import Aircraft, Case, Situation, Tolerance
 from .emit import _Emitter, field_imports
 from .spec import DesignSpec, FieldRef, SpecError
 
-__all__ = ["cases_module", "design_cases", "design_situations", "situation_of"]
+__all__ = [
+    "TEST_FILE",
+    "cases_module",
+    "design_cases",
+    "design_situations",
+    "design_test_files",
+    "situation_of",
+    "package_test_files",
+]
+
+#: What a design's own test file may be named: pytest finds it by the prefix.
+TEST_FILE = re.compile(r"^test_\w+\.py$")
+#: The files the package's tests folder holds already: a design's own may not.
+_GENERATED = ("conftest.py", "test_design.py")
 
 
 def _names(cls: type) -> set[str]:
@@ -81,6 +95,7 @@ def design_cases(spec: DesignSpec) -> list[tuple[dict[str, Any], dict[str, Field
     """The design's cases, each with its field references (``field``, and
     ``apply`` where it applies an action) - checked against its situations.
     Each case's dict is as stored; its fields are resolved where it runs."""
+    design_test_files(spec)
     situations = {s.name: s for s in design_situations(spec)}
     keys = _names(Case)
     out = []
@@ -127,6 +142,81 @@ def _required(cls: type) -> list[str]:
         for f in dataclasses.fields(cls)
         if f.name != "_" and f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
     ]
+
+
+def design_test_files(spec: DesignSpec) -> dict[str, str]:
+    """The design's own test files - pytest modules, by name - checked."""
+    tests = spec.tests or {}
+    unknown = set(tests) - {"situations", "cases", "files"}
+    if unknown:
+        raise SpecError(f"tests: no {', '.join(sorted(unknown))}")
+    files = tests.get("files") or {}
+    if not isinstance(files, dict):
+        raise SpecError("tests: files are a mapping, name to source")
+    for name, source in files.items():
+        if not TEST_FILE.match(str(name)):
+            raise SpecError(f"tests: a test file is named test_<name>.py, not {name!r}")
+        if name in _GENERATED:
+            raise SpecError(f"tests: {name} is the package's own - name the file differently")
+        if not isinstance(source, str):
+            raise SpecError(f"tests: {name} is not source code")
+    return dict(files)
+
+
+def package_test_files(spec: DesignSpec, package: str) -> dict[str, str]:
+    """The design's tests, as files of its generated package (paths relative
+    to it): ``cases.py``, and a ``tests`` folder - a ``design_env`` fixture,
+    a test for its field checks and each case, and its own test files - so
+    ``pytest`` runs them all. None for a design without tests."""
+    if not spec.tests:
+        return {}
+    files = design_test_files(spec)
+    out = {"cases.py": cases_module(spec, package) or "", "tests/conftest.py": _conftest(package)}
+    out["tests/test_design.py"] = _design_test(package)
+    out.update({f"tests/{name}": source for name, source in files.items()})
+    return out
+
+
+def _conftest(package: str) -> str:
+    return f'''"""Fixtures for this design's tests. Run them with ``pytest`` from the folder
+holding this package, or ``bluesky-sandbox design test`` on the design.
+"""
+
+import pytest
+
+from {package} import Env
+
+
+@pytest.fixture(scope="session")
+def design_env():
+    """The design's env, built once for the session. Reset it as a test needs:
+    the checks reset it themselves."""
+    env = Env(render_mode=None)
+    yield env.unwrapped
+    env.close()
+'''
+
+
+def _design_test(package: str) -> str:
+    return f'''"""The design's own checks: each field against itself, and each test case
+(``cases.py``)."""
+
+import pytest
+
+from bluesky_sandbox.checks import check_fields, run_cases
+from {package}.cases import CASES, SITUATIONS
+
+
+def test_each_field_agrees_with_itself(design_env):
+    check_fields(design_env).assert_ok()
+
+
+@pytest.mark.parametrize(
+    "case", CASES, ids=[f"{{i + 1}}-{{c.situation}}-{{type(c.field).__name__}}" for i, c in enumerate(CASES)]
+)
+def test_case(design_env, case):
+    run_cases(design_env, SITUATIONS, [case]).assert_ok()
+'''
 
 
 def cases_module(spec: DesignSpec, package: str | None = None) -> str | None:

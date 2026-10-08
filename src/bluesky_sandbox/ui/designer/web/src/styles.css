@@ -5159,3 +5159,38 @@ div.tests-sketch {
 .form-page:has(.tests-page) .form-page-body {
   max-width: 1440px;
 }
+.tests-file-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.tests-file-tab {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.tests-file-tab > button:first-child {
+  border: none;
+  background: none;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+.tests-file-tab.on {
+  border-color: var(--accent);
+}
+.tests-file-name {
+  width: 160px;
+}
+.tests-file-editor {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.tests-error {
+  margin: 2px 0 0 16px;
+  white-space: pre-wrap;
+}

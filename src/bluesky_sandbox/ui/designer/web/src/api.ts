@@ -10,7 +10,16 @@ export type TestSituations = { ok: boolean; errors?: string[]; situations?: Reco
 // One result of a test run: a field checked against itself, or a case.
 export type FieldCheckResult = { kind: "field"; field: string; ok: boolean; findings: string[] };
 export type CaseRunResult = { kind: "case"; index: number; ok: boolean; got: number | number[] | null; error: string | null };
-export type TestResult = FieldCheckResult | CaseRunResult;
+// One of the design's own pytest tests (tests.files).
+export type TestFileResult = {
+  kind: "test";
+  name: string;
+  ok: boolean;
+  skipped?: boolean;
+  error: string | null;
+  line?: number | null;
+};
+export type TestResult = FieldCheckResult | CaseRunResult | TestFileResult;
 
 export type SpecDict = Record<string, any>;
 

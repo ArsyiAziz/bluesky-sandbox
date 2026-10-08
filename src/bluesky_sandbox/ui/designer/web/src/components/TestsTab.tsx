@@ -4,8 +4,17 @@
 // inputs, which are required, the ways it can be placed - is read from the
 // design schema, and the fields from the design and the catalog: nothing here
 // names one.
+import Editor from "@monaco-editor/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type CaseRunResult, type FieldCheckResult, type PlacedAircraft, type SpecDict } from "../api";
+import {
+  api,
+  type CaseRunResult,
+  type FieldCheckResult,
+  type PlacedAircraft,
+  type SpecDict,
+  type TestFileResult,
+} from "../api";
+import { editorTheme, useTheme } from "../theme";
 import { Page } from "./form";
 import { Picker, type PickerOption } from "./panel/Picker";
 import { Spinner } from "./Spinner";
@@ -112,6 +121,9 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
   const [runError, setRunError] = useState<string | null>(null);
   const [fieldResults, setFieldResults] = useState<FieldCheckResult[] | null>(null);
   const [caseResults, setCaseResults] = useState<Record<number, CaseRunResult>>({});
+  const [testResults, setTestResults] = useState<TestFileResult[]>([]);
+  // What a test file may be named, as the design schema says.
+  const [filePattern, setFilePattern] = useState<RegExp | null>(null);
   const abort = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -120,6 +132,8 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
       .then((s) => {
         setSchema(aircraftSchema(s));
         setKinds(listKinds(s));
+        const pattern = s?.properties?.tests?.properties?.files?.propertyNames?.pattern;
+        setFilePattern(pattern ? new RegExp(pattern) : null);
       })
       .catch(() => setSchema(null));
     api
@@ -163,12 +177,14 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
 
   const setTests = (patch: SpecDict) => {
     const next = { ...tests, ...patch };
-    const empty = !(next.situations ?? []).length && !(next.cases ?? []).length;
+    const empty =
+      !(next.situations ?? []).length && !(next.cases ?? []).length && !Object.keys(next.files ?? {}).length;
     const { tests: _drop, ...rest } = spec;
     onChange(empty ? rest : { ...spec, tests: next });
   };
   const setSituations = (next: SpecDict[]) => setTests({ situations: next });
   const setCases = (next: SpecDict[]) => setTests({ cases: next });
+  const setFiles = (next: Record<string, string>) => setTests({ files: next });
 
   const run = async () => {
     abort.current?.abort();
@@ -178,11 +194,13 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
     setRunError(null);
     setFieldResults([]);
     setCaseResults({});
+    setTestResults([]);
     try {
       await api.testDesign(
         spec,
         (r) => {
           if (r.kind === "field") setFieldResults((prev) => [...(prev ?? []), r]);
+          else if (r.kind === "test") setTestResults((prev) => [...prev, r]);
           else setCaseResults((prev) => ({ ...prev, [r.index]: r }));
         },
         controller.signal,
@@ -197,6 +215,7 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
   const caseCount = Object.keys(caseResults).length;
   const failedCases = Object.values(caseResults).filter((r) => !r.ok).length;
   const failedFields = (fieldResults ?? []).filter((r) => !r.ok).length;
+  const failedTests = testResults.filter((r) => !r.ok).length;
 
   return (
     <Page
@@ -209,9 +228,11 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
             {running ? <Spinner label="running the tests" /> : "▶"} Run tests
           </button>
           {fieldResults && !running && (
-            <span className={failedCases + failedFields ? "error-text small" : "muted small"}>
+            <span className={failedCases + failedFields + failedTests ? "error-text small" : "muted small"}>
               {caseCount} case{caseCount === 1 ? "" : "s"}, {failedCases} failed · {fieldResults.length} field
               {fieldResults.length === 1 ? "" : "s"} checked, {failedFields} failed
+              {testResults.length > 0 &&
+                ` · ${testResults.length} test${testResults.length === 1 ? "" : "s"}, ${failedTests} failed`}
             </span>
           )}
         </div>
@@ -297,6 +318,11 @@ export default function TestsTab({ spec, onChange }: { spec: SpecDict | null; on
           >
             + case
           </button>
+        </section>
+
+        <section className="tests-section">
+          <h3>Test files</h3>
+          <TestFiles files={tests.files ?? {}} pattern={filePattern} results={testResults} onChange={setFiles} />
         </section>
 
         <section className="tests-section">
@@ -705,4 +731,102 @@ function parseExpected(text: string): number | number[] | null | undefined {
   const numbers = parts.map(Number);
   if (parts.some((p) => p === "") || numbers.some((n) => !Number.isFinite(n))) return undefined;
   return numbers.length === 1 ? numbers[0] : numbers;
+}
+
+// A new test file's starting point: the fixture it gets, and one test.
+const TEST_TEMPLATE = `"""Tests for this design, run with pytest. \`design_env\` is the design's env
+(the package's tests/conftest.py). Reset it as a test needs."""
+
+
+def test_reset_gives_each_agent_its_info(design_env):
+    observations, infos = design_env.reset(seed=0)
+    assert set(observations) == set(infos)
+`;
+
+function TestFiles({
+  files,
+  pattern,
+  results,
+  onChange,
+}: {
+  files: Record<string, string>;
+  pattern: RegExp | null;
+  results: TestFileResult[];
+  onChange: (next: Record<string, string>) => void;
+}) {
+  const { theme } = useTheme();
+  const names = Object.keys(files);
+  const [open, setOpen] = useState<string | null>(names[0] ?? null);
+  const [name, setName] = useState("");
+  const shown = open && open in files ? open : (names[0] ?? null);
+  const nameOk = !!name && !(name in files) && (pattern ? pattern.test(name) : true);
+  const add = () => {
+    onChange({ ...files, [name]: TEST_TEMPLATE });
+    setOpen(name);
+    setName("");
+  };
+  const remove = (file: string) => {
+    const next = { ...files };
+    delete next[file];
+    onChange(next);
+  };
+  return (
+    <div className="tests-files">
+      <div className="tests-file-tabs">
+        {names.map((file) => (
+          <span key={file} className={file === shown ? "tests-file-tab on" : "tests-file-tab"}>
+            <button onClick={() => setOpen(file)}>{file}</button>
+            <button className="chip-x" title="remove the file" onClick={() => remove(file)}>
+              ✕
+            </button>
+          </span>
+        ))}
+        <input
+          className="form-input tests-file-name"
+          aria-label="new test file name"
+          placeholder="test_name.py"
+          value={name}
+          onChange={(e) => setName(e.target.value.trim())}
+          onKeyDown={(e) => e.key === "Enter" && nameOk && add()}
+        />
+        <button disabled={!nameOk} title={nameOk ? undefined : "a new name like test_name.py"} onClick={add}>
+          + test file
+        </button>
+      </div>
+      {shown ? (
+        <div className="tests-file-editor">
+          <Editor
+            key={shown}
+            height="280px"
+            path={`tests/${shown}`}
+            language="python"
+            value={files[shown]}
+            theme={editorTheme(theme)}
+            options={{ minimap: { enabled: false }, fontSize: 12, scrollBeyondLastLine: false }}
+            onChange={(v) => onChange({ ...files, [shown]: v ?? "" })}
+          />
+        </div>
+      ) : (
+        <div className="muted small">
+          No test files. They are pytest files, run with the rest; <code>design_env</code> is the design's env.
+        </div>
+      )}
+      {results.length > 0 && (
+        <ul className="tests-fields">
+          {results.map((r) => (
+            <li key={r.name} className={r.ok ? "ok" : "failed"}>
+              <span aria-hidden="true">{r.skipped ? "–" : r.ok ? "✓" : "✗"}</span> {r.name}
+              {r.skipped && <span className="muted small"> skipped</span>}
+              {r.error && (
+                <pre className="error-text small tests-error">
+                  {r.line != null ? `line ${r.line}: ` : ""}
+                  {r.error}
+                </pre>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }

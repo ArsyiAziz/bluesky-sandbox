@@ -7,6 +7,7 @@ code.
       design.json          the structure: shapes, elements, spawn, spaces, config
       design.schema.json   what design.json may hold - any JSON editor checks it
       tests/cases.json     its test cases: situations, and what each field gives there
+      tests/test_*.py      its own pytest files
       code/
         hooks.py           the env hooks, as functions, after their setup
         task_info.py       the task-info entries, as functions, after their setup
@@ -51,6 +52,8 @@ DESIGN_FILE = "design.json"
 SCHEMA_FILE = "design.schema.json"
 #: The design's test cases (see :mod:`.design_tests`), beside its structure.
 CASES_FILE = "tests/cases.json"
+#: Its own test files - pytest modules - as files beside them.
+TESTS_DIR = "tests"
 CODE_DIR = "code"
 HOOKS_FILE = "hooks.py"
 TASK_INFO_FILE = "task_info.py"
@@ -113,6 +116,9 @@ def write_folder(spec: DesignSpec, folder: str | Path) -> None:
             stale.unlink()
     if CASES_FILE not in files and (folder / CASES_FILE).is_file():
         (folder / CASES_FILE).unlink()
+    for stale in (folder / TESTS_DIR).glob("test_*.py"):
+        if f"{TESTS_DIR}/{stale.name}" not in files:
+            stale.unlink()
     for rel, text in files.items():
         target = folder / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -135,8 +141,11 @@ def folder_files(spec: DesignSpec) -> dict[str, str]:
     }
     for name, source in spec.code.items():
         files[f"{CODE_DIR}/{name}"] = source if source.endswith("\n") or not source else source + "\n"
-    if spec.tests:
-        files[CASES_FILE] = json.dumps(spec.tests, indent=2) + "\n"
+    cases = {k: v for k, v in (spec.tests or {}).items() if k != "files"}
+    if cases:
+        files[CASES_FILE] = json.dumps(cases, indent=2) + "\n"
+    for name, source in ((spec.tests or {}).get("files") or {}).items():
+        files[f"{TESTS_DIR}/{name}"] = source if source.endswith("\n") or not source else source + "\n"
     return files
 
 
@@ -264,8 +273,12 @@ def read_folder(folder: str | Path) -> DesignSpec:
         modules = list(modules)
     d["code"] = {name: code(name) for name in modules}
     cases = folder / CASES_FILE
-    if cases.is_file():
-        d["tests"] = json.loads(cases.read_text())
+    tests = json.loads(cases.read_text()) if cases.is_file() else {}
+    test_files = {p.name: p.read_text() for p in sorted((folder / TESTS_DIR).glob("test_*.py"))}
+    if test_files:
+        tests["files"] = test_files
+    if tests:
+        d["tests"] = tests
     return DesignSpec.from_dict(d)
 
 

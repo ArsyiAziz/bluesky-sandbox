@@ -5,18 +5,20 @@
     bluesky-sandbox design check   PATH            build it; report every problem
     bluesky-sandbox design preview PATH [--seed N]  one episode's plan: its aircraft
     bluesky-sandbox design build   PATH [--out DIR] [--name NAME]   its task package
+    bluesky-sandbox design test    PATH [PYTEST ARGS]   its fields' checks, test cases and test files
     bluesky-sandbox design convert PATH OUT         a file to a folder, or back
     bluesky-sandbox design schema  [--out FILE]     what a design.json may hold
 
 ``PATH`` is a design folder (``design.json`` and ``code/``) or one ``.json``
-file. ``check`` exits 1 when the design does not build, so it can gate a commit
-or a CI job.
+file. ``check`` exits 1 when the design does not build, and ``test`` as pytest
+does when a test fails, so either can gate a commit or a CI job.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -107,13 +109,38 @@ def _build(args: argparse.Namespace) -> int:
     name = args.name or spec.metadata.get("name") or Path(args.path).stem or "designed_task"
     files = codegen.generate_task(spec, name)
     out = Path(args.out)
+    package = _write(files, out)
+    print(f"wrote {len(files)} files to {out / package}")
+    return 0
+
+
+def _write(files: dict[str, str], out: Path) -> str:
+    """Write a generated package's ``files`` under ``out``; its name."""
     for rel, text in files.items():
         target = out / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text)
-    package = next(iter(files)).split("/", 1)[0]
-    print(f"wrote {len(files)} files to {out / package}")
-    return 0
+    return next(iter(files)).split("/", 1)[0]
+
+
+def _test(args: argparse.Namespace) -> int:
+    import subprocess
+    import tempfile
+
+    from .ui.designer import codegen
+
+    spec, _folder = _load(args.path)
+    # A design with no tests of its own is still checked field by field.
+    spec.tests = spec.tests or {"cases": []}
+    with tempfile.TemporaryDirectory(prefix="bsd_test_") as tmp:
+        package = _write(codegen.generate_task(spec, "designed_task"), Path(tmp))
+        env = dict(os.environ)
+        # The package, and the library this command runs from - the one it tests against.
+        library = str(Path(__file__).resolve().parents[1])
+        env["PYTHONPATH"] = os.pathsep.join(p for p in (tmp, library, env.get("PYTHONPATH", "")) if p)
+        tests = Path(tmp).resolve() / package / "tests"
+        command = [sys.executable, "-m", "pytest", str(tests), "--rootdir", str(tests), "-p", "no:cacheprovider"]
+        return subprocess.run([*command, *args.pytest_args], cwd=tests, env=env, check=False).returncode
 
 
 def _convert(args: argparse.Namespace) -> int:
@@ -172,6 +199,13 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--out", default=".", help="where to write the package (default: here)")
     build.add_argument("--name", help="the package name (default: the design's)")
     build.set_defaults(run=_build)
+
+    test = actions.add_parser(
+        "test", help="run its fields' checks, test cases and test files with pytest (exit as pytest does)"
+    )
+    test.add_argument("path")
+    test.add_argument("pytest_args", nargs=argparse.REMAINDER, help="passed on to pytest: -k, -x, -v ...")
+    test.set_defaults(run=_test)
 
     convert = actions.add_parser("convert", help="a .json file to a folder, or a folder to a .json file")
     convert.add_argument("path")

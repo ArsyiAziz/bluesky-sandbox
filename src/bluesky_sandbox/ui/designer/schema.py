@@ -98,6 +98,12 @@ def _tests_schema() -> dict[str, Any]:
         "properties": {
             "situations": {"type": "array", "items": situation},
             "cases": {"type": "array", "items": case},
+            "files": {
+                "type": "object",
+                "propertyNames": {"pattern": r"^test_\w+\.py$"},
+                "additionalProperties": {"type": "string"},
+                "description": "the design's own pytest files, by name",
+            },
         },
         "additionalProperties": False,
     }

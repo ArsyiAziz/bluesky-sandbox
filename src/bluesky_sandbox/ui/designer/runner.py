@@ -766,6 +766,7 @@ from __future__ import annotations
 
 import json
 import math
+import pathlib
 
 import numpy as np
 
@@ -802,6 +803,37 @@ def main() -> None:
             _emit("case", {{"index": i, "ok": r.ok, "got": _plain(r.got), "error": r.error}})
     finally:
         env.close()
+    _run_test_files()
+
+
+def _run_test_files() -> None:
+    """The design's own test files, a line per test: pytest, as the package's
+    tests folder runs them (its fixtures included)."""
+    tests = pathlib.Path(__file__).parent / "{pkg}" / "tests"
+    files = sorted(str(p) for p in tests.glob("test_*.py") if p.name != "test_design.py")
+    if not files:
+        return
+    try:
+        import pytest
+    except ImportError:
+        _emit("test", {{"name": "(test files)", "ok": False, "error": "pytest is not installed"}})
+        return
+
+    class _Report:
+        def pytest_runtest_logreport(self, report):
+            if report.when == "call" or not report.passed:
+                crash = getattr(report.longrepr, "reprcrash", None)
+                failed = not (report.passed or report.skipped)
+                _emit("test", {{
+                    "name": report.nodeid.split("tests/", 1)[-1],
+                    "ok": not failed,
+                    "skipped": report.skipped,
+                    "error": (crash.message if crash else str(report.longrepr)) if failed else None,
+                    "line": crash.lineno if failed and crash else None,
+                }})
+
+    # Its own report is each test's line here: no terminal output of pytest's.
+    pytest.main(["-p", "no:terminal", "-p", "no:cacheprovider", "--rootdir", str(tests), *files], plugins=[_Report()])
 
 
 if __name__ == "__main__":
@@ -810,14 +842,18 @@ if __name__ == "__main__":
 
 
 def iter_design_tests(spec: DesignSpec, *, timeout_s: float = 300.0) -> Iterator[dict[str, Any]]:
-    """The design's field checks, then its test cases - each result as it is
-    known: ``{"kind": "field", "field", "ok", "findings"}`` or ``{"kind":
-    "case", "index", "ok", "got", "error"}``. In a process of its own: a test
-    sets the simulator up as it needs, which no later job should inherit."""
+    """The design's field checks, then its test cases, then its own test
+    files - each result as it is known: ``{"kind": "field", "field", "ok",
+    "findings"}``, ``{"kind": "case", "index", "ok", "got", "error"}`` or
+    ``{"kind": "test", "name", "ok", "skipped", "error"}``. In a process of
+    its own: a test sets the simulator up as it needs, which no later job
+    should inherit."""
     build_design_config(spec)  # surface a broken design before starting anything
     for line in _job_lines(spec, "designed_tests", _TESTS_TEMPLATE, {}, timeout_s, fresh=True):
-        if line.startswith(_SAMPLE_MARKER):
-            yield json.loads(line[len(_SAMPLE_MARKER):])
+        # Anywhere in the line: what a test prints can share it.
+        at = line.find(_SAMPLE_MARKER)
+        if at >= 0:
+            yield json.loads(line[at + len(_SAMPLE_MARKER):])
 
 
 def run_status() -> dict[str, Any]:
