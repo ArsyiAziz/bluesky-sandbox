@@ -113,6 +113,8 @@ class SpawnSource(ABC):
     """Plans an episode's aircraft at reset. See the module docstring."""
 
     name: str = ""
+    #: The types its requests naming none fly: an ICAO type, or a distribution.
+    aircraft_type: Any = None
     conflict_free: bool = False
     when_blocked: WhenBlocked = "defer"
     route: Any = None
@@ -147,8 +149,13 @@ class SpawnSource(ABC):
             return self.assign_route(request, ctx)
         return None
 
+    def sample_type(self, rng: np.random.Generator) -> str:
+        """A type for a request naming none, from :attr:`aircraft_type`."""
+        types = self.aircraft_type
+        return types if isinstance(types, str) else types.rvs(random_state=rng)
+
     def _policies(self, **kwargs: Any) -> None:
-        for name in ("name", "conflict_free", "when_blocked", "route", "assign_route", "max_aircraft"):
+        for name in ("name", "aircraft_type", "conflict_free", "when_blocked", "route", "assign_route", "max_aircraft"):
             if name in kwargs:
                 setattr(self, name, kwargs.pop(name))
         if kwargs:

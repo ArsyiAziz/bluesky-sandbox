@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 
 import bluesky as bs
 from bluesky.tools.aero import ft, kts
@@ -43,6 +44,21 @@ def aircraft_label_lines(
     else:
         speed += f"  CAS{int(round(cas_kts))}"
     return [f"{acid}  {actype}" if actype else acid, f"FL{fl:03d}  {speed}"]
+
+
+@lru_cache(maxsize=256)
+def _type_tag_line(actype: str) -> str:
+    """A type's tags on one line - ``Fixed-wing · Jet · Wake Heavy`` - under
+    the model BlueSky flies now; empty where it has none."""
+    from bluesky_sandbox.sim.performance.models import type_info  # noqa: PLC0415
+
+    model = str(getattr(bs.settings, "performance_model", "openap") or "openap")
+    try:
+        info = type_info(str(actype), model)
+    except Exception:  # noqa: BLE001 - a readout never breaks the frame
+        return ""
+    # The mass is in the info block's own terms elsewhere: the words only.
+    return " · ".join(t for t in (info or {}).get("tags", [])[:3])
 
 
 class AircraftReadoutMixin:
@@ -97,6 +113,9 @@ class AircraftReadoutMixin:
         lines = [
             acid,
             self._info_row("TYPE", bs.traf.type[idx]),
+            # What it is - fixed-wing, helicopter, drone; propulsion, wake -
+            # from the performance model's own data.
+            *([self._info_row("", tags)] if (tags := _type_tag_line(bs.traf.type[idx])) else []),
             self._info_row("ALT", f"FL{fl:03d}"),
             self._info_row("GS", f"{gs:>3} KT"),
             self._info_row("CAS", f"{cas:>3} KT"),

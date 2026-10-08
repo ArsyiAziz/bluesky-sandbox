@@ -106,7 +106,8 @@ class Crossover:
         regime = np.where(
             alt >= self.altitude_m + margin, True, np.where(alt <= self.altitude_m - margin, False, holds_mach)
         )
-        return regime
+        # An aircraft with no Mach limit - a rotorcraft - flies a CAS at every level.
+        return regime & np.isfinite(mach_limit(idx))
 
     def handover(self, indices) -> list[tuple[int, float]]:
         """The speed holds to change for aircraft in ``indices`` that have
@@ -123,18 +124,18 @@ class Crossover:
         selected = np.asarray(traf.selspd, dtype=np.float64)[idx]
         held = ~np.asarray(traf.swvnavspd, dtype=bool)[idx]
         mach = is_mach(selected)
-        limit = np.asarray(traf.perf.mmo, dtype=np.float64)[idx]
+        limit = mach_limit(idx)
         margin = float(self.margin_ft) * ft
         out: list[tuple[int, float]] = []
         for k, i in enumerate(idx):
-            if not held[k] or selected[k] <= 0.0:
+            if not held[k] or selected[k] <= 0.0 or not np.isfinite(limit[k]):
                 continue
             if alt[k] >= self.altitude_m + margin and not mach[k]:
                 value = min(float(vcas2mach(selected[k], alt[k])), float(limit[k]))
                 out.append((int(i), round(value, 4)))
             elif alt[k] <= self.altitude_m - margin and mach[k]:
                 cas = float(vmach2cas(selected[k], alt[k]))
-                cas = min(max(cas, float(traf.perf.vmin[i])), float(traf.perf.vmax[i]))
+                cas = min(max(cas, float(min_speed_ms(i)[0])), float(traf.perf.vmax[i]))
                 out.append((int(i), cas / kts))
         return out
 
@@ -145,8 +146,7 @@ def cas_ceiling_ms(idx: int) -> float:
     altitude). Above the crossover this is the Mach limit."""
     alt = float(bs.traf.alt[idx])
     vmax = float(bs.traf.perf.vmax[idx])
-    mmo = float(bs.traf.perf.mmo[idx])
-    return min(vmax, float(vmach2cas(mmo, alt)))
+    return min(vmax, float(mach_cas_ms(mach_limit(idx)[0], alt)))
 
 
 def crossover_display(idx: int, cas_ms: float, alt_m: float) -> tuple[bool, float]:
@@ -159,8 +159,8 @@ def crossover_display(idx: int, cas_ms: float, alt_m: float) -> tuple[bool, floa
     but evaluated at a supplied altitude (e.g. a route waypoint's) rather than the
     aircraft's current one, so a waypoint readout can show CAS below / Mach above.
     """
-    mmo = float(bs.traf.perf.mmo[idx])
-    in_mach = alt_m > float(crossoveralt(cas_ms, mmo))
+    mmo = float(mach_limit(idx)[0])
+    in_mach = bool(np.isfinite(mmo)) and alt_m > float(crossoveralt(cas_ms, mmo))
     mach = min(float(vcas2mach(cas_ms, alt_m)), mmo)
     return in_mach, mach
 
@@ -191,6 +191,30 @@ def as_cas_ms(speed, alt_m) -> np.ndarray:
     return np.asarray(vcasormach(np.asarray(speed, dtype=np.float64), np.asarray(alt_m, dtype=np.float64))[1])
 
 
+def mach_limit(indices) -> np.ndarray:
+    """Each aircraft's Mach limit (Mmo): infinite where it has none - a
+    rotorcraft, which BlueSky gives an Mmo of 0. Never in the Mach regime, and
+    no CAS ceiling from it."""
+    idx = np.atleast_1d(np.asarray(indices, dtype=np.intp))
+    mmo = np.asarray(bs.traf.perf.mmo, dtype=np.float64)[idx]
+    return np.where(np.isfinite(mmo) & (mmo > 0.0), mmo, np.inf)
+
+
+def min_speed_ms(indices) -> np.ndarray:
+    """Each aircraft's minimum speed (CAS, m/s), at least 0: a rotorcraft,
+    which BlueSky lets fly backwards, is never commanded to."""
+    idx = np.atleast_1d(np.asarray(indices, dtype=np.intp))
+    return np.maximum(np.asarray(bs.traf.perf.vmin, dtype=np.float64)[idx], 0.0)
+
+
+def mach_cas_ms(mmo, alt_m) -> np.ndarray:
+    """``mmo`` as CAS (m/s) at ``alt_m`` - infinite for no Mach limit."""
+    mmo = np.asarray(mmo, dtype=np.float64)
+    finite = np.isfinite(mmo)
+    cas = np.asarray(vmach2cas(np.where(finite, mmo, 0.5), alt_m), dtype=np.float64)
+    return np.where(finite, cas, np.inf)
+
+
 def selected_cas_ms(indices) -> np.ndarray:
     """The autopilot's selected speed, as CAS (m/s), for each aircraft in
     ``indices``. After a Mach ``SPD`` - above the crossover - BlueSky holds the
@@ -213,10 +237,10 @@ def above_crossover(indices, target_cas_ms=None, crossover: Crossover | None = N
         np.asarray(target_cas_ms, dtype=np.float64), idx.shape
     )
     alt = np.asarray(bs.traf.alt, dtype=np.float64)[idx]
-    mmo = np.asarray(bs.traf.perf.mmo, dtype=np.float64)[idx]
-    vmin = np.asarray(bs.traf.perf.vmin, dtype=np.float64)[idx]
+    mmo = mach_limit(idx)
+    vmin = min_speed_ms(idx)
     vmax = np.asarray(bs.traf.perf.vmax, dtype=np.float64)[idx]
-    ceiling = np.minimum(vmax, vmach2cas(mmo, alt))
+    ceiling = np.minimum(vmax, mach_cas_ms(mmo, alt))
     target = np.minimum(np.maximum(target, vmin), ceiling)
     return _mach_regime(alt, target, mmo)
 
@@ -228,8 +252,8 @@ def crossover_speed_state(idx: int, target_cas_ms: float) -> CrossoverSpeedState
     (holding the target as Mach, capped at Mmo) and the CAS regime below.
     """
     alt = float(bs.traf.alt[idx])
-    mmo = float(bs.traf.perf.mmo[idx])
-    vmin = float(bs.traf.perf.vmin[idx])
+    mmo = float(mach_limit(idx)[0])
+    vmin = float(min_speed_ms(idx)[0])
     vmax = float(bs.traf.perf.vmax[idx])
     target_ms = min(max(float(target_cas_ms), vmin), cas_ceiling_ms(idx))
     target_mach = min(float(vcas2mach(target_ms, alt)), mmo)
@@ -243,9 +267,8 @@ def crossover_speed_state(idx: int, target_cas_ms: float) -> CrossoverSpeedState
     ) * _MS_TO_KTS
     cas_scale_kts = max(cas_scale_kts, _MIN_CAS_SCALE_KTS)
     mach_min = float(vcas2mach(vmin, alt))
-    mach_scale = max(
-        abs(target_mach - mach_min), abs(mmo - target_mach), _MIN_MACH_SCALE
-    )
+    to_limit = abs(mmo - target_mach) if np.isfinite(mmo) else 0.0
+    mach_scale = max(abs(target_mach - mach_min), to_limit, _MIN_MACH_SCALE)
     return CrossoverSpeedState(
         in_mach=in_mach,
         target_ms=target_ms,
@@ -321,16 +344,17 @@ def within_speed_tolerance_many(
     alt = np.asarray(bs.traf.alt, dtype=np.float64)[:n]
     cas = np.asarray(bs.traf.cas, dtype=np.float64)[:n]
     mach = np.asarray(bs.traf.M, dtype=np.float64)[:n]
-    vmin = np.asarray(bs.traf.perf.vmin, dtype=np.float64)[:n]
+    vmin = min_speed_ms(np.arange(n))
     vmax = np.asarray(bs.traf.perf.vmax, dtype=np.float64)[:n]
-    mmo = np.asarray(bs.traf.perf.mmo, dtype=np.float64)[:n]
+    mmo = mach_limit(np.arange(n))
+    limited = np.isfinite(mmo)
 
     # Substitute a finite placeholder on unconstrained rows so the aero
     # conversions stay warning-free; those rows are masked back to True below.
     raw_target = np.where(have, target, cas)
-    ceiling = np.minimum(vmax, vmach2cas(mmo, alt))
+    ceiling = np.minimum(vmax, mach_cas_ms(mmo, alt))
     tgt = np.clip(raw_target, vmin, ceiling)
-    in_mach = alt > crossoveralt(tgt, mmo)
+    in_mach = limited & (alt > crossoveralt(tgt, np.where(limited, mmo, 0.8)))
 
     cas_diff_kts = (cas - tgt) * _MS_TO_KTS
     target_mach = np.minimum(vcas2mach(tgt, alt), mmo)

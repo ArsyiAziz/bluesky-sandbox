@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -23,7 +24,6 @@ from bluesky_sandbox.sim.performance.models import available_types
 from bluesky_sandbox.sim.sampling.distributions import Categorical
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
-DEFAULT_ALLOWED_AIRCRAFT = ("B744",)
 DEFAULT_DT = 1.0
 DEFAULT_SIMDT = None
 DEFAULT_ASAS_DT = None
@@ -207,7 +207,9 @@ class EnvConfig:
         ``actions.Clearance`` is expanded here into the parts it declares - the
         action, its duration and its mask.
     allowed_aircraft:
-        Whitelist of ICAO aircraft-type designators that agents may fly.
+        Deprecated - each spawn region names its own types
+        (``SpawnRegion.aircraft_type``). Set, it fills in regions without
+        their own and limits every region to these types.
     dt:
         Simulation time (seconds) advanced per ``step()`` call.
     simdt:
@@ -266,9 +268,8 @@ class EnvConfig:
     action_fields: list[ActionField] = field(
         default_factory=lambda: [actions.HdgDeg(), actions.SpdKts(), actions.AltFt()]
     )
-    allowed_aircraft: list[str] = field(
-        default_factory=lambda: list(DEFAULT_ALLOWED_AIRCRAFT)
-    )
+    # Deprecated: each spawn region names its own types (SpawnRegion.aircraft_type).
+    allowed_aircraft: list[str] | None = None
     dt: float = DEFAULT_DT
     simdt: float | None = DEFAULT_SIMDT
     # Conflict-detection interval, applied to BlueSky's ``asas`` timer at
@@ -481,14 +482,20 @@ class EnvConfig:
             "check that the OpenAP/BADA data files are installed correctly "
             "(run `python -m bluesky_sandbox.doctor` to see what resolves)."
         )
-        invalid = [ac for ac in self.allowed_aircraft if ac.lower() not in available]
-        if invalid:
-            raise ValueError(
-                f"Aircraft type(s) not found in {self.performance_model} database: "
-                f"{invalid}."
+        if self.allowed_aircraft is not None:
+            warnings.warn(
+                "EnvConfig.allowed_aircraft is deprecated: name each spawn region's types "
+                "(SpawnRegion.aircraft_type). Until then it fills in regions without their own.",
+                DeprecationWarning,
+                stacklevel=3,
             )
-
-        self.allowed_aircraft = [ac.upper() for ac in self.allowed_aircraft]
+            invalid = [ac for ac in self.allowed_aircraft if ac.lower() not in available]
+            if invalid:
+                raise ValueError(
+                    f"Aircraft type(s) not found in {self.performance_model} database: "
+                    f"{invalid}."
+                )
+            self.allowed_aircraft = [ac.upper() for ac in self.allowed_aircraft]
 
 def validate_asas_dt(
     asas_dt: float,
@@ -547,29 +554,74 @@ def validate_asas_dt(
 
 
 def resolve_spawn_aircraft_types(config: EnvConfig, spawn: SpawnConfig) -> None:
-    """Resolve a sampled spawn config's aircraft types against ``allowed_aircraft``."""
+    """Resolve a sampled spawn config's aircraft types, each where it is set:
+    every spawn region's own, and each spawn source's.
 
-    def _resolve_aircraft_type(ac_type, label: str) -> Categorical:
+    The model must carry each type; a region with none is refused, unless the
+    deprecated global types (``SpawnConfig.aircraft_type``,
+    ``EnvConfig.allowed_aircraft``) are set - they fill in regions without
+    their own, as they always did. A region spawning above a type's ceiling is
+    refused too: a drone cannot be at FL300."""
+    available = _available_aircraft(config.performance_model)
+    model = config.performance_model
+
+    def resolve(ac_type, label: str) -> Categorical:
         if isinstance(ac_type, Categorical):
-            unknown = [
-                t for t in ac_type.weights if t.upper() not in config.allowed_aircraft
-            ]
-            if unknown:
-                raise ValueError(
-                    f"{label} references types not in allowed_aircraft: {unknown}"
-                )
-            return ac_type
-        if isinstance(ac_type, str):
-            return Categorical({ac_type.upper(): 1.0})
-        return Categorical({t: 1.0 for t in config.allowed_aircraft})
+            types = ac_type
+        elif isinstance(ac_type, (list, tuple, set, frozenset)):  # an even mix
+            types = Categorical({str(t).upper(): 1.0 for t in ac_type})
+        else:
+            types = Categorical({str(ac_type).upper(): 1.0})
+        unknown = [t for t in types.weights if str(t).lower() not in available]
+        if unknown:
+            raise ValueError(
+                f"{label} names aircraft type(s) the {model} performance model does not carry: "
+                f"{unknown}."
+            )
+        if config.allowed_aircraft is not None:
+            outside = [t for t in types.weights if str(t).upper() not in config.allowed_aircraft]
+            if outside:
+                raise ValueError(f"{label} references types not in allowed_aircraft: {outside}")
+        return types
 
-    spawn.aircraft_type = _resolve_aircraft_type(
-        spawn.aircraft_type,
-        "SpawnConfig.aircraft_type",
-    )
+    fallback = spawn.aircraft_type
+    if fallback is None and config.allowed_aircraft is not None:
+        fallback = Categorical({t: 1.0 for t in config.allowed_aircraft})
+    spawn.aircraft_type = None if fallback is None else resolve(fallback, "SpawnConfig.aircraft_type")
     for i, region in enumerate(spawn.regions):
-        if region.aircraft_type is not None:
-            region.aircraft_type = _resolve_aircraft_type(
-                region.aircraft_type,
-                f"SpawnRegion[{i}].aircraft_type",
+        label = f"spawn region {region.name!r}" if region.name else f"spawn region {i}"
+        if region.aircraft_type is None:
+            if spawn.aircraft_type is None:
+                raise ValueError(
+                    f"{label} has no aircraft_type: name the types it spawns - one ICAO type, "
+                    "or a Categorical of them."
+                )
+            region.aircraft_type = spawn.aircraft_type
+        else:
+            region.aircraft_type = resolve(region.aircraft_type, label)
+        _check_ceilings(region, label)
+    for i, source in enumerate(spawn.sources):
+        if getattr(source, "aircraft_type", None) is not None:
+            name = getattr(source, "name", "") or i
+            source.aircraft_type = resolve(source.aircraft_type, f"spawn source {name!r}")
+
+
+def _check_ceilings(region, label: str) -> None:
+    """Refuse a region that spawns above a type's ceiling - every altitude it
+    can draw out of the type's reach."""
+    from bluesky_sandbox.sim.performance.envelope import _flyable_ceiling_ft  # noqa: PLC0415
+    from bluesky_sandbox.sim.spawn import param_alt_range  # noqa: PLC0415
+
+    band = param_alt_range(region.params.get("alt_ft"))
+    if band is None:
+        finite = region._finite_alt_band()
+        band = None if finite is None else (float(finite[0]), float(finite[1]))
+    if band is None:
+        return
+    for actype in region.aircraft_type.weights:
+        ceiling = _flyable_ceiling_ft(str(actype))
+        if ceiling is not None and band[0] > ceiling:
+            raise ValueError(
+                f"{label} spawns at {band[0]:,.0f} ft and above, but {actype}'s ceiling is "
+                f"{ceiling:,.0f} ft: lower the region, or spawn another type there."
             )

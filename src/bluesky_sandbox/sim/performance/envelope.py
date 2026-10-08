@@ -353,7 +353,9 @@ def _speed_band_kt(acidx: int, alt_ft: float) -> tuple[float, float]:
     A target drawn above any enforced cap can never be flown, and a speed-gated
     waypoint becomes permanently uncapturable.
     """
-    vmin_kt = float(bs.traf.perf.vmin[acidx]) / kts
+    # At least 0: a rotorcraft, which BlueSky lets fly backwards, starts at
+    # anything from a hover up.
+    vmin_kt = max(float(bs.traf.perf.vmin[acidx]), 0.0) / kts
     vmax_kt = float(bs.traf.perf.vmax[acidx]) / kts
     mmo_arr = getattr(bs.traf.perf, "mmo", None)
     if mmo_arr is not None:

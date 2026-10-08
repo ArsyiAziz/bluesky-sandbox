@@ -132,9 +132,12 @@ class SpawnRegion:
         * or a frozen ``scipy.stats`` continuous distribution - calls
           ``dist.rvs(random_state=rng)`` each spawn.
     aircraft_type:
-        Per-region aircraft type override.  Either a fixed ICAO string, any
-        :class:`TypeDistribution`, or ``None`` to inherit from
-        :class:`SpawnConfig`.
+        The aircraft types it spawns: a fixed ICAO string, or any
+        :class:`TypeDistribution` (e.g. a :class:`Categorical` of types and
+        their weights). Every region names its own; ``None`` is refused when
+        the environment resolves it, unless the deprecated global types
+        (``SpawnConfig.aircraft_type``, ``EnvConfig.allowed_aircraft``) are
+        set.
     callsign_prefixes:
         Optional prefix pool for generated callsigns.  Each spawned aircraft
         will receive a callsign of the form ``{prefix}{NNN}`` where ``NNN`` is
@@ -455,10 +458,8 @@ class SpawnConfig:
         independently every episode. An empty list is useful while designing
         an environment and produces no spawned aircraft.
     aircraft_type:
-        Global fallback aircraft type.  Used for any region that does not
-        specify its own ``aircraft_type``.  Either a fixed ICAO string, any
-        :class:`TypeDistribution` (e.g. :class:`Categorical`), or ``None``
-        for uniform sampling across the environment's allowed aircraft.
+        Deprecated - each region names its own types. Set, it fills in
+        regions without their own, and spawn requests naming no type.
     route:
         Global fallback route. Use a fixed list of waypoint queryable names,
         a named route key from ``routes``, or a distribution that samples one
@@ -528,6 +529,14 @@ class SpawnConfig:
 
     def __post_init__(self) -> None:
         self.regions = list(self.regions)
+        if self.aircraft_type is not None:
+            warnings.warn(
+                "SpawnConfig.aircraft_type is deprecated: name each spawn region's types "
+                "(SpawnRegion.aircraft_type) and each source's. Until then it fills in "
+                "those without their own.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
         cap = self.aircraft_cap
         if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 1):
             raise ValueError(f"SpawnConfig.aircraft_cap must be an int >= 1 or None, got {cap!r}")
@@ -680,7 +689,8 @@ class SpawnConfig:
         if self.aircraft_type is not None:
             return self.aircraft_type.rvs(random_state=rng)
         raise ValueError(
-            "aircraft_type is None; resolve SpawnConfig before use."
+            "this spawn names no aircraft type: give the request its actype, or its "
+            "source an aircraft_type."
         )
 
     def sample_route(
@@ -806,6 +816,8 @@ class SpawnConfig:
         its own, else its ``source``'s - resolved to concrete steps."""
         route = source.route_for(request, ctx) if source is not None else request.route
         actype = request.actype
+        if actype is None and getattr(source, "aircraft_type", None) is not None:
+            actype = source.sample_type(rng)
         if actype is None:
             actype = self.sample_type(rng)
         return replace(request, actype=actype, route=self.resolve_route_spec(route, rng))

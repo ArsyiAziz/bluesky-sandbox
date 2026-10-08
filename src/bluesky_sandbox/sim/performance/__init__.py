@@ -30,7 +30,9 @@ from .models import (
     MODELS,
     available_types,
     spawnable_types,
+    type_info,
     type_limits,
+    type_tags,
 )
 from .speeds import (
     Crossover,
@@ -48,6 +50,8 @@ __all__ = [
     "available_types",
     "spawnable_types",
     "type_limits",
+    "type_info",
+    "type_tags",
     "bada_available",
     "bada_data_dir",
     "bada_coefficients",

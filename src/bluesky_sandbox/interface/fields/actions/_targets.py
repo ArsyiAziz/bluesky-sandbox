@@ -21,7 +21,7 @@ import numpy as np
 from bluesky.tools.aero import kts
 
 from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms as _cas_ceiling_ms
-from bluesky_sandbox.sim.performance.speeds import crossover_speed_state, selected_cas_ms
+from bluesky_sandbox.sim.performance.speeds import crossover_speed_state, min_speed_ms, selected_cas_ms
 
 from .._common import _M_TO_FT, _MIN_DYNAMIC_SPAN, _MS_TO_KTS
 from .._route import _active_route_waypoint
@@ -229,7 +229,7 @@ class _SpeedAxis:
     _route_constraint: ClassVar[int] = 3  # waypoint speed, m/s
 
     def _envelope_si(self, idx: int) -> tuple[float, float]:
-        return float(bs.traf.perf.vmin[idx]), float(bs.traf.perf.vmax[idx])
+        return float(min_speed_ms(idx)[0]), float(bs.traf.perf.vmax[idx])
 
     def _current_si(self, idx: int) -> float:
         return float(bs.traf.cas[idx])
@@ -248,7 +248,7 @@ class _CrossoverSpeedAxis(_SpeedAxis):
     """CAS capped at the Mach limit, commanded as Mach above the crossover."""
 
     def _envelope_si(self, idx: int) -> tuple[float, float]:
-        return float(bs.traf.perf.vmin[idx]), float(_cas_ceiling_ms(idx))
+        return float(min_speed_ms(idx)[0]), float(_cas_ceiling_ms(idx))
 
     def _command(self, idx: int, target: float) -> None:
         _issue_crossover_speed(idx, target * (_MS_TO_KTS / self._scale))

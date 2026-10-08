@@ -37,7 +37,7 @@ from typing import Annotated, Any
 import bluesky as bs
 from bluesky.tools.aero import vcas2mach
 
-from bluesky_sandbox.sim.performance.speeds import Crossover
+from bluesky_sandbox.sim.performance.speeds import Crossover, mach_limit, min_speed_ms
 
 from .._common import _MIN_DYNAMIC_SPAN, on_reset
 from ..base import Unit, action_kind
@@ -217,15 +217,15 @@ class _MachView:
         """The Mach a zero change holds: the nominal CAS as Mach here, at most Mmo."""
         cas_ms = self._action._nominal(idx) / self._action._scale
         mach = float(vcas2mach(cas_ms, float(bs.traf.alt[idx])))
-        return min(mach, float(bs.traf.perf.mmo[idx]))
+        return min(mach, float(mach_limit(idx)[0]))
 
     def _commandable(self, idx: int) -> tuple[float, float]:
         """The Machs the aircraft may be commanded here: its minimum speed to
         Mmo or its maximum CAS, whichever is lower, within the action's command
         floor and ceiling (knots, as Mach)."""
         alt = float(bs.traf.alt[idx])
-        low = float(vcas2mach(float(bs.traf.perf.vmin[idx]), alt))
-        high = min(float(bs.traf.perf.mmo[idx]), float(vcas2mach(float(bs.traf.perf.vmax[idx]), alt)))
+        low = float(vcas2mach(float(min_speed_ms(idx)[0]), alt))
+        high = min(float(mach_limit(idx)[0]), float(vcas2mach(float(bs.traf.perf.vmax[idx]), alt)))
         action = self._action
         if action.command_floor is not None:
             low = max(low, float(vcas2mach(_to_ms(action, action.command_floor), alt)))

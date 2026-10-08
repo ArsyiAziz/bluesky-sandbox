@@ -24,7 +24,7 @@ from .._common import (
     _InMeters,
     _InMetersPerSecond,
 )
-from bluesky_sandbox.sim.performance.speeds import Crossover, above_crossover
+from bluesky_sandbox.sim.performance.speeds import Crossover, above_crossover, mach_limit
 
 from ..base import ObsField, ObsMeta, ObsQuantity, Unit
 
@@ -408,13 +408,18 @@ class CrossoverAltMarginFt(_BroadcastObs, ObsField):
         if self.crossover is not None:
             return (alt - self.crossover.altitude_m) * _M_TO_FT
         cas = np.asarray(bs.traf.cas, dtype=np.float64)[i]
-        mmo = np.asarray(bs.traf.perf.mmo, dtype=np.float64)[i]
-        return (alt - np.asarray(crossoveralt(cas, mmo))) * _M_TO_FT
+        mmo = mach_limit(i)
+        limited = np.isfinite(mmo)
+        # No Mach limit (a rotorcraft): never at a crossover - as far below as the scale goes.
+        margin = (alt - np.asarray(crossoveralt(cas, np.where(limited, mmo, 0.8)))) * _M_TO_FT
+        return np.where(limited, margin, -abs(float(self.low)) if self.low is not None else -1e5)
 
     def _expected(self, idx: int) -> Any:
         if self.crossover is not None:
             return (float(bs.traf.alt[idx]) - self.crossover.altitude_m) / ft
-        cas, mmo = float(bs.traf.cas[idx]), float(bs.traf.perf.mmo[idx])
+        cas, mmo = float(bs.traf.cas[idx]), float(mach_limit(idx)[0])
+        if not np.isfinite(mmo):
+            return -abs(float(self.low)) if self.low is not None else -1e5
         return (float(bs.traf.alt[idx]) - float(crossoveralt(cas, mmo))) / ft
 
     def bounds(self, idx: int) -> tuple[float, float]:
