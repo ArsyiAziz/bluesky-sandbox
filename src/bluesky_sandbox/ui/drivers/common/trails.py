@@ -270,7 +270,7 @@ class TrailMixin:
                 else []
             )
         for qable in regions:
-            if qable.bounds.contains(lat_deg, lon_deg, alt_ft):
+            if qable.shape.contains(lat_deg, lon_deg, alt_ft):
                 return qable.color
         return "normal"
 

@@ -372,9 +372,19 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         image = pixels.reshape(texture.getYSize(), texture.getXSize(), 3)[::-1]
         return np.ascontiguousarray(image)
 
+    def on_polygons_moved(self, polygons) -> None:
+        # The static scene holds every region's prism: rebuild it.
+        for view in self._views:
+            clear = getattr(view, "clear_static", None)
+            if clear is not None:
+                clear(self)
+        if self._env is not None:
+            self.draw_renderables(self._env._renderable_builder.iter_renderables())
+
     def _dispatch_step(self) -> None:
         """Fan ``on_step`` out to every view."""
         with self._aircraft_snapshot_cache_scope():
+            self.sync_moving()
             for view in self._views:
                 view.on_step(self)
 

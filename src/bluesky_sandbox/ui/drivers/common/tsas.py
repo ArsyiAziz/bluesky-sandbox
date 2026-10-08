@@ -75,7 +75,7 @@ class TsasDataMixin:
         for idx in range(bs.traf.ntraf):
             lat, lon = bs.traf.lat[idx], bs.traf.lon[idx]
             alt_ft = bs.traf.alt[idx] / ft
-            if region is not None and not region.bounds.contains(lat, lon, alt_ft):
+            if region is not None and not region.shape.contains(lat, lon, alt_ft):
                 continue
 
             result = waypoint.result_type.for_aircraft(waypoint, idx)

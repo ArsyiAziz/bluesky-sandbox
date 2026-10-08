@@ -155,6 +155,8 @@ class QtGLSimDriver(HumanSimDriver):
             raise SystemExit("BlueSky GUI window closed")
 
         Timer.update_timers()
+        # Moving regions: their polygons sent again, replacing the old.
+        self.sync_moving()
         bs.net.update()
         bs.scr.update()
         simstack.process()
@@ -242,6 +244,10 @@ class QtGLSimDriver(HumanSimDriver):
             self._env.episode_spawn.resolved_bounds,
             self._env.episode_airspace_bounds,
         )
+
+    def on_polygons_moved(self, polygons) -> None:
+        for polygon in polygons:
+            self.draw_polygon(polygon)
 
     def draw_polygon(self, polygon: Polygon) -> None:
         """Stack ``POLY name ...; COLOR name ...`` for the given polygon."""

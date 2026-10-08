@@ -40,6 +40,11 @@ class PrimitiveDrawMixin:
         """Dispatch each primitive from *renderable* to its ``draw_*`` hook."""
         for primitive in renderable.render_primitives():
             if isinstance(primitive, Polygon):
+                version = _moving_version(primitive)
+                if version is not None:
+                    # Drawn as it is now: due again once it moves.
+                    primitive.meta["_version"] = version
+                    self.__dict__.setdefault("_moving_polygons", []).append(primitive)
                 self.draw_polygon(primitive)
             elif isinstance(primitive, Point):
                 self.draw_point(primitive)
@@ -52,8 +57,45 @@ class PrimitiveDrawMixin:
 
     def draw_renderables(self, renderables: Iterable[Renderable]) -> None:
         """Draw every renderable in order."""
+        self.__dict__["_moving_polygons"] = []
         for renderable in renderables:
             self.draw(renderable)
+
+    # ---- regions that move during an episode ----------------------------- #
+    # A region with motion (a ``MovingFootprint``) is drawn from its shape at
+    # the episode's start; each frame, :meth:`sync_moving` brings the polygons
+    # of those that have moved since up to date - in place, so a view that
+    # projects ``polygon.vertices`` each frame animates with no more - and
+    # hands them to :meth:`on_polygons_moved` for whatever a driver caches.
+
+    def sync_moving(self) -> list[Polygon]:
+        """Update the polygons of regions that moved since the last call;
+        return them (and tell :meth:`on_polygons_moved`)."""
+        moved = []
+        for polygon in self.__dict__.get("_moving_polygons", ()):
+            version = _moving_version(polygon)
+            if version is None or polygon.meta.get("_version") == version:
+                continue
+            bounds = polygon.meta["bounds"]
+            polygon.vertices = bounds.vertices
+            if polygon.per_vertex_alt is not None:
+                polygon.per_vertex_alt = bounds.per_vertex_alt_range()
+            polygon.meta["_version"] = version
+            moved.append(polygon)
+        if moved:
+            self.on_polygons_moved(moved)
+        return moved
+
+    def on_polygons_moved(self, polygons: list[Polygon]) -> None:
+        """React to ``polygons`` having new vertices (no-op by default: a view
+        drawing ``vertices`` each frame needs nothing more)."""
+
+
+def _moving_version(polygon: Polygon) -> int | None:
+    """How many times the region behind ``polygon`` has moved, or None when
+    it does not move."""
+    footprint = getattr(polygon.meta.get("bounds"), "footprint", None)
+    return getattr(footprint, "version", None)
 
 
 class ViewPrimitiveFanoutMixin(PrimitiveDrawMixin):

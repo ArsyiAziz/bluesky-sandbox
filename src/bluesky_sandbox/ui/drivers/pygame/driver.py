@@ -783,11 +783,16 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
                 return button
         return None
 
+    def on_polygons_moved(self, polygons) -> None:
+        for view in self.views:
+            view.on_polygons_moved(self, polygons)
+
     # ------------------------------------------------------------------
     # Frame composition
     # ------------------------------------------------------------------
 
     def _render_frame(self) -> None:
+        self.sync_moving()
         with self._aircraft_snapshot_cache_scope():
             if self._canvas is None or self._canvas.get_size() != self.window_size:
                 self._canvas = pygame.Surface(self.window_size)

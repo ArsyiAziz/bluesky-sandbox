@@ -127,6 +127,14 @@ class WorldView(Panda3DView):
 
         self._build_ground_reference(driver, lat_min, lat_max, lon_min, lon_max)
 
+    def clear_static(self, driver: Panda3DSimDriver) -> None:
+        """Drop the region prisms and labels, to be drawn again - a region
+        moved."""
+        if self._static is not None:
+            self._static.removeNode()
+        self._static = driver._render.attachNewNode("static")
+        self._static_label_nodes.clear()
+
     def on_step(self, driver: Panda3DSimDriver) -> None:
         """Tear down + rebuild every aircraft marker for this frame."""
         self._refresh_aircraft(driver)

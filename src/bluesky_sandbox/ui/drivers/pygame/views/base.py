@@ -81,6 +81,10 @@ class PygameView(ABC):
     def add_polyline(self, driver: PygameSimDriver, polyline: Polyline) -> None:
         """Receive a Polyline primitive (no-op by default)."""
 
+    def on_polygons_moved(self, driver: PygameSimDriver, polygons: list[Polygon]) -> None:
+        """Polygons a view holds got new vertices - a moving region. No-op by
+        default: a view projecting ``vertices`` each frame is up to date."""
+
     # ------------------------------------------------------------------
     # Hover & cross-view highlight
     # ------------------------------------------------------------------
@@ -135,7 +139,7 @@ class PygameView(ABC):
         if env is None:
             return None
         for qable in env.episode_queryables.values():
-            if isinstance(qable, QueryRegion) and qable.bounds.contains(
+            if isinstance(qable, QueryRegion) and qable.shape.contains(
                 lat_deg,
                 lon_deg,
                 alt_ft,

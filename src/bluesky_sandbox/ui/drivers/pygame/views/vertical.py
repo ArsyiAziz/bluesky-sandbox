@@ -412,6 +412,11 @@ class VerticalView(PygameView):
     # Render-primitive ingestion
     # ------------------------------------------------------------------
 
+    def on_polygons_moved(self, driver: PygameSimDriver, polygons: list[Polygon]) -> None:
+        # Its altitude envelope is cached by polygon: recompute the moved ones.
+        for polygon in polygons:
+            self._envelope_cache.pop(id(polygon), None)
+
     def add_polygon(self, driver: PygameSimDriver, polygon: Polygon) -> None:
         bounds = polygon.meta.get("bounds")
         # If the bounds object exposes per-point alt bands, keep it so
