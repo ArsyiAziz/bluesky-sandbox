@@ -1271,6 +1271,16 @@ def truncated(obs, action, context, info, rng):
 '''
 
 
+def test_a_half_typed_hook_still_generates_its_package():
+    # The Code tab regenerates as you type: a line not yet valid Python is
+    # kept as written, not an error.
+    spec = _example_design_spec()
+    spec.env.hooks["reward"] = 'x = context.query("goal").step.\nreturn 0.0'
+    files = codegen.generate_task(spec, "Half Typed")
+    env_py = next(text for path, text in files.items() if path.endswith("/env.py"))
+    assert 'x = context.query("goal").step.' in env_py
+
+
 def test_reward_hooks_migration_from_task_py():
     # An old-model spec (reward via task.py + env.reward_fn) migrates on load:
     # the function bodies are lifted into reward/terminated/truncated hooks and

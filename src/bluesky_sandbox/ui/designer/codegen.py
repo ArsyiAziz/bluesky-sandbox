@@ -1201,10 +1201,16 @@ def training_loop(
 
 
 def _names_used(source: str) -> set[str]:
-    """Every identifier ``source`` reads. Used to import only what is needed."""
+    """Every identifier ``source`` reads. Used to import only what is needed.
+    Code that does not parse yet - a line half typed - is not an error here:
+    every word in it, which may import a name too many until it does."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set(re.findall(r"[A-Za-z_]\w*", source))
     return {
         node.id
-        for node in ast.walk(ast.parse(source))
+        for node in ast.walk(tree)
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
     }
 
