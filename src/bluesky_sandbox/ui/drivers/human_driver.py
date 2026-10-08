@@ -36,7 +36,7 @@ import bluesky as bs
 
 from bluesky_sandbox.sim.spawn import expand_route_paths
 
-from .common import PrimitiveDrawMixin, TrailMixin
+from .common import DISPLAY_TOGGLES, DisplayToggle, PrimitiveDrawMixin, TrailMixin
 from .sim_driver import SimDriver
 
 
@@ -67,10 +67,28 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
     # throughput isn't capped by rendering during fast-forward. 0 disables the
     # gate (render every substep).
     render_fps: float = 60.0
+    # The share of wall time drawing may take while the sim runs flat out (not
+    # realtime, or fast-forwarding): frames are spaced so the measured draw
+    # stays within it, whatever a frame costs - a slow driver draws less often
+    # instead of slowing the sim. 1 leaves only ``render_fps``.
+    render_budget: float = 0.25
+
+    #: Everything a person can operate in this driver (see ``common.hud``),
+    #: and those it cannot do, by name.
+    CONTROLS: tuple = DISPLAY_TOGGLES
+    UNSUPPORTED_CONTROLS: frozenset[str] = frozenset()
+    #: How long a note on what just changed stays up (s).
+    NOTE_S = 1.6
 
     def __init__(self, realtime: bool = True) -> None:
         super().__init__(realtime=realtime)
+        # Region and waypoint names (``toggle_labels``); what each aircraft's
+        # label shows - its full data block, its callsign or nothing, the
+        # tracked aircraft's always full - is ``aircraft_labels``. Each display
+        # setting is a toggle (``display_toggles``).
         self.show_labels = True
+        self.aircraft_labels = "full"
+        self._note: tuple[str, float] | None = None
         # When True, overlay the design's defined routes; otherwise only the
         # selected aircraft's route is shown.
         self.show_all_routes = False
@@ -87,8 +105,10 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
         # is clicked) — handy for RL eval videos. When False (default) nothing is
         # selected until you click an aircraft, and clicking empty deselects.
         self.auto_track = False
-        # Monotonic timestamp (s) of the last frame draw, for the render gate.
+        # Monotonic timestamp (s) of the last frame draw, for the render gate,
+        # and what a draw costs (s, smoothed) - for the render budget.
         self._last_render_s: float = 0.0
+        self._draw_cost_s: float = 0.0
         self._check_draws_implemented()
         self._init_trails()
 
@@ -105,10 +125,21 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
         if self.render_fps <= 0:
             return True
         now = time.monotonic()
-        if now - self._last_render_s >= 1.0 / self.render_fps:
+        interval = 1.0 / self.render_fps
+        flat_out = not self.realtime or self._fastforward_active()
+        if flat_out and self._draw_cost_s > 0.0 and self.render_budget < 1.0:
+            interval = max(interval, self._draw_cost_s / max(self.render_budget, 1e-3))
+        if now - self._last_render_s >= interval:
             self._last_render_s = now
             return True
         return False
+
+    def _draw_timed(self, draw) -> None:
+        """Run ``draw`` (a frame), noting what it cost for the render budget."""
+        start = time.monotonic()
+        draw()
+        cost = time.monotonic() - start
+        self._draw_cost_s = cost if self._draw_cost_s == 0.0 else 0.8 * self._draw_cost_s + 0.2 * cost
 
     def tracked_acid(self) -> str | None:
         """The aircraft whose route/info to display: the clicked one, else (when
@@ -120,17 +151,101 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
             return bs.traf.id[0]
         return None
 
+    # ---- controls (the HUD contract, common.hud) -----------------------------
+    # Declared once; a driver binds their keys and draws their buttons from
+    # :attr:`controls`, runs them with :meth:`activate`, and reacts to a
+    # display toggle's change in :meth:`on_toggled`.
+
+    @property
+    def controls(self) -> tuple:
+        """Everything a person can operate in this driver, in order."""
+        return tuple(c for c in self.CONTROLS if c.name not in self.UNSUPPORTED_CONTROLS)
+
+    def control(self, name: str):
+        """The control ``name``."""
+        for control in self.controls:
+            if control.name == name:
+                return control
+        names = [c.name for c in self.controls]
+        raise KeyError(f"no control {name!r} on {type(self).__name__}; controls: {names}")
+
+    def activate(self, name: str) -> None:
+        """Run control ``name`` - as its key or its button does - and say what
+        it changed."""
+        control = self.control(name)
+        control.run(self)
+        self.notify(control.describe_for(self))
+
+    def control_for_key(self, key: str, shift: bool = False) -> str | None:
+        """The control ``key`` runs (as Panda3D names keys: ``"l"``,
+        ``"space"``), Shift held or not: one bound with Shift first, else the
+        key alone."""
+        candidates = (f"shift-{key}", key) if shift else (key,)
+        for candidate in candidates:
+            for control in self.controls:
+                if candidate in control.keys:
+                    return control.name
+        return None
+
+    def notify(self, text: str) -> None:
+        """Show ``text`` for a moment (the HUD's note)."""
+        self._note = (text, time.monotonic() + self.NOTE_S)
+
+    @property
+    def note(self) -> str | None:
+        """The note showing now, if any."""
+        if self._note is None or time.monotonic() > self._note[1]:
+            return None
+        return self._note[0]
+
+    @property
+    def display_toggles(self) -> tuple[DisplayToggle, ...]:
+        """The display toggles this driver draws, in order."""
+        return tuple(c for c in self.controls if isinstance(c, DisplayToggle))
+
+    def display_toggle(self, name: str) -> DisplayToggle:
+        """The display toggle ``name``."""
+        control = self.control(name)
+        if not isinstance(control, DisplayToggle):
+            raise KeyError(f"control {name!r} is not a display toggle")
+        return control
+
+    def toggle(self, name: str):
+        """Step display toggle ``name`` to its next value; return it."""
+        try:
+            toggle = self.display_toggle(name)
+        except KeyError as e:
+            raise KeyError(f"no display toggle {name!r}") from e
+        value = toggle.after(getattr(self, name))
+        setattr(self, name, value)
+        self.on_toggled(toggle, value)
+        return value
+
+    def on_toggled(self, toggle: DisplayToggle, value) -> None:
+        """React to ``toggle`` having changed to ``value``: turning trails
+        off drops their points. A driver extends it for what it caches."""
+        if toggle.name == "show_trails" and not value:
+            self._clear_trails()
+
     def toggle_labels(self) -> None:
         """Toggle static overlay labels such as region and waypoint names."""
-        self.show_labels = not self.show_labels
+        self.toggle("show_labels")
+
+    def cycle_aircraft_labels(self) -> str:
+        """Step the aircraft labels on: full data block, callsign, none."""
+        return self.toggle("aircraft_labels")
+
+    def toggle_trails(self) -> None:
+        """Flip trail rendering, discarding the points when turning it off."""
+        self.toggle("show_trails")
 
     def toggle_all_routes(self) -> None:
         """Toggle between showing every aircraft's route and only the selected one."""
-        self.show_all_routes = not self.show_all_routes
+        self.toggle("show_all_routes")
 
     def toggle_velocity_obstacles(self) -> None:
         """Toggle the velocity-obstacle overlay for the tracked aircraft."""
-        self.show_velocity_obstacles = not self.show_velocity_obstacles
+        self.toggle("show_velocity_obstacles")
 
     # Smallest VO lookahead fraction the slider allows - a sliver so the cones
     # never collapse to nothing (which would leave the handle with no overlay).

@@ -30,6 +30,14 @@ class TimeControlMixin:
         self._desired_dtmult = max(0.125, min(self._desired_dtmult * factor, 1024.0))
         self.realtime = True
 
+    def slow_down(self) -> None:
+        """Half the realtime speed."""
+        self.scale_dtmult(0.5)
+
+    def speed_up(self) -> None:
+        """Double the realtime speed."""
+        self.scale_dtmult(2.0)
+
     def delete_all_aircraft(self) -> None:
         """Queue every current aircraft for deletion on the next env step."""
         env = getattr(self, "_env", None)

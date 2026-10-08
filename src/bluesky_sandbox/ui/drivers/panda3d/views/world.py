@@ -26,7 +26,6 @@ import bluesky as bs
 from bluesky.tools.aero import ft
 
 from bluesky_sandbox.interface.task import WaypointReadoutKey
-from bluesky_sandbox.sim.queryables import QueryRegion
 from bluesky_sandbox.ui.drivers.common import CursorHint, CursorHintName
 from bluesky_sandbox.ui.drivers.panda3d.colors import (
     CHEVRON_NOTCH_FRAC,
@@ -41,6 +40,7 @@ from bluesky_sandbox.ui.drivers.panda3d.colors import (
     color as _color,
 )
 from bluesky_sandbox.ui.drivers.panda3d.views.base import Panda3DView
+from bluesky_sandbox.ui.drivers.panda3d.views.tags import AircraftTag, AircraftTags
 
 M_PER_NM = 1852.0
 
@@ -67,7 +67,16 @@ class WorldView(Panda3DView):
         # See :class:`_TrailGeometry`.
         self._trails_root: NodePath | None = None
         self._trail_geometry: dict[str, _TrailGeometry] = {}
+        # Each aircraft's marker lives from its first frame to its last and is
+        # moved, not rebuilt; what is drawn for one frame only (the tracked
+        # aircraft's ring and route) goes under ``_frame_root``, under
+        # ``_aircraft_root``, and is dropped with the next frame.
+        self._markers: dict[str, _AircraftMarker] = {}
+        self._marker_templates: _MarkerTemplates | None = None
+        self._frame_root: NodePath | None = None
         self._static_label_nodes: list[NodePath] = []
+        # Aircraft data blocks: flat on the screen, beside their aircraft.
+        self._tags: AircraftTags | None = None
 
         # Local-ENU projection origin, recomputed each :meth:`on_reset`.
         self._lat0: float = 0.0
@@ -89,6 +98,7 @@ class WorldView(Panda3DView):
         self._ground = driver._render.attachNewNode("ground")
         self._trails_root = driver._render.attachNewNode("trails")
         self._static_label_nodes.clear()
+        self._tags = AircraftTags(driver._show.aspect2d, getattr(driver, "_ui_font", None))
         self._install_lighting(driver)
 
     def on_reset(self, driver: Panda3DSimDriver, env) -> None:
@@ -119,6 +129,11 @@ class WorldView(Panda3DView):
         self._ground = driver._render.attachNewNode("ground")
         self._trails_root = driver._render.attachNewNode("trails")
         self._static_label_nodes.clear()
+        # The markers went with the old ``_aircraft_root``.
+        self._markers.clear()
+        if self._tags is not None:
+            self._tags.clear()
+        self._frame_root = None
         # The driver's trail dict is cleared on reset, and the old
         # ``_trails_root`` has just been removed along with every node
         # parented under it - so the cache holds nothing but dangling
@@ -136,7 +151,7 @@ class WorldView(Panda3DView):
         self._static_label_nodes.clear()
 
     def on_step(self, driver: Panda3DSimDriver) -> None:
-        """Tear down + rebuild every aircraft marker for this frame."""
+        """Bring every aircraft marker up to date for this frame."""
         self._refresh_aircraft(driver)
 
     def close(self) -> None:
@@ -157,6 +172,11 @@ class WorldView(Panda3DView):
         self._ground = None
         self._trails_root = None
         self._trail_geometry.clear()
+        self._markers.clear()
+        if self._tags is not None:
+            self._tags.destroy()
+            self._tags = None
+        self._frame_root = None
         self._screen_aircraft = []
 
     # ------------------------------------------------------------------
@@ -596,19 +616,23 @@ class WorldView(Panda3DView):
     # ------------------------------------------------------------------
 
     def _refresh_aircraft(self, driver: Panda3DSimDriver) -> None:
-        """Tear down and rebuild every aircraft marker.
+        """Move, turn, size and color every aircraft's marker for this frame.
 
-        Cheap for the aircraft counts a sandbox env typically runs at
-        (dozens at most).  Keeps the marker code branch-free of any
-        diff-against-previous-frame bookkeeping.
+        A marker is made once, for the aircraft's first frame - from shared
+        unit geometry (see :class:`_MarkerTemplates`), placed and scaled by
+        its transform - and dropped once the aircraft is gone, so a frame
+        builds no geometry for aircraft, only the tracked one's ring and
+        route.
         """
         if self._aircraft_root is None:
             return
-        from panda3d.core import LineSegs, Vec4
-
-        self._aircraft_root.removeNode()
-        self._aircraft_root = driver._render.attachNewNode("aircraft")
+        if self._frame_root is not None:
+            self._frame_root.removeNode()
+        self._frame_root = self._aircraft_root.attachNewNode("frame")
         self._screen_aircraft = []
+        if self._marker_templates is None:
+            self._marker_templates = _MarkerTemplates()
+        templates = self._marker_templates
 
         cd = bs.traf.cd
         rpz_arr = cd.rpz
@@ -616,64 +640,53 @@ class WorldView(Panda3DView):
         default_rpz_m = 5.0 * 1_852.0  # 5 NM
         default_hpz_m = 1000.0 * 0.3048  # 1000 ft
 
-        tracked = driver.tracked_acid()
-        for i in range(bs.traf.ntraf):
-            acid = bs.traf.id[i]
-            lat = bs.traf.lat[i]
-            lon = bs.traf.lon[i]
-            alt_m = bs.traf.alt[i]
-            hdg = float(bs.traf.hdg[i])
+        aircraft = driver.aircraft_frame()
+        for acid in self._markers.keys() - set(aircraft.ids):
+            self._markers.pop(acid).destroy()
 
-            ex, ny, up = self._project(lat, lon, alt_m)
+        tracked = driver.tracked_acid()
+        east, north = self._project_many(aircraft.lat, aircraft.lon)
+        tags: list[AircraftTag] = []
+        for i, acid in enumerate(aircraft.ids):
+            ex, ny, up = east[i], north[i], aircraft.alt_m[i]
 
             # Color priority: display alerts > query region > default.
-            state = driver._aircraft_state(acid)
+            state = aircraft.state(i)
             if state in ("los", "conflict", "violation"):
                 base_rgb = STATE_COLORS[state]
             else:
-                query_rgb = self._query_color_for_aircraft(driver, lat, lon, alt_m / ft)
-                base_rgb = (
-                    query_rgb if query_rgb is not None else STATE_COLORS["normal"]
-                )
-            background = bool(driver._aircraft_snapshot(acid).get("background", False))
+                query = aircraft.query_color(i)
+                base_rgb = _color(query)[:3] if query is not None else STATE_COLORS["normal"]
+            background = aircraft.background(i)
             if background:
                 base_rgb = dim_rgb(base_rgb)
             rgba = (*base_rgb, 0.55 if background else 1.0)
 
+            marker = self._markers.get(acid)
+            if marker is None:
+                marker = self._markers[acid] = _AircraftMarker(self._aircraft_root, templates)
+
             visual_size = self._chevron_visual_size(driver, ex, ny, up)
-            self._make_aircraft_chevron(ex, ny, up, hdg, visual_size, rgba, acid)
+            marker.place_chevron(ex, ny, up, aircraft.hdg[i], visual_size, rgba)
 
             rpz_m = float(rpz_arr[i]) if rpz_arr is not None else default_rpz_m
             hpz_m = float(hpz_arr[i]) if hpz_arr is not None else default_hpz_m
-            self._draw_protection_zone(ex, ny, up, rpz_m, hpz_m, base_rgb, state)
-
-            ls = LineSegs()
-            ls.setColor(Vec4(*base_rgb, 0.65))
-            ls.setThickness(1.5)
-            ls.moveTo(ex, ny, 0.0)
-            ls.drawTo(ex, ny, up)
-            self._aircraft_root.attachNewNode(ls.create())
-
-            self._attach_label(
-                driver,
-                self._aircraft_root,
-                driver.format_aircraft_marker_label(i),
-                ex,
-                ny,
-                up + rpz_m * 0.25,
-                (*base_rgb, 1.0),
-                screen_offset=(
-                    ((i % 3) - 1) * 1.6,
-                    (i % 4) * 0.8,
-                ),
-                draw_order=i % 20,
+            marker.place_protection_zone(
+                templates, ex, ny, up, rpz_m, hpz_m, *self._protection_zone_style(base_rgb, state)
             )
+            marker.place_pole(ex, ny, up, (*base_rgb, 0.65), visual_size)
 
             sx, sy = self._world_to_screen(driver, ex, ny, up)
             self._screen_aircraft.append((sx, sy, acid))
+            lines = driver.format_aircraft_marker_label_lines(i)
+            if lines and sx > -1e8:
+                tags.append(self._tag(acid, sx, sy, lines, base_rgb, state, background, acid == tracked))
 
             if acid == tracked:
                 self._draw_highlight_ring(ex, ny, up, rpz_m * 1.10, HIGHLIGHT)
+
+        if self._tags is not None:
+            self._tags.update(driver, tags, driver.hud_rects_px())
 
         self._draw_selected_route(driver)
 
@@ -682,6 +695,52 @@ class WorldView(Panda3DView):
         # append time on the driver, so old segments never re-color
         # and we only rebuild when new points arrive.
         self._sync_trails(driver)
+
+    # A block's text, by separation state: alerts in their color, the rest
+    # a soft white that does not compete with them.
+    _TAG_TEXT = (0.86, 0.93, 1.0)
+
+    def _tag(
+        self,
+        acid: str,
+        sx: float,
+        sy: float,
+        lines: list[str],
+        base_rgb: tuple[float, float, float],
+        state: str,
+        background: bool,
+        tracked: bool,
+    ) -> AircraftTag:
+        """An aircraft's data block: colored by its separation state, framed
+        when tracked or alerting, dimmed for background traffic."""
+        alert = state in ("los", "conflict", "violation")
+        rgb = STATE_COLORS[state] if alert else self._TAG_TEXT
+        alpha = 0.6 if background else 1.0
+        if tracked:
+            frame = (*HIGHLIGHT, 0.95)
+        elif alert:
+            frame = (*STATE_COLORS[state], 0.85)
+        else:
+            frame = None
+        priority = 3 if tracked else {"los": 2, "conflict": 1, "violation": 1}.get(state, 0)
+        return AircraftTag(
+            acid,
+            float(sx),
+            float(sy),
+            tuple(lines),
+            (*rgb, alpha),
+            frame,
+            (*base_rgb, 0.9 * alpha),
+            priority,
+        )
+
+    def _project_many(self, lat_deg, lon_deg):
+        """:meth:`_project` over arrays of latitudes and longitudes: the
+        same arithmetic, all aircraft at once. Returns east and north as
+        lists."""
+        east_m = (lon_deg - self._lon0) * self._cos_lat0 * M_PER_DEG
+        north_m = (lat_deg - self._lat0) * M_PER_DEG
+        return east_m.tolist(), north_m.tolist()
 
     def set_static_labels_visible(self, visible: bool) -> None:
         for node in list(self._static_label_nodes):
@@ -775,7 +834,7 @@ class WorldView(Panda3DView):
         """
         if key in STATE_COLORS:
             return STATE_COLORS[key]
-        return NAMED_COLORS.get(key.lower(), NAMED_COLORS["gray"])
+        return _color(key)[:3]
 
     def _chevron_visual_size(
         self,
@@ -814,193 +873,21 @@ class WorldView(Panda3DView):
             pass
         return max(distance * factor, minimum)
 
-    def _query_color_for_aircraft(
-        self,
-        driver: Panda3DSimDriver,
-        lat_deg: float,
-        lon_deg: float,
-        alt_ft: float,
-    ) -> tuple[float, float, float] | None:
-        """Color of the first :class:`QueryRegion` containing the
-        aircraft, or ``None`` if it lies outside every region."""
-        if driver._env is None:
-            return None
-        for qable in driver._env.episode_queryables.values():
-            if isinstance(qable, QueryRegion) and qable.bounds.contains(
-                lat_deg,
-                lon_deg,
-                alt_ft,
-            ):
-                return NAMED_COLORS.get(qable.color.lower(), NAMED_COLORS["gray"])
-        return None
-
-    def _make_aircraft_chevron(
-        self,
-        x: float,
-        y: float,
-        z: float,
-        hdg_deg: float,
-        half_length_m: float,
-        rgba: tuple[float, float, float, float],
-        acid: str,
-    ) -> None:
-        """3D chevron prism centered on the aircraft's altitude.
-
-        Eight vertices form a thin extrusion of pygame's 4-point
-        chevron silhouette.  A bright wireframe traces every edge of
-        the prism so the silhouette stays unambiguous against any
-        background; the lines are pulled out of the depth test so they
-        always paint over the coincident face triangles.
-        """
-        from panda3d.core import (
-            Geom,
-            GeomNode,
-            GeomTriangles,
-            GeomVertexData,
-            GeomVertexFormat,
-            GeomVertexWriter,
-            LineSegs,
-            Vec4,
-        )
-
-        H = half_length_m
-        wing = H * CHEVRON_WING_FRAC
-        notch = H * CHEVRON_NOTCH_FRAC
-        th = H * 0.15
-
-        vdata = GeomVertexData(f"chev_{acid}", GeomVertexFormat.getV3(), Geom.UHStatic)
-        vw = GeomVertexWriter(vdata, "vertex")
-        vw.addData3(0, H, th)
-        vw.addData3(wing, -H, th)
-        vw.addData3(0, -notch, th)
-        vw.addData3(-wing, -H, th)
-        vw.addData3(0, H, -th)
-        vw.addData3(wing, -H, -th)
-        vw.addData3(0, -notch, -th)
-        vw.addData3(-wing, -H, -th)
-
-        tris = GeomTriangles(Geom.UHStatic)
-        tris.addVertices(0, 1, 2)
-        tris.addVertices(0, 2, 3)
-        tris.addVertices(4, 6, 5)
-        tris.addVertices(4, 7, 6)
-        for top_a, top_b in ((0, 1), (1, 2), (2, 3), (3, 0)):
-            bot_a, bot_b = top_a + 4, top_b + 4
-            tris.addVertices(top_a, top_b, bot_b)
-            tris.addVertices(top_a, bot_b, bot_a)
-
-        geom = Geom(vdata)
-        geom.addPrimitive(tris)
-        node = GeomNode(f"chev_{acid}")
-        node.addGeom(geom)
-        np = self._aircraft_root.attachNewNode(node)
-        np.setColor(Vec4(*rgba))
-        np.setTwoSided(True)
-        np.setH(-hdg_deg)
-        np.setPos(x, y, z)
-
-        # Wireframe outline - same hue as the body but lifted 40 %
-        # toward white, so the edges read as a highlight rather than a
-        # competing accent.
-        lift = 0.4
-        outline = LineSegs()
-        outline.setColor(
-            Vec4(
-                rgba[0] + (1.0 - rgba[0]) * lift,
-                rgba[1] + (1.0 - rgba[1]) * lift,
-                rgba[2] + (1.0 - rgba[2]) * lift,
-                1.0,
-            )
-        )
-        outline.setThickness(0.1)
-        top = [
-            (0, H, th),
-            (wing, -H, th),
-            (0, -notch, th),
-            (-wing, -H, th),
-        ]
-        bot = [(lx, ly, -th) for lx, ly, _ in top]
-        outline.moveTo(*top[0])
-        for p in top[1:]:
-            outline.drawTo(*p)
-        outline.drawTo(*top[0])
-        outline.moveTo(*bot[0])
-        for p in bot[1:]:
-            outline.drawTo(*p)
-        outline.drawTo(*bot[0])
-        for t, b in zip(top, bot):
-            outline.moveTo(*t)
-            outline.drawTo(*b)
-        outline_np = self._aircraft_root.attachNewNode(outline.create())
-        outline_np.setH(-hdg_deg)
-        outline_np.setPos(x, y, z)
-        # Take the outline out of depth-testing entirely so it can't
-        # z-fight the prism faces that share its vertices.
-        outline_np.setDepthTest(False)
-        outline_np.setDepthWrite(False)
-        outline_np.setBin("fixed", 50)
-
-    def _draw_protection_zone(
-        self,
-        x: float,
-        y: float,
-        z: float,
-        radius_m: float,
-        hpz_m: float,
+    @staticmethod
+    def _protection_zone_style(
         base_rgb: tuple[float, float, float],
         state: str,
-    ) -> None:
-        """Volumetric cylinder marking the RPZ x HPZ envelope.
-
-        Top + bottom rings at ``z +/- hpz`` plus 8 vertical struts so the
-        cylinder reads as a volume.  Color & weight escalate with
-        separation state - a LoS cylinder is unmistakable.
-        """
-        from panda3d.core import LineSegs, Vec4
-
+    ) -> tuple[tuple[float, float, float, float], float]:
+        """Color and line thickness of the RPZ x HPZ cylinder: they escalate
+        with separation state - a LoS cylinder is unmistakable."""
         if state == "los":
-            color = (1.00, 0.20, 0.30, 0.95)
-            thickness = 2.5
-        elif state == "conflict":
-            color = (1.00, 0.60, 0.10, 0.85)
-            thickness = 2.0
-        elif state == "violation":
-            color = (*STATE_COLORS["violation"], 0.85)
-            thickness = 2.0
-        else:
-            color = (*base_rgb, 0.45)
-            thickness = 1.0
-
-        z_lo = z - hpz_m
-        z_hi = z + hpz_m
-        segs = 48
-        ring_pts = [
-            (
-                x + radius_m * math.cos(2 * math.pi * i / segs),
-                y + radius_m * math.sin(2 * math.pi * i / segs),
-            )
-            for i in range(segs + 1)
-        ]
-
-        ls = LineSegs()
-        ls.setColor(Vec4(*color))
-        ls.setThickness(thickness)
-        for ring_z in (z_lo, z_hi):
-            for i, (px, py) in enumerate(ring_pts):
-                if i == 0:
-                    ls.moveTo(px, py, ring_z)
-                else:
-                    ls.drawTo(px, py, ring_z)
-        for k in range(8):
-            t = 2 * math.pi * k / 8
-            px = x + radius_m * math.cos(t)
-            py = y + radius_m * math.sin(t)
-            ls.moveTo(px, py, z_lo)
-            ls.drawTo(px, py, z_hi)
-        self._aircraft_root.attachNewNode(ls.create())
+            return (*STATE_COLORS["los"], 0.95), 2.5
+        if state in ("conflict", "violation"):
+            return (*STATE_COLORS[state], 0.85), 2.0
+        return (*base_rgb, 0.45), 1.0
 
     def _draw_selected_route(self, driver: Panda3DSimDriver) -> None:
-        if self._aircraft_root is None:
+        if self._frame_root is None:
             return
         # "Show all routes" overlays the design's *defined* routes (resolved
         # once per episode, not per aircraft per frame); the tracked aircraft
@@ -1027,7 +914,7 @@ class WorldView(Panda3DView):
                     first = False
                 else:
                     ls.drawTo(ex, ny, up)
-            self._aircraft_root.attachNewNode(ls.create())
+            self._frame_root.attachNewNode(ls.create())
 
     def _draw_aircraft_route(
         self, driver: Panda3DSimDriver, acid: str, with_labels: bool
@@ -1053,7 +940,7 @@ class WorldView(Panda3DView):
                 alt_ft = wp["alt_ft"] if wp["alt_ft"] is not None else current_alt_ft
                 ex, ny, up = self._project(wp["lat"], wp["lon"], alt_ft * ft)
                 ls.drawTo(ex, ny, up)
-            self._aircraft_root.attachNewNode(ls.create())
+            self._frame_root.attachNewNode(ls.create())
 
         radius = max(driver._distance * 0.003, 80.0)
         for wp in waypoints:
@@ -1090,7 +977,7 @@ class WorldView(Panda3DView):
             ls.drawTo(ex + radius, ny, up)
             ls.moveTo(ex, ny - radius, up)
             ls.drawTo(ex, ny + radius, up)
-            self._aircraft_root.attachNewNode(ls.create())
+            self._frame_root.attachNewNode(ls.create())
 
             metadata = wp.get("metadata") or {}
             display_index = int(wp.get("display_index", wp["index"]))
@@ -1148,7 +1035,7 @@ class WorldView(Panda3DView):
             if with_labels and label:
                 self._attach_label(
                     driver,
-                    self._aircraft_root,
+                    self._frame_root,
                     str(label),
                     ex,
                     ny,
@@ -1170,7 +1057,7 @@ class WorldView(Panda3DView):
         radius_m: float,
         alt_tolerance_m: float,
     ) -> None:
-        if self._aircraft_root is None:
+        if self._frame_root is None:
             return
         if radius_m <= 0.0 and alt_tolerance_m <= 0.0:
             return
@@ -1200,7 +1087,7 @@ class WorldView(Panda3DView):
                     py = y + radius_m * math.sin(t)
                     ls.moveTo(px, py, z - alt_tolerance_m)
                     ls.drawTo(px, py, z + alt_tolerance_m)
-        self._aircraft_root.attachNewNode(ls.create())
+        self._frame_root.attachNewNode(ls.create())
 
     @staticmethod
     def _finite_constraint(value: object) -> float | None:
@@ -1234,7 +1121,7 @@ class WorldView(Panda3DView):
                 ls.moveTo(px, py, z)
             else:
                 ls.drawTo(px, py, z)
-        self._aircraft_root.attachNewNode(ls.create())
+        self._frame_root.attachNewNode(ls.create())
 
     def _world_to_screen(
         self,
@@ -1340,3 +1227,217 @@ class _TrailGeometry:
         tail = trail.span(self._sealed_end, trail.end)
         if len(tail) >= 2:
             self._tail = build(tail)
+
+
+class _MarkerTemplates:
+    """The geometry every aircraft marker is made of, built once at unit size:
+    a marker copies it (sharing the vertices) and its transform places,
+    turns and sizes it. Each part is linear in its size - the chevron in its
+    half-length, the cylinder in its radius and half-height - so a scaled
+    unit part is the part at that size."""
+
+    # Line thicknesses of the protection-zone cylinder, by separation state.
+    _PZ_THICKNESSES = (1.0, 2.0, 2.5)
+
+    def __init__(self) -> None:
+        from panda3d.core import (
+            Geom,
+            GeomNode,
+            GeomTriangles,
+            GeomVertexData,
+            GeomVertexFormat,
+            GeomVertexWriter,
+            LineSegs,
+            NodePath,
+        )
+
+        # Chevron prism - eight vertices form a thin extrusion of pygame's
+        # 4-point chevron silhouette - at a half-length of one meter.
+        wing = CHEVRON_WING_FRAC
+        notch = CHEVRON_NOTCH_FRAC
+        th = 0.15
+        vdata = GeomVertexData("chevron", GeomVertexFormat.getV3(), Geom.UHStatic)
+        vw = GeomVertexWriter(vdata, "vertex")
+        vw.addData3(0, 1, th)
+        vw.addData3(wing, -1, th)
+        vw.addData3(0, -notch, th)
+        vw.addData3(-wing, -1, th)
+        vw.addData3(0, 1, -th)
+        vw.addData3(wing, -1, -th)
+        vw.addData3(0, -notch, -th)
+        vw.addData3(-wing, -1, -th)
+        tris = GeomTriangles(Geom.UHStatic)
+        tris.addVertices(0, 1, 2)
+        tris.addVertices(0, 2, 3)
+        tris.addVertices(4, 6, 5)
+        tris.addVertices(4, 7, 6)
+        for top_a, top_b in ((0, 1), (1, 2), (2, 3), (3, 0)):
+            bot_a, bot_b = top_a + 4, top_b + 4
+            tris.addVertices(top_a, top_b, bot_b)
+            tris.addVertices(top_a, bot_b, bot_a)
+        geom = Geom(vdata)
+        geom.addPrimitive(tris)
+        node = GeomNode("chevron")
+        node.addGeom(geom)
+        self.chevron = NodePath(node)
+        self.chevron.setTwoSided(True)
+
+        # A bright wireframe traces every edge of the prism so the
+        # silhouette stays unambiguous against any background; the lines
+        # are pulled out of the depth test so they always paint over the
+        # coincident face triangles.
+        outline = LineSegs()
+        outline.setThickness(0.1)
+        top = [(0, 1, th), (wing, -1, th), (0, -notch, th), (-wing, -1, th)]
+        bot = [(lx, ly, -th) for lx, ly, _ in top]
+        for ring in (top, bot):
+            outline.moveTo(*ring[0])
+            for p in ring[1:]:
+                outline.drawTo(*p)
+            outline.drawTo(*ring[0])
+        for t, b in zip(top, bot):
+            outline.moveTo(*t)
+            outline.drawTo(*b)
+        self.outline = NodePath(outline.create())
+        self.outline.setDepthTest(False)
+        self.outline.setDepthWrite(False)
+        self.outline.setBin("fixed", 50)
+
+        # Protection zone: top + bottom rings at z = +/-1 plus 8 vertical
+        # struts so the cylinder reads as a volume - one per line thickness.
+        self.cylinders = {}
+        segs = 48
+        ring_pts = [
+            (math.cos(2 * math.pi * i / segs), math.sin(2 * math.pi * i / segs))
+            for i in range(segs + 1)
+        ]
+        for thickness in self._PZ_THICKNESSES:
+            ls = LineSegs()
+            ls.setThickness(thickness)
+            for ring_z in (-1.0, 1.0):
+                for i, (px, py) in enumerate(ring_pts):
+                    if i == 0:
+                        ls.moveTo(px, py, ring_z)
+                    else:
+                        ls.drawTo(px, py, ring_z)
+            for k in range(8):
+                t = 2 * math.pi * k / 8
+                ls.moveTo(math.cos(t), math.sin(t), -1.0)
+                ls.drawTo(math.cos(t), math.sin(t), 1.0)
+            self.cylinders[thickness] = NodePath(ls.create())
+
+        # Depth pole from the ground up to the aircraft.
+        pole = LineSegs()
+        pole.setThickness(1.5)
+        pole.moveTo(0, 0, 0)
+        pole.drawTo(0, 0, 1)
+        self.pole = NodePath(pole.create())
+
+        # Ground mark where the pole stands: a unit ring and a cross.
+        foot = LineSegs()
+        foot.setThickness(1.5)
+        for i in range(17):
+            t = 2 * math.pi * i / 16
+            (foot.moveTo if i == 0 else foot.drawTo)(math.cos(t), math.sin(t), 0.0)
+        foot.moveTo(-0.5, 0, 0)
+        foot.drawTo(0.5, 0, 0)
+        foot.moveTo(0, -0.5, 0)
+        foot.drawTo(0, 0.5, 0)
+        self.foot = NodePath(foot.create())
+
+
+class _AircraftMarker:
+    """One aircraft's chevron, protection zone, depth pole and ground mark:
+    copied from :class:`_MarkerTemplates` once, then only moved and recolored.
+    Its data block is drawn flat on the screen (see :mod:`.tags`)."""
+
+    __slots__ = (
+        "_cylinder",
+        "_thickness",
+        "body",
+        "foot",
+        "outline",
+        "pole",
+        "root",
+    )
+
+    # The pole's height is a scale: kept off zero, which Panda3D cannot invert.
+    _MIN_POLE_M = 1e-3
+    # Lines carry their (template) color per vertex, which a node's color
+    # replaces only at a higher priority.
+    _OVER_VERTEX_COLOR = 1
+    # The ground mark's radius, in chevron half-lengths.
+    _FOOT_SCALE = 0.55
+
+    def __init__(self, parent: NodePath, templates: _MarkerTemplates) -> None:
+        self.root = parent.attachNewNode("marker")
+        self.body = templates.chevron.copyTo(self.root)
+        self.outline = templates.outline.copyTo(self.root)
+        self.pole = templates.pole.copyTo(self.root)
+        self.foot = templates.foot.copyTo(self.root)
+        self._cylinder = None
+        self._thickness = None
+
+    def destroy(self) -> None:
+        self.root.removeNode()
+
+    def place_chevron(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        hdg_deg: float,
+        half_length_m: float,
+        rgba: tuple[float, float, float, float],
+    ) -> None:
+        """The chevron prism centered on the aircraft, along its heading;
+        its outline the same hue lifted 40 % toward white, so the edges read
+        as a highlight rather than a competing accent."""
+        size = half_length_m
+        self.body.setPosHprScale(x, y, z, -hdg_deg, 0.0, 0.0, size, size, size)
+        self.body.setColor(*rgba)
+        lift = 0.4
+        self.outline.setPosHprScale(x, y, z, -hdg_deg, 0.0, 0.0, size, size, size)
+        self.outline.setColor(
+            rgba[0] + (1.0 - rgba[0]) * lift,
+            rgba[1] + (1.0 - rgba[1]) * lift,
+            rgba[2] + (1.0 - rgba[2]) * lift,
+            1.0,
+            self._OVER_VERTEX_COLOR,
+        )
+
+    def place_protection_zone(
+        self,
+        templates: _MarkerTemplates,
+        x: float,
+        y: float,
+        z: float,
+        radius_m: float,
+        hpz_m: float,
+        rgba: tuple[float, float, float, float],
+        thickness: float,
+    ) -> None:
+        """The RPZ x HPZ cylinder around the aircraft."""
+        if thickness != self._thickness:
+            if self._cylinder is not None:
+                self._cylinder.removeNode()
+            self._cylinder = templates.cylinders[thickness].copyTo(self.root)
+            self._thickness = thickness
+        self._cylinder.setPosHprScale(x, y, z, 0.0, 0.0, 0.0, radius_m, radius_m, hpz_m)
+        self._cylinder.setColor(*rgba, self._OVER_VERTEX_COLOR)
+
+    def place_pole(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        rgba: tuple[float, float, float, float],
+        half_length_m: float,
+    ) -> None:
+        """The pole from the ground up to the aircraft, and the mark where it
+        stands - where the aircraft is over the ground, at the chevron's size."""
+        self.pole.setPosHprScale(x, y, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, max(z, self._MIN_POLE_M))
+        self.pole.setColor(*rgba, self._OVER_VERTEX_COLOR)
+        size = half_length_m * self._FOOT_SCALE
+        self.foot.setPosHprScale(x, y, 0.0, 0.0, 0.0, 0.0, size, size, 1.0)
+        self.foot.setColor(*rgba, self._OVER_VERTEX_COLOR)

@@ -51,20 +51,26 @@ camera around a movable focal point.
 * Left-click on aircraft     - select; HUD shows full info block + its route.
 * Click on empty space       - clear selection (nothing is tracked by default).
 
-Time controls mirror :class:`PygameSimDriver`:
+HUD and controls follow the shared contract (``common.hud``), as
+:class:`PygameSimDriver` does: the toolbar top right (each button's key in its
+tooltip), the tracked aircraft top left, the status bottom right, a note top
+center on what just changed. Keys:
 
-* SPACE / P  - toggle pause.
-* R          - toggle realtime <-> fast-time.
-* + / -      - halve / double ``dtmult`` (realtime only).
-* BACKSPACE  - mark every aircraft for deletion this step.
-* SHIFT+BACKSPACE - abort the episode through the normal reset path.
+* SPACE / P       - pause / run.
+* R               - realtime / fast-time.
+* + / -           - double / halve the speed (realtime only).
+* BACKSPACE       - mark every aircraft for deletion this step.
+* SHIFT+BACKSPACE - end the episode through the normal reset path.
+* L               - aircraft labels: full data block, callsign, none (the
+                    tracked aircraft keeps its block).
+* SHIFT+L         - region and waypoint names.
+* T               - trails.
+* O               - the design's defined routes, besides the selected
+                    aircraft's live route.
 
-View toggles:
-
-* T - trails.
-* L - static labels (region / spawn names).
-* O - overlay the design's defined routes (in addition to the selected
-      aircraft's live route).
+Aircraft data blocks are drawn flat on the screen at a fixed size, beside
+their aircraft with a leader line, each in the corner that overlaps least
+(see :mod:`.views.tags`).
 
 Render loop
 -----------
@@ -86,9 +92,14 @@ import time
 import numpy as np
 
 from bluesky_sandbox.ui.drivers.common import (
+    ARROW_TRENDS,
+    ASCII_TRENDS,
+    DisplayToggle,
     ViewPrimitiveFanoutMixin,
     preferred_panda3d_font_path,
 )
+from bluesky_sandbox.ui.drivers.panda3d.colors import BACKGROUND
+from bluesky_sandbox.ui.drivers.panda3d.hud import PandaHud
 from bluesky_sandbox.ui.drivers.panda3d.views import (
     Panda3DView,
     TSASView,
@@ -118,8 +129,9 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
     """
 
     _PICK_RADIUS_PX = 22
-    _HUD_MARGIN_X = 0.04
-    _HUD_MARGIN_Y = 0.06
+
+    # It draws no velocity obstacles.
+    UNSUPPORTED_CONTROLS = frozenset({"show_velocity_obstacles"})
 
     def __init__(
         self,
@@ -157,8 +169,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         self._show = None
         self._render = None
         self._hud_root = None
-        self._status_text = None
-        self._info_text = None
+        self._hud: PandaHud | None = None
         self._ui_font = None
 
         # Orbit camera state - focal point in ENU meters.
@@ -217,7 +228,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
         # Background color set the moment the window opens so the
         # first frame doesn't flash Panda's default grey.
-        self._show.setBackgroundColor(0.07, 0.10, 0.14, 1.0)
+        self._show.setBackgroundColor(*BACKGROUND, 1.0)
 
         if not self.offscreen:  # a buffer has no title, and its size is set
             props = WindowProperties()
@@ -227,6 +238,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
         self._render = self._show.render
         self._ui_font = self._load_ui_font()
+        self.trend_glyphs = ARROW_TRENDS if _has_glyphs(self._ui_font, "".join(ARROW_TRENDS)) else ASCII_TRENDS
         self._setup_hud()
         self._bind_events()
 
@@ -284,8 +296,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         # aircraft markers and HUD views immediately so the first render
         # after reset is not a static-only scene. Camera must already
         # be current because WorldView also refreshes its pick cache.
-        self._dispatch_step()
-        self._refresh_hud()
+        self._draw_scene()
 
     def close(self) -> None:
         """Tear down each view, then destroy the Panda3D window."""
@@ -302,8 +313,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             self._show = None
             self._render = None
             self._hud_root = None
-            self._status_text = None
-            self._info_text = None
+            self._hud = None
             self._ui_font = None
 
     # ------------------------------------------------------------------
@@ -315,8 +325,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if self._show is None:
             return
         self._apply_held_motion()
-        self._dispatch_step()
-        self._refresh_hud()
+        self._draw_scene()
         self._show.taskMgr.step()
 
     def step(self) -> None:
@@ -327,8 +336,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
 
         while self._paused:
             self._apply_held_motion()
-            self._dispatch_step()
-            self._refresh_hud()
+            self._draw_scene()
             self._show.taskMgr.step()
             if self._show is None:
                 return
@@ -341,10 +349,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         # capped by rendering. Input is processed inside taskMgr.step(), so it is
         # gated too - the sub-frame latency that adds is imperceptible.
         if self._render_due() and not self.offscreen:
-            self._apply_held_motion()
-            self._dispatch_step()
-            self._refresh_hud()
-            self._show.taskMgr.step()
+            self._draw_timed(self._draw_window_frame)
         # In realtime mode, idle out this substep's wall-clock budget while
         # keeping the window drawing + responsive (fixes slow-mo freezing).
         self._wait_realtime()
@@ -353,19 +358,25 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if self._show is None or self.offscreen:
             return
         if self._render_due():
-            self._apply_held_motion()
-            self._dispatch_step()
-            self._refresh_hud()
-            self._show.taskMgr.step()
+            self._draw_timed(self._draw_window_frame)
+
+    def _draw_window_frame(self) -> None:
+        """One on-screen frame: motion, scene, HUD - drawn by the task loop."""
+        self._apply_held_motion()
+        self._draw_scene()
+        self._show.taskMgr.step()
 
     def frame(self) -> np.ndarray:
         """Draw the current state and return it, ``(height, width, 3)`` RGB."""
         if not self._started:
             self.start()
-        self._dispatch_step()
-        self._refresh_hud()
-        self._show.taskMgr.step()
-        self._show.graphicsEngine.renderFrame()
+        self._draw_scene()
+        # One draw: the task loop draws a window's frame; offscreen, the
+        # graphics engine does - not both, which drew every frame twice.
+        if self.offscreen:
+            self._show.graphicsEngine.renderFrame()
+        else:
+            self._show.taskMgr.step()
         texture = self._show.win.getScreenshot()
         pixels = np.frombuffer(bytes(texture.getRamImageAs("RGB")), dtype=np.uint8)
         # Panda3D's rows run bottom to top.
@@ -381,12 +392,18 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if self._env is not None:
             self.draw_renderables(self._env._renderable_builder.iter_renderables())
 
+    def _draw_scene(self) -> None:
+        """Bring the views, then the HUD, up to date - all from one aircraft
+        snapshot (see :meth:`aircraft_frame`)."""
+        with self._aircraft_snapshot_cache_scope():
+            self._dispatch_step()
+            self._refresh_hud()
+
     def _dispatch_step(self) -> None:
         """Fan ``on_step`` out to every view."""
-        with self._aircraft_snapshot_cache_scope():
-            self.sync_moving()
-            for view in self._views:
-                view.on_step(self)
+        self.sync_moving()
+        for view in self._views:
+            view.on_step(self)
 
     # ------------------------------------------------------------------
     # HUD shell (status, info)
@@ -402,71 +419,52 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             return None
 
     def _setup_hud(self) -> None:
-        """Status badge and selected-aircraft info block.
-
-        These three pieces read driver-owned state (``self.realtime``,
-        ``self._selected``, etc.) so they live on the driver rather
-        than being broken out into their own views.  Per-view HUD -
-        the right-side TSAS column - is created by :class:`TSASView`
-        itself.
-        """
-        from direct.gui.OnscreenText import OnscreenText
-        from panda3d.core import TextNode
-
+        """The HUD (``common.hud``): status, tracked aircraft, note, toolbar.
+        Per-view HUD - the TSAS table - is its view's own."""
         self._hud_root = self._show.aspect2d
-        font_kwargs = {"font": self._ui_font} if self._ui_font is not None else {}
-
-        self._status_text = OnscreenText(
-            text="",
-            parent=self._hud_root,
-            pos=(1.20, -0.92),
-            scale=0.045,
-            fg=(0.95, 0.95, 1.0, 1.0),
-            bg=(0.0, 0.0, 0.0, 0.55),
-            align=TextNode.ARight,
-            mayChange=True,
-            **font_kwargs,
-        )
-
-        self._info_text = OnscreenText(
-            text="",
-            parent=self._hud_root,
-            pos=(-1.30, 0.92),
-            scale=0.045,
-            fg=(0.95, 0.95, 1.0, 1.0),
-            bg=(0.0, 0.0, 0.0, 0.55),
-            align=TextNode.ALeft,
-            mayChange=True,
-            **font_kwargs,
-        )
-        self._layout_hud()
+        self._hud = PandaHud(self._hud_root, self._ui_font)
 
     def _refresh_hud(self) -> None:
-        if self._status_text is None:
+        if self._hud is None:
             return
-        with self._aircraft_snapshot_cache_scope():
-            self._layout_hud()
-            self._status_text.setText(self.format_status_line())
-            self._info_text.setText(self._info_block())
+        self._hud.draw(self.hud_content(), self._show.getAspectRatio(), self._mouse_aspect_pos())
 
     def _layout_hud(self) -> None:
-        if self._show is None or self._status_text is None or self._info_text is None:
-            return
-        aspect = self._show.getAspectRatio()
-        self._status_text.setPos(
-            aspect - self._HUD_MARGIN_X,
-            -1.0 + self._HUD_MARGIN_Y,
-        )
-        self._info_text.setPos(
-            -aspect + self._HUD_MARGIN_X,
-            1.0 - self._HUD_MARGIN_Y,
-        )
+        if self._hud is not None:
+            self._hud.hover(self._mouse_aspect_pos())
+            self._hud.layout()
 
-    def _info_block(self) -> str:
-        tracked = self.tracked_acid()
-        if tracked is None:
-            return ""
-        return "\n".join(self.format_aircraft_info_lines(tracked))
+    def hud_rects_px(self) -> list[tuple[float, float, float, float]]:
+        """Where the HUD is on the screen, ``(left, top, right, bottom)`` in
+        pixels: its parts and each view's (``hud_bounds``) - what aircraft
+        data blocks keep clear of."""
+        if self._show is None or self._show.win is None or self._hud is None:
+            return []
+        width, height = self._show.win.getXSize(), self._show.win.getYSize()
+        aspect = self._show.getAspectRatio()
+
+        def px(left, right, bottom, top):
+            return (
+                (left / aspect + 1.0) * 0.5 * width,
+                (1.0 - top) * 0.5 * height,
+                (right / aspect + 1.0) * 0.5 * width,
+                (1.0 - bottom) * 0.5 * height,
+            )
+
+        rects = [px(*r) for r in self._hud.rects()]
+        for view in self._views:
+            bounds = getattr(view, "hud_bounds", lambda: None)()
+            if bounds is not None:
+                rects.append(px(*bounds))
+        return rects
+
+    def toolbar_button_at(self, x: float, y: float) -> str | None:
+        """The control whose toolbar button is at pixel ``(x, y)``."""
+        if self._hud is None or self._show is None or self._show.win is None:
+            return None
+        width, height = self._show.win.getXSize(), self._show.win.getYSize()
+        aspect = self._show.getAspectRatio()
+        return self._hud.button_at(((x / width * 2.0 - 1.0) * aspect, 1.0 - y / height * 2.0))
 
     # ------------------------------------------------------------------
     # Camera & input
@@ -481,17 +479,10 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         sb.accept("wheel_up",   lambda: self._zoom(0.85))
         sb.accept("wheel_down", lambda: self._zoom(1.18))
 
-        sb.accept("space", self.toggle_pause)
-        sb.accept("p",     self.toggle_pause)
-        sb.accept("r",     self.toggle_realtime)
-        sb.accept("t",     self.toggle_trails)
-        sb.accept("l",     self.toggle_labels)
-        sb.accept("o",     self.toggle_all_routes)
-        sb.accept("+",     lambda: self.scale_dtmult(2.0))
-        sb.accept("=",     lambda: self.scale_dtmult(2.0))
-        sb.accept("-",     lambda: self.scale_dtmult(0.5))
-        sb.accept("backspace", self.delete_all_aircraft)
-        sb.accept("shift-backspace", self.request_episode_reset)
+        # The controls (common.hud): each one's keys are declared with it.
+        for control in self.controls:
+            for key in control.keys:
+                sb.accept(key, self.activate, [control.name])
 
         for key, marker in [
             ("w", "fwd"), ("arrow_up", "fwd"),
@@ -509,12 +500,14 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             sb.win.setCloseRequestEvent("panda3d_window_close")
             sb.accept("panda3d_window_close", self._on_window_close)
 
-    def toggle_labels(self) -> None:
-        super().toggle_labels()
-        for view in self._views:
-            setter = getattr(view, "set_static_labels_visible", None)
-            if setter is not None:
-                setter(self.show_labels)
+    def on_toggled(self, toggle: DisplayToggle, value) -> None:
+        """Show or hide what the views hold."""
+        super().on_toggled(toggle, value)
+        if toggle.name == "show_labels":
+            for view in self._views:
+                setter = getattr(view, "set_static_labels_visible", None)
+                if setter is not None:
+                    setter(self.show_labels)
 
     def _on_window_close(self) -> None:
         self.close()
@@ -540,6 +533,12 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if mw is None or not mw.hasMouse():
             return
         aspect_pos = self._mouse_aspect_pos()
+        # A toolbar button runs its control; the click goes no further.
+        name = self._hud.button_at(aspect_pos) if self._hud is not None else None
+        if name is not None:
+            self.activate(name)
+            self._drag_kind = "button"
+            return
         if aspect_pos is not None:
             for view in reversed(self._views):
                 if view.on_mouse_down(self, aspect_pos):
@@ -566,6 +565,9 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             aspect_pos = self._mouse_aspect_pos()
             if view is not None and aspect_pos is not None:
                 view.on_mouse_up(self, aspect_pos)
+            return
+        if self._drag_kind == "button":
+            self._drag_kind = None
             return
         self._drag_kind = None
         if elapsed < 250 and moved < 0.01:
@@ -683,3 +685,15 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         mx_px = (mx_ndc + 1.0) * 0.5 * w
         my_px = (1.0 - (my_ndc + 1.0) * 0.5) * h
         self._selected = self._world_view.pick(self, mx_px, my_px)
+
+
+def _has_glyphs(font, text: str) -> bool:
+    """Whether ``font`` draws every character of ``text``: a missing one comes
+    back as a placeholder with nothing to draw (and Panda3D warns)."""
+    if font is None:
+        return False
+    for char in text:
+        glyph = font.getGlyph(ord(char))
+        if glyph is None or not glyph.hasQuad():
+            return False
+    return True

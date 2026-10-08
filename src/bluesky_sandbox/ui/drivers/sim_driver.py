@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import bluesky as bs
 
 from bluesky_sandbox.interface.task import AircraftRenderState
+from bluesky_sandbox.ui.drivers.common.aircraft_frame import AircraftFrame
 
 AircraftState = AircraftRenderState
 
@@ -41,6 +42,7 @@ class SimDriver:
             dict[str, tuple[tuple[str, str], ...]] | None
         ) = None
         self._live_index_cache: dict[str, int] = {}
+        self._aircraft_frame_cache: AircraftFrame | None = None
         self._sim_wall_target: float = 0.0
 
     def bind_env(self, env) -> None:
@@ -126,6 +128,7 @@ class SimDriver:
         self._aircraft_state_cache.clear()
         self._aircraft_safety_pairs_cache = None
         self._live_index_cache.clear()
+        self._aircraft_frame_cache = None
 
     @contextmanager
     def _aircraft_snapshot_cache_scope(self):
@@ -135,6 +138,13 @@ class SimDriver:
             yield
         finally:
             self._clear_aircraft_snapshot_cache()
+
+    def aircraft_frame(self) -> AircraftFrame:
+        """The live traffic as this frame draws it - read once, shared by
+        every view (see :class:`AircraftFrame`)."""
+        if self._aircraft_frame_cache is None:
+            self._aircraft_frame_cache = AircraftFrame(self)
+        return self._aircraft_frame_cache
 
     def _live_index(self) -> dict[str, int]:
         if not self._live_index_cache:

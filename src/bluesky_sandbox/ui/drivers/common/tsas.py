@@ -6,7 +6,9 @@ import math
 from dataclasses import dataclass
 
 import bluesky as bs
+import numpy as np
 from bluesky.tools.aero import ft, kts
+from bluesky.tools.geo import qdrdist
 
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 
@@ -66,36 +68,49 @@ class TsasDataMixin:
         ]
 
     def tsas_aircraft_rows(self, waypoint: Waypoint, driver) -> list[TsasRow]:
+        n = bs.traf.ntraf
+        if n == 0:
+            return []
         region = (
             self.tsas_resolve_region(driver, waypoint.tsas_region)
             if waypoint.tsas_region
             else None
         )
-        rows: list[TsasRow] = []
-        for idx in range(bs.traf.ntraf):
-            lat, lon = bs.traf.lat[idx], bs.traf.lon[idx]
-            alt_ft = bs.traf.alt[idx] / ft
-            if region is not None and not region.shape.contains(lat, lon, alt_ft):
-                continue
+        lat = np.asarray(bs.traf.lat[:n], dtype=float)
+        lon = np.asarray(bs.traf.lon[:n], dtype=float)
+        alt_ft = np.asarray(bs.traf.alt[:n], dtype=float) / ft
+        # A row needs the distance and bearing to the waypoint - not the rest
+        # of its current state (speed regimes and all) - so all aircraft at
+        # once, from the same target and formulas as that state.
+        target = waypoint.target
+        bearing_deg, dist_nm = qdrdist(lat, lon, target.lat, target.lon)
+        dist_nm = np.asarray(dist_nm, dtype=float)
+        gs_kts = np.asarray(bs.traf.gs[:n], dtype=float) / kts
+        angle_deg = (bearing_deg - np.asarray(bs.traf.hdg[:n], dtype=float) + 540) % 360 - 180
+        closing_kts = gs_kts * np.cos(np.radians(angle_deg))
+        closing = closing_kts > self._MIN_CLOSING_KT
+        eta_s = np.full(n, math.inf)
+        eta_s[closing] = dist_nm[closing] / closing_kts[closing] * 3600.0
+        alt_diff_ft = (
+            np.full(n, math.nan) if target.alt_ft is None else alt_ft - target.alt_ft
+        )
 
-            result = waypoint.result_type.for_aircraft(waypoint, idx)
-            current = result.current
-            gs_kts = bs.traf.gs[idx] / kts
-            angle_deg = (current.bearing_deg - bs.traf.hdg[idx] + 540) % 360 - 180
-            closing_kts = gs_kts * math.cos(math.radians(angle_deg))
-            eta_s = (
-                current.distance_nm / closing_kts * 3600.0
-                if closing_kts > self._MIN_CLOSING_KT
-                else math.inf
-            )
+        rows: list[TsasRow] = []
+        for idx, (eta, dist, alt_diff) in enumerate(
+            zip(eta_s.tolist(), dist_nm.tolist(), alt_diff_ft.tolist(), strict=True)
+        ):
+            if region is not None and not region.shape.contains(
+                lat[idx], lon[idx], alt_ft[idx]
+            ):
+                continue
             acid = bs.traf.id[idx]
             rows.append(
                 TsasRow(
                     idx=idx,
                     acid=acid,
-                    eta_s=eta_s,
-                    dist_nm=current.distance_nm,
-                    alt_diff_ft=current.alt_diff_ft,
+                    eta_s=eta,
+                    dist_nm=dist,
+                    alt_diff_ft=alt_diff,
                     state=driver._aircraft_state(acid),
                 )
             )

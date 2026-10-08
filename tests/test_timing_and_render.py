@@ -228,6 +228,7 @@ def test_realtime_driver_finite_fastforward_stops_at_ffstop(monkeypatch):
 
 def test_panda_update_refreshes_scene_before_render():
     driver = Panda3DSimDriver.__new__(Panda3DSimDriver)
+    SimDriver.__init__(driver)  # the aircraft caches the scene is drawn from
     calls: list[str] = []
 
     class _TaskMgr:

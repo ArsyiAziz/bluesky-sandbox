@@ -13,7 +13,8 @@ from bluesky_sandbox.ui.drivers.common import (
     TsasDataMixin,
     TsasTable,
 )
-from bluesky_sandbox.ui.drivers.panda3d.colors import NAMED_COLORS
+from bluesky_sandbox.ui.drivers.panda3d.colors import NAMED_COLORS, STATE_COLORS
+from bluesky_sandbox.ui.drivers.panda3d.colors import color as _color
 from bluesky_sandbox.ui.drivers.panda3d.views.base import Panda3DView
 
 if TYPE_CHECKING:
@@ -25,7 +26,8 @@ class TSASView(TsasDataMixin, Panda3DView):
 
     _ROWS_PER_STRIP = 8
 
-    _POS = (1.28, 0.88)
+    # Below the HUD's toolbar (common.hud: top right).
+    _POS = (1.28, 0.84)
     _WIDTH = 0.68
     _TITLE_H = 0.070
     _COL_HEADER_H = 0.052
@@ -47,9 +49,10 @@ class TSASView(TsasDataMixin, Panda3DView):
     _BORDER = (0.70, 0.74, 0.80, 0.70)
     _TEXT = (0.94, 0.95, 0.98, 1.0)
     _MUTED = (0.62, 0.67, 0.74, 1.0)
-    _CONFLICT = (1.00, 0.62, 0.10, 1.0)
-    _LOS = (1.00, 0.30, 0.38, 1.0)
-    _VIOLATION = (150 / 255, 70 / 255, 220 / 255, 1.0)
+    # The state palette's (common.palette), as every view draws them.
+    _CONFLICT = (*STATE_COLORS["conflict"], 1.0)
+    _LOS = (*STATE_COLORS["los"], 1.0)
+    _VIOLATION = (*STATE_COLORS["violation"], 1.0)
 
     def __init__(self) -> None:
         self._root = None
@@ -63,11 +66,20 @@ class TSASView(TsasDataMixin, Panda3DView):
         self._font = None
         self._drag_offset = (0.0, 0.0)
         self._dragging = False
+        # What the widgets were made for (see ``_rebuild``), and their handles.
+        self._layout: tuple | None = None
+        self._tables: list[_TableWidgets] = []
+        self._total_h = 0.0
 
     def on_start(self, driver: Panda3DSimDriver) -> None:
         self._font = getattr(driver, "_ui_font", None)
         self._root = driver._hud_root.attachNewNode("tsas_table")
         self._root.setPos(self._pos[0], 0.0, self._pos[1])
+
+    def hud_bounds(self) -> tuple[float, float, float, float] | None:
+        """Where the table is, ``(left, right, bottom, top)`` in aspect2d
+        units, or None when it shows nothing - for what keeps clear of it."""
+        return self._bounds
 
     def on_step(self, driver: Panda3DSimDriver) -> None:
         if self._root is None:
@@ -135,31 +147,37 @@ class TSASView(TsasDataMixin, Panda3DView):
     # ------------------------------------------------------------------
 
     def _rebuild(self, driver: Panda3DSimDriver) -> None:
-        self._clear_widgets()
         self._row_hits = []
         self._title_hits = []
         self._hover_pos = driver._mouse_aspect_pos()
         tables = self.tsas_tables(driver, max_rows=self._ROWS_PER_STRIP)
+        # The widgets are made once per layout - which tables, titled how,
+        # with how many rows - and from then on only their text and colors
+        # change, in place.
+        layout = tuple((table.title, table.color, len(table.rows)) for table in tables)
+        if layout != self._layout:
+            self._clear_widgets()
+            self._layout = layout
+            self._tables = []
+            y = 0.0
+            for table_idx, table in enumerate(tables):
+                if table_idx:
+                    y -= self._GAP
+                table_h = self._table_height(table)
+                self._tables.append(self._draw_table(driver, table, y, table_h))
+                y -= table_h
+            self._total_h = -y
         if not tables:
             self._bounds = None
             self._title_bounds = None
             return
-
-        y = 0.0
-        total_h = 0.0
-        for table_idx, table in enumerate(tables):
-            if table_idx:
-                y -= self._GAP
-                total_h += self._GAP
-            table_h = self._table_height(table)
-            self._draw_table(driver, table, y, table_h)
-            y -= table_h
-            total_h += table_h
+        for table, widgets in zip(tables, self._tables, strict=True):
+            self._fill_table(table, widgets)
 
         left = self._pos[0] - self._WIDTH
         right = self._pos[0]
         top = self._pos[1]
-        bottom = self._pos[1] - total_h
+        bottom = self._pos[1] - self._total_h
         self._bounds = (left, right, bottom, top)
         self._title_bounds = (
             left,
@@ -175,7 +193,9 @@ class TSASView(TsasDataMixin, Panda3DView):
         table: TsasTable,
         y_top: float,
         height: float,
-    ) -> None:
+    ) -> _TableWidgets:
+        """Make one table's widgets; :meth:`_fill_table` gives them their
+        hover colors and row text."""
         from direct.gui import DirectGuiGlobals as DGG
         from direct.gui.DirectGui import DirectFrame
         from direct.gui.OnscreenText import OnscreenText
@@ -184,6 +204,7 @@ class TSASView(TsasDataMixin, Panda3DView):
         left = -self._WIDTH
         right = 0.0
         bottom = y_top - height
+        widgets = _TableWidgets()
 
         self._add_frame(DirectFrame(
             parent=self._root,
@@ -191,19 +212,14 @@ class TSASView(TsasDataMixin, Panda3DView):
             frameColor=self._BG,
             relief=DGG.FLAT,
         ))
-        title_bounds = self._absolute_bounds(left, right, y_top - self._TITLE_H, y_top)
-        title_bg = (
-            self._TITLE_HOVER_BG
-            if self._dragging or self._is_hovered(title_bounds)
-            else self._TITLE_BG
-        )
-        self._add_frame(DirectFrame(
+        widgets.title_size = (left, right, y_top - self._TITLE_H, y_top)
+        widgets.title = _Swatch(DirectFrame(
             parent=self._root,
-            frameSize=(left, right, y_top - self._TITLE_H, y_top),
-            frameColor=title_bg,
+            frameSize=widgets.title_size,
+            frameColor=self._TITLE_BG,
             relief=DGG.FLAT,
-        ))
-        self._title_hits.append(title_bounds)
+        ), self._TITLE_BG)
+        self._add_frame(widgets.title.frame)
         self._add_text(OnscreenText(
             text=self._fit_text(table.title, 26),
             parent=self._root,
@@ -230,8 +246,7 @@ class TSASView(TsasDataMixin, Panda3DView):
             self._HEADER_SCALE,
         )
 
-        rows = table.rows
-        if not rows:
+        if not table.rows:
             self._add_frame(DirectFrame(
                 parent=self._root,
                 frameSize=(left, right, bottom, header_bottom),
@@ -248,39 +263,62 @@ class TSASView(TsasDataMixin, Panda3DView):
                 mayChange=False,
                 **self._font_kwargs(),
             ))
-        for row_idx, row in enumerate(rows):
+        for row_idx in range(len(table.rows)):
             row_top = header_bottom - row_idx * self._ROW_H
             row_bottom = row_top - self._ROW_H
-            row_bounds = self._absolute_bounds(left, right, row_bottom, row_top)
-            bg = (
+            size = (left, right, row_bottom, row_top)
+            frame = DirectFrame(
+                parent=self._root,
+                frameSize=size,
+                frameColor=self._ROW_BG,
+                relief=DGG.FLAT,
+            )
+            self._add_frame(frame)
+            cells = self._draw_cells(
+                [""] * 4,
+                row_bottom + 0.014,
+                [self._TEXT] * 4,
+                self._TEXT_SCALE,
+                may_change=True,
+            )
+            widgets.rows.append((size, _Swatch(frame, self._ROW_BG), cells))
+
+        self._draw_border(left, right, bottom, y_top)
+        return widgets
+
+    def _fill_table(self, table: TsasTable, widgets: _TableWidgets) -> None:
+        """Bring a table's widgets up to date: hover colors, rows, hit boxes."""
+        title_bounds = self._absolute_bounds(*widgets.title_size)
+        widgets.title.set(
+            self._TITLE_HOVER_BG
+            if self._dragging or self._is_hovered(title_bounds)
+            else self._TITLE_BG
+        )
+        self._title_hits.append(title_bounds)
+        for row_idx, (row, (size, swatch, cells)) in enumerate(
+            zip(table.rows, widgets.rows, strict=True)
+        ):
+            row_bounds = self._absolute_bounds(*size)
+            swatch.set(
                 self._ROW_HOVER_BG if self._is_hovered(row_bounds)
                 else self._ROW_BG if row_idx % 2 == 0
                 else self._ALT_ROW_BG
             )
-            self._add_frame(DirectFrame(
-                parent=self._root,
-                frameSize=(left, right, row_bottom, row_top),
-                frameColor=bg,
-                relief=DGG.FLAT,
-            ))
             self._row_hits.append((
                 row_bounds,
                 row.acid,
             ))
             color = self._row_color(row.state)
-            self._draw_cells(
-                [
-                    self._fit_text(row.acid, 10),
-                    self.tsas_eta_text(row.eta_s),
-                    self.tsas_dtm_text(row.dist_nm),
-                    self._state_text(row.state),
-                ],
-                row_bottom + 0.014,
-                [color, color, self._TEXT, color],
-                self._TEXT_SCALE,
+            values = (
+                self._fit_text(row.acid, 10),
+                self.tsas_eta_text(row.eta_s),
+                self.tsas_dtm_text(row.dist_nm),
+                self._state_text(row.state),
             )
-
-        self._draw_border(left, right, bottom, y_top)
+            for cell, value, fg in zip(
+                cells, values, (color, color, self._TEXT, color), strict=True
+            ):
+                cell.set(value, fg)
 
     def _draw_cells(
         self,
@@ -288,7 +326,8 @@ class TSASView(TsasDataMixin, Panda3DView):
         y: float,
         colors: list[tuple[float, float, float, float]],
         scale: float,
-    ) -> None:
+        may_change: bool = False,
+    ) -> list[_Cell]:
         from direct.gui.OnscreenText import OnscreenText
         from panda3d.core import TextNode
 
@@ -299,17 +338,21 @@ class TSASView(TsasDataMixin, Panda3DView):
             -self._PAD_X,
         ]
         aligns = [TextNode.ALeft, TextNode.ARight, TextNode.ARight, TextNode.ARight]
+        cells = []
         for value, x, align, color in zip(values, x_positions, aligns, colors):
-            self._add_text(OnscreenText(
+            text = OnscreenText(
                 text=value,
                 parent=self._root,
                 pos=(x, y),
                 scale=scale,
                 fg=color,
                 align=align,
-                mayChange=False,
+                mayChange=may_change,
                 **self._font_kwargs(),
-            ))
+            )
+            self._add_text(text)
+            cells.append(_Cell(text, value, color))
+        return cells
 
     def _draw_border(self, left: float, right: float, bottom: float, top: float) -> None:
         from direct.gui import DirectGuiGlobals as DGG
@@ -345,6 +388,8 @@ class TSASView(TsasDataMixin, Panda3DView):
             except Exception:
                 pass
         self._widgets = []
+        self._layout = None
+        self._tables = []
 
     def _add_frame(self, frame) -> None:
         self._widgets.append(frame)
@@ -444,5 +489,51 @@ class TSASView(TsasDataMixin, Panda3DView):
 
     @staticmethod
     def _waypoint_color(name: str) -> tuple[float, float, float, float]:
-        rgb = NAMED_COLORS.get(name.lower(), NAMED_COLORS["cyan"])
+        rgb = _color(name)[:3] if name.lower() in NAMED_COLORS or name.startswith("#") else NAMED_COLORS["cyan"]
         return (*rgb, 1.0)
+
+
+class _Swatch:
+    """A frame whose color is set only when it changes."""
+
+    __slots__ = ("color", "frame")
+
+    def __init__(self, frame, color) -> None:
+        self.frame = frame
+        self.color = color
+
+    def set(self, color) -> None:
+        if color != self.color:
+            self.frame["frameColor"] = color
+            self.color = color
+
+
+class _Cell:
+    """A table cell's text, changed only when its text or color does."""
+
+    __slots__ = ("color", "text", "value")
+
+    def __init__(self, text, value: str, color) -> None:
+        self.text = text
+        self.value = value
+        self.color = color
+
+    def set(self, value: str, color) -> None:
+        if value != self.value:
+            self.text.setText(value)
+            self.value = value
+        if color != self.color:
+            self.text.setFg(color)
+            self.color = color
+
+
+class _TableWidgets:
+    """One table's widgets that change: the title bar (for hover) and, per
+    row, its frame size, background and four cells."""
+
+    __slots__ = ("rows", "title", "title_size")
+
+    def __init__(self) -> None:
+        self.title: _Swatch | None = None
+        self.title_size: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+        self.rows: list[tuple[tuple, _Swatch, list[_Cell]]] = []

@@ -12,7 +12,10 @@ The driver owns:
 * runtime layout edits - drag splitter dividers to resize panels, or
   click-and-hold a panel's header bar and drop on another panel's edge
   to rearrange the layout.  Drop on the center to swap two views;
-* common utilities (text rendering, info tooltip, status badge);
+* common utilities (text rendering, info tooltip);
+* the HUD of the shared contract (``common.hud``): the toolbar in the top
+  right of the header row (each button's key in its tooltip), the tracked
+  aircraft top left, the status bottom right, a note top center;
 * cross-view orchestration: collecting hover hits from each view,
   picking a winner, asking every view to highlight the same aircraft,
   drawing connecting lines between markers across views.
@@ -39,6 +42,10 @@ Mouse:
 * Drag a plan/profile - pan that view.
 * Right-drag or middle-drag also pans without click-select.
 * Home / 0 - reset plan/profile zoom and pan.
+
+Keys - the controls of ``common.hud``, the same as Panda3D's: SPACE / P pause,
+R realtime, + / - speed, BACKSPACE delete all, SHIFT+BACKSPACE end the episode,
+L aircraft labels, SHIFT+L names, T trails, O all routes, V velocity obstacles.
 """
 
 from __future__ import annotations
@@ -46,15 +53,20 @@ from __future__ import annotations
 import itertools
 import math
 import os
+import time
 
 import bluesky as bs
 import numpy as np
 import pygame
 
 from bluesky_sandbox.ui.drivers.common import (
+    ARROW_TRENDS,
+    ASCII_TRENDS,
     UI_FONT_NAMES,
+    Button,
     CursorHint,
     CursorHintName,
+    HudContent,
     ViewPrimitiveFanoutMixin,
     preferred_ui_font_path,
 )
@@ -147,8 +159,9 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
     HEADER_FG = (245, 245, 250)
     HEADER_BUTTON_BG = (74, 83, 105)
     HEADER_BUTTON_OFF_BG = (42, 48, 62)
-    HEADER_BUTTON_W = 38
-    HEADER_BUTTON_PAD = 4
+    HEADER_OFF_FG = (150, 160, 178)
+    HEADER_BUTTON_PLAIN_BG = (58, 66, 84)
+    HEADER_BUTTON_PAD = 3
     DROP_PREVIEW_BG = (255, 215, 30, 90)  # semi-transparent yellow
 
     def __init__(
@@ -173,7 +186,13 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         # Persistent off-screen canvas, reused across frames (reallocated only
         # on resize) so we don't allocate a full-window Surface every frame.
         self._canvas: pygame.Surface | None = None
+        # Composed label / data-block surfaces, see :meth:`_text_block`.
+        self._text_blocks: dict[tuple, pygame.Surface] = {}
         self._clock: pygame.time.Clock | None = None
+        # Where the HUD was drawn last frame, by part (see ``_draw_hud``).
+        self._hud_rects: dict[str, pygame.Rect] = {}
+        # When input was last read (monotonic s), for :meth:`_pump_events_due`.
+        self._last_pump_s = 0.0
         self.font: pygame.font.Font | None = None
         self._header_font: pygame.font.Font | None = None
 
@@ -251,7 +270,7 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
     def start(self) -> None:
         super().start()
         # Headless SDL offscreen - no on-screen window, but the canvas
-        # Surface is still rendered and readable via surfarray.
+        # Surface is still rendered and read back as the frame.
         # Must happen before pygame.display.init().
         if self.offscreen:
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -263,6 +282,9 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         self._clock = pygame.time.Clock()
         self.font = self._make_font(self.LABEL_FONT_SIZE, bold=True)
         self._header_font = self._make_font(12, bold=True)
+        # Labels' trend arrows, where the font has them.
+        metrics = self.font.metrics("".join(ARROW_TRENDS)) if self.font is not None else None
+        self.trend_glyphs = ARROW_TRENDS if metrics and all(metrics) else ASCII_TRENDS
 
         if self._record_path:
             # Imported lazily so non-recording runs don't import imageio.
@@ -308,9 +330,8 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             self._header_font = None
 
     def _display_flags(self) -> int:
-        # DOUBLEBUF gives a cheaper full-screen present, but a frame is read
-        # back from the framebuffer via surfarray, which would see the
-        # swapped-out buffer after a flip - so keep a single buffer offscreen.
+        # DOUBLEBUF gives a cheaper full-screen present. Offscreen nothing is
+        # presented - frames are read from the canvas - so a single buffer.
         flags = pygame.RESIZABLE
         if not self.offscreen:
             flags |= pygame.DOUBLEBUF
@@ -346,11 +367,12 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if self._window is None:
             return
         self._pump_events()
+        # No clock tick here: the render gate paces drawing, and a sleep in
+        # every env.render() would cap the env's step rate at fps.
         self._render_frame()
-        self._clock.tick(self.fps)
 
     def step(self) -> None:
-        self._pump_events()
+        self._pump_events_due()
         while self._paused:
             self._render_frame()
             if self._clock is not None:
@@ -371,7 +393,7 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if self.offscreen:
             return
         if self._render_due():
-            self._render_frame()
+            self._draw_timed(self._render_frame)
 
     def _render_throttled(self) -> None:
         if self._window is None:
@@ -386,11 +408,24 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         # Shared wall-clock cadence gate (see HumanSimDriver._render_due) so the
         # frame draw is decoupled from the substep loop during fast-forward.
         if self._render_due():
-            self._render_frame()
+            self._draw_timed(self._render_frame)
 
     # ------------------------------------------------------------------
     # Event handling
     # ------------------------------------------------------------------
+
+    # Input is read at most this often (s) while the sim steps: a pump talks
+    # to the OS window server, which costs more than a substep when
+    # fast-forwarding - and no one presses keys at 120 Hz.
+    INPUT_INTERVAL_S = 1.0 / 120.0
+
+    def _pump_events_due(self) -> None:
+        """Read input if :attr:`INPUT_INTERVAL_S` has passed since it was last
+        read - so it is read at frame cadence, not every substep."""
+        now = time.monotonic()
+        if now - self._last_pump_s >= self.INPUT_INTERVAL_S:
+            self._last_pump_s = now
+            self._pump_events()
 
     def _pump_events(self) -> None:
         if self._window is None:
@@ -402,33 +437,10 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             elif event.type == pygame.VIDEORESIZE:
                 self._handle_resize(event.size)
             elif event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_p, pygame.K_SPACE):
-                    self.toggle_pause()
-                elif event.key == pygame.K_r:
-                    self.toggle_realtime()
-                elif event.key == pygame.K_t:
-                    # Common API on HumanSimDriver - also bound to T
-                    # on the panda3d driver, and forwarded to BlueSky's
-                    # TRAIL command on qtgl.
-                    self.toggle_trails()
-                elif event.key == pygame.K_l:
-                    self.toggle_labels()
-                elif event.key == pygame.K_o:
-                    # Show every aircraft's route, not just the selected one.
-                    self.toggle_all_routes()
-                elif event.key == pygame.K_v:
-                    # Velocity-obstacle overlay for the tracked aircraft.
-                    self.toggle_velocity_obstacles()
-                elif event.key == pygame.K_BACKSPACE:
-                    mods = pygame.key.get_mods()
-                    if mods & (pygame.KMOD_SHIFT | pygame.KMOD_CTRL):
-                        self.request_episode_reset()
-                    else:
-                        self.delete_all_aircraft()
-                elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
-                    self.scale_dtmult(2.0)
-                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-                    self.scale_dtmult(0.5)
+                # The controls (common.hud): each one's keys declared with it.
+                name = self._control_for_event_key(event.key)
+                if name is not None:
+                    self.activate(name)
                 elif event.key in (pygame.K_HOME, pygame.K_0, pygame.K_KP0):
                     self._reset_viewports()
             elif event.type == pygame.MOUSEWHEEL:
@@ -450,11 +462,10 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if self._viewport_drag is not None:
             return
         self._pending_viewport_pan = None
-        if self._label_button_at(pos) is not None:
-            self.toggle_labels()
-            return
-        if self._vo_button_at(pos) is not None:
-            self.toggle_velocity_obstacles()
+        # A toolbar button runs its control; the click goes no further.
+        name = self.toolbar_button_at(*pos)
+        if name is not None:
+            self.activate(name)
             return
         # 1. Per-view widgets (e.g. VerticalView's bottom rotate handle)
         #    get first dibs so they can override the layout-level drags.
@@ -776,20 +787,21 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
                 return leaf
         return None
 
-    def _label_button_at(self, pos: tuple[int, int]) -> pygame.Rect | None:
-        for leaf in L.iter_leaves(self._layout):
-            button = self._label_button_rect(leaf)
-            if button.collidepoint(pos):
-                return button
-        return None
+    # Pygame's names for keys Panda3D - and the controls - name otherwise.
+    _KEY_NAMES = {"keypad +": "+", "keypad -": "-", "keypad =": "="}
+
+    def _control_for_event_key(self, key: int) -> str | None:
+        """The control ``key`` (with the modifiers held now) runs."""
+        name = pygame.key.name(key)
+        name = self._KEY_NAMES.get(name, name)
+        mods = pygame.key.get_mods()
+        # Ctrl+Backspace has always ended the episode, as Shift+Backspace does.
+        shift = bool(mods & pygame.KMOD_SHIFT) or (name == "backspace" and bool(mods & pygame.KMOD_CTRL))
+        return self.control_for_key(name, shift)
 
     def on_polygons_moved(self, polygons) -> None:
         for view in self.views:
             view.on_polygons_moved(self, polygons)
-
-    # ------------------------------------------------------------------
-    # Frame composition
-    # ------------------------------------------------------------------
 
     def _render_frame(self) -> None:
         self.sync_moving()
@@ -839,15 +851,15 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
                 pygame.draw.rect(canvas, C.HIGHLIGHT, preview, width=2)
 
             self._render_hover(canvas)
-            self._draw_status_badge(canvas)
+            self._draw_hud(canvas)
 
-            self._window.blit(canvas, (0, 0))
-            pygame.display.flip()
+            # Offscreen there is no window to show: the canvas is the frame.
+            if not self.offscreen:
+                self._window.blit(canvas, (0, 0))
+                pygame.display.flip()
 
         if self._video_writer is not None:
-            # surfarray.array3d returns (W, H, 3); imageio wants (H, W, 3).
-            frame = pygame.surfarray.array3d(self._window).swapaxes(0, 1)
-            self._video_writer.append_data(np.ascontiguousarray(frame))
+            self._video_writer.append_data(_rgb(self._canvas))
 
     def frame(self) -> np.ndarray:
         """Draw the current state and return it, ``(height, width, 3)`` RGB."""
@@ -855,8 +867,7 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             self.start()
         self._pump_events()
         self._render_frame()
-        # surfarray.array3d returns (W, H, 3); a frame is (H, W, 3).
-        return np.ascontiguousarray(pygame.surfarray.array3d(self._window).swapaxes(0, 1))
+        return _rgb(self._canvas)
 
     def _render_selection(self, canvas: pygame.Surface) -> None:
         tracked = self.tracked_acid()
@@ -932,62 +943,90 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
                 header.top + (self.HEADER_HEIGHT - text.get_height()) // 2,
             ),
         )
-        button = self._label_button_rect(leaf)
-        button_bg = (
-            self.HEADER_BUTTON_BG if self.show_labels else self.HEADER_BUTTON_OFF_BG
-        )
-        pygame.draw.rect(canvas, button_bg, button, border_radius=3)
-        pygame.draw.rect(canvas, C.DIVIDER, button, width=1, border_radius=3)
-        label = self._header_font.render("LBL", True, self.HEADER_FG)
-        canvas.blit(
-            label,
-            (
-                button.centerx - label.get_width() // 2,
-                button.centery - label.get_height() // 2,
-            ),
-        )
-        vo_button = self._vo_button_rect(leaf)
-        vo_bg = (
-            self.HEADER_BUTTON_BG
-            if self.show_velocity_obstacles
-            else self.HEADER_BUTTON_OFF_BG
-        )
-        pygame.draw.rect(canvas, vo_bg, vo_button, border_radius=3)
-        pygame.draw.rect(canvas, C.DIVIDER, vo_button, width=1, border_radius=3)
-        vo_label = self._header_font.render("VO", True, self.HEADER_FG)
-        canvas.blit(
-            vo_label,
-            (
-                vo_button.centerx - vo_label.get_width() // 2,
-                vo_button.centery - vo_label.get_height() // 2,
-            ),
-        )
 
-    def _label_button_rect(self, leaf: L.Leaf) -> pygame.Rect:
+    # ------------------------------------------------------------------
+    # HUD (common.hud): toolbar top right, aircraft top left, note top
+    # center, status bottom right
+    # ------------------------------------------------------------------
+
+    TOOLBAR_GAP = 4
+    TOOLBAR_GROUP_GAP = 14
+    TOOLBAR_PAD_X = 7
+
+    def _toolbar_rects(self, content: HudContent) -> list[tuple[Button, pygame.Rect]]:
+        """Each toolbar button's rect, right to left from the window's top
+        right, in the header row."""
+        if self._header_font is None:
+            return []
         height = max(self.HEADER_HEIGHT - 2 * self.HEADER_BUTTON_PAD, 1)
-        return pygame.Rect(
-            leaf.rect.right - self.HEADER_BUTTON_W - self.HEADER_BUTTON_PAD,
-            leaf.rect.top + self.HEADER_BUTTON_PAD,
-            self.HEADER_BUTTON_W,
-            height,
-        )
+        right = self.window_size[0] - self.HEADER_BUTTON_PAD
+        out = []
+        group = None
+        for button in reversed(content.toolbar):
+            if group is not None and button.group != group:
+                right -= self.TOOLBAR_GROUP_GAP - self.TOOLBAR_GAP
+            group = button.group
+            width = max(self._header_font.size(button.text)[0] + 2 * self.TOOLBAR_PAD_X, 26)
+            right -= width
+            out.append((button, pygame.Rect(right, self.HEADER_BUTTON_PAD, width, height)))
+            right -= self.TOOLBAR_GAP
+        return out
 
-    def _vo_button_rect(self, leaf: L.Leaf) -> pygame.Rect:
-        # Sits immediately to the left of the LBL button.
-        height = max(self.HEADER_HEIGHT - 2 * self.HEADER_BUTTON_PAD, 1)
-        return pygame.Rect(
-            leaf.rect.right - 2 * self.HEADER_BUTTON_W - 2 * self.HEADER_BUTTON_PAD,
-            leaf.rect.top + self.HEADER_BUTTON_PAD,
-            self.HEADER_BUTTON_W,
-            height,
-        )
-
-    def _vo_button_at(self, pos: tuple[int, int]) -> pygame.Rect | None:
-        for leaf in L.iter_leaves(self._layout):
-            button = self._vo_button_rect(leaf)
-            if button.collidepoint(pos):
-                return button
+    def toolbar_button_at(self, x: float, y: float) -> str | None:
+        """The control whose toolbar button is at pixel ``(x, y)``."""
+        for button, rect in self._toolbar_rects(self.hud_content()):
+            if rect.collidepoint(x, y):
+                return button.name
         return None
+
+    def hud_rects_px(self) -> list[tuple[float, float, float, float]]:
+        """Where the HUD is on the screen, ``(left, top, right, bottom)``."""
+        return [(r.left, r.top, r.right, r.bottom) for r in self._hud_rects.values()]
+
+    def _draw_hud(self, canvas: pygame.Surface) -> None:
+        """The HUD's content, each part in its corner (see ``common.hud``)."""
+        content = self.hud_content()
+        self._hud_rects = {}
+        if self.font is None:
+            return
+        win_w, win_h = self.window_size
+        margin = 8
+        mouse = pygame.mouse.get_pos() if pygame.mouse.get_focused() else None
+        hovered = None
+        for button, rect in self._toolbar_rects(content):
+            if button.on is None:  # an action with no state: a plain button
+                bg = self.HEADER_BUTTON_PLAIN_BG
+            else:
+                bg = self.HEADER_BUTTON_BG if button.on else self.HEADER_BUTTON_OFF_BG
+            pygame.draw.rect(canvas, bg, rect, border_radius=3)
+            over = mouse is not None and rect.collidepoint(mouse)
+            pygame.draw.rect(canvas, C.HIGHLIGHT if over else C.DIVIDER, rect, width=1, border_radius=3)
+            fg = self.HEADER_OFF_FG if button.on is False else self.HEADER_FG
+            text = self._header_font.render(button.text, True, fg)
+            canvas.blit(text, (rect.centerx - text.get_width() // 2, rect.centery - text.get_height() // 2))
+            self._hud_rects[f"button:{button.name}"] = rect
+            if over:
+                hovered = (button, rect)
+        top = self.HEADER_HEIGHT + margin
+        if content.info:
+            block = self._text_block(content.info, C.BLACK)
+            canvas.blit(block, (margin, top))
+            self._hud_rects["info"] = block.get_rect(topleft=(margin, top))
+        if content.note:
+            block = self._text_block((content.note,), C.BLACK)
+            at = (win_w // 2 - block.get_width() // 2, top)
+            canvas.blit(block, at)
+            self._hud_rects["note"] = block.get_rect(topleft=at)
+        if content.status:
+            block = self._text_block(content.status, C.PAUSED if content.paused else C.BLACK)
+            at = (win_w - block.get_width() - margin, win_h - block.get_height() - margin)
+            canvas.blit(block, at)
+            self._hud_rects["status"] = block.get_rect(topleft=at)
+        if hovered is not None:
+            button, rect = hovered
+            block = self._text_block((button.tooltip,), C.BLACK)
+            at = (min(rect.right, win_w - margin) - block.get_width(), rect.bottom + 4)
+            canvas.blit(block, (max(margin, at[0]), at[1]))
 
     # ------------------------------------------------------------------
     # Cross-view hover
@@ -1030,7 +1069,7 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
                 self._format_label_lines(label_hit["info"]),
                 mouse_pos[0],
                 mouse_pos[1],
-                highlight=False,
+                None,
             )
             return
         if ac_hit is None:
@@ -1053,7 +1092,8 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         if not lines:
             return
         state = self._aircraft_state(acid)
-        self._blit_tooltip(canvas, lines, mouse_pos[0], mouse_pos[1], state != "normal")
+        color = {"los": C.LOS, "conflict": C.CONF, "violation": C.VIOLATION}.get(state)
+        self._blit_tooltip(canvas, lines, mouse_pos[0], mouse_pos[1], color)
 
     def _render_view_hover_overlays_clipped(
         self,
@@ -1100,12 +1140,14 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         lines: list[str],
         cursor_x: int,
         cursor_y: int,
-        highlight: bool,
+        alert: tuple[int, int, int] | None,
     ) -> None:
+        """``lines`` beside the cursor; in an alerting aircraft's state color
+        (``alert``), on a paler card."""
         if self.font is None:
             return
-        text_color = C.RED if highlight else C.BLACK
-        bg_color = (255, 220, 220, 240) if highlight else (255, 248, 200, 240)
+        text_color = alert or C.BLACK
+        bg_color = (255, 236, 230, 240) if alert else (255, 248, 200, 240)
         rendered = [self.font.render(line, True, text_color) for line in lines]
         w = max(s.get_width() for s in rendered)
         h = sum(s.get_height() for s in rendered)
@@ -1128,15 +1170,6 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
             ty = win_h - bg.get_height() - 2
         canvas.blit(bg, (max(0, tx), max(0, ty)))
 
-    def _draw_status_badge(self, canvas: pygame.Surface) -> None:
-        if self.font is None:
-            return
-        text = self.format_status_line()
-        color = C.RED if self._paused else C.BLACK
-        bg = self.render_text_bg(text, color)
-        win_w, win_h = self.window_size
-        canvas.blit(bg, (win_w - bg.get_width() - 8, win_h - bg.get_height() - 8))
-
     def render_text_bg(
         self,
         text: str,
@@ -1145,7 +1178,38 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         # Multi-line aware: ``\n`` splits into stacked lines under one
         # rounded background. The bg is sized to the widest line plus
         # padding; lines are left-aligned within the bg.
-        lines = text.split("\n")
+        return self._text_block(tuple(text.split("\n")), color)
+
+    def blit_data_block(
+        self,
+        canvas: pygame.Surface,
+        lines: list[str],
+        color: tuple[int, int, int],
+        x: float,
+        y: float,
+    ) -> None:
+        if self.font is None or not lines:
+            return
+        bg = self._text_block(tuple(lines), color)
+        ox, oy = self.LABEL_OFFSET
+        canvas.blit(bg, (x + ox, y + oy))
+
+    # Text blocks recur frame after frame (labels, and data blocks until their
+    # aircraft's readout changes), so each is composed once and reused - like
+    # the lines in ``_CachedFont``. Shared: callers blit from them, never onto.
+    _MAX_TEXT_BLOCKS = 1024
+
+    def _text_block(
+        self,
+        lines: tuple[str, ...],
+        color: tuple[int, int, int],
+    ) -> pygame.Surface:
+        """``lines`` in ``color``, stacked on the label background."""
+        key = (lines, tuple(color), id(self.font))
+        cache = self._text_blocks
+        out = cache.get(key)
+        if out is not None:
+            return out
         rendered = [self.font.render(line, True, color) for line in lines]
         pad = self.LABEL_PAD
         w = max(s.get_width() for s in rendered)
@@ -1159,27 +1223,17 @@ class PygameSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         for s in rendered:
             out.blit(s, (pad, cur_y))
             cur_y += s.get_height()
+        if len(cache) >= self._MAX_TEXT_BLOCKS:
+            cache.clear()
+        cache[key] = out
         return out
 
-    def blit_data_block(
-        self,
-        canvas: pygame.Surface,
-        lines: list[str],
-        color: tuple[int, int, int],
-        x: float,
-        y: float,
-    ) -> None:
-        if self.font is None:
-            return
-        rendered = [self.font.render(line, True, color) for line in lines]
-        w = max(s.get_width() for s in rendered)
-        h = sum(s.get_height() for s in rendered)
-        pad = self.LABEL_PAD
-        bg = pygame.Surface((w + 2 * pad, h + 2 * pad), pygame.SRCALPHA)
-        bg.fill(self.LABEL_BG)
-        cur_y = pad
-        for s in rendered:
-            bg.blit(s, (pad, cur_y))
-            cur_y += s.get_height()
-        ox, oy = self.LABEL_OFFSET
-        canvas.blit(bg, (x + ox, y + oy))
+
+def _rgb(surface: pygame.Surface) -> np.ndarray:
+    """A surface's pixels, ``(height, width, 3)`` RGB: one copy of its bytes,
+    already in row order (``surfarray`` hands back columns, which then have to
+    be transposed and copied again)."""
+    width, height = surface.get_size()
+    data = bytearray(pygame.image.tobytes(surface, "RGB"))
+    return np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
+

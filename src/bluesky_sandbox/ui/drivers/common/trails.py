@@ -213,12 +213,6 @@ class TrailMixin:
         # same event that swaps the episode's queryable dict.
         self._trail_regions: list[QueryRegion] | None = None
 
-    def toggle_trails(self) -> None:
-        """Flip trail rendering and discard cached points when turning it off."""
-        self.show_trails = not self.show_trails
-        if not self.show_trails:
-            self._clear_trails()
-
     def _advance_trails(self) -> None:
         """Append current aircraft positions once per sim-time tick."""
         if not self.show_trails:

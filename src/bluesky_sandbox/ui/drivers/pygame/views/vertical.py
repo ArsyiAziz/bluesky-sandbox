@@ -28,6 +28,7 @@ import math
 from typing import TYPE_CHECKING, Literal
 
 import bluesky as bs
+import numpy as np
 import pygame
 from bluesky.tools.aero import Rearth, ft
 from shapely.geometry import LineString
@@ -39,7 +40,7 @@ from bluesky_sandbox.ui.drivers.common import (
     ZoomPanViewport,
 )
 from bluesky_sandbox.ui.drivers.pygame import colors as C
-from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView
+from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView, StaticLayer
 
 if TYPE_CHECKING:
     from bluesky_sandbox.ui.display.overlays import Point, Polygon, Polyline
@@ -152,6 +153,11 @@ class VerticalView(PygameView):
 
         self._viewport = ZoomPanViewport(min_zoom=0.7, max_zoom=32.0)
 
+        # Panel background, FL grid, bands and points, drawn once per change
+        # of what they show: ``_static_epoch`` counts changes of the overlays.
+        self._static_layer = StaticLayer()
+        self._static_epoch = 0
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -204,6 +210,7 @@ class VerticalView(PygameView):
         self._polygon_overlays = []
         self._point_overlays = []
         self._envelope_cache.clear()
+        self._static_epoch += 1
         # Pan/zoom is deliberately NOT reset here - see the matching note in
         # HorizontalView.on_reset. Explicit reset stays on the Home/0 key.
 
@@ -416,6 +423,7 @@ class VerticalView(PygameView):
         # Its altitude envelope is cached by polygon: recompute the moved ones.
         for polygon in polygons:
             self._envelope_cache.pop(id(polygon), None)
+        self._static_epoch += 1
 
     def add_polygon(self, driver: PygameSimDriver, polygon: Polygon) -> None:
         bounds = polygon.meta.get("bounds")
@@ -427,6 +435,7 @@ class VerticalView(PygameView):
             return
         slope_bounds = bounds if has_slope else None
         self._polygon_overlays.append((polygon, slope_bounds))
+        self._static_epoch += 1
         # Widen the visible alt window so the polygon stays in frame -
         # spawn-derived alt extents are typically narrow, but a sloped
         # corridor / query region can span the full descent.
@@ -441,6 +450,7 @@ class VerticalView(PygameView):
         if point.alt_ft is None:
             return
         self._point_overlays.append(point)
+        self._static_epoch += 1
         self._widen_alt(point.alt_ft, point.alt_ft)
 
     def _widen_alt(self, lo: float, hi: float) -> None:
@@ -497,13 +507,14 @@ class VerticalView(PygameView):
     # ------------------------------------------------------------------
 
     def render(self, canvas: pygame.Surface, driver: PygameSimDriver) -> None:
-        pygame.draw.rect(canvas, _PANEL_BG, self.rect)
-
-        self._draw_fl_grid(canvas, driver)
-        for polygon, bounds in self._polygon_overlays:
-            self._draw_polygon_band(canvas, driver, polygon, bounds)
-        for point in self._point_overlays:
-            self._draw_point_marker(canvas, driver, point)
+        # Panel, grid, bands and points change only with the episode, the
+        # slice, the viewport or a moving region: drawn once, copied after.
+        self._static_layer.blit(
+            canvas,
+            self.rect,
+            self._static_key(driver),
+            lambda surface: self._draw_static(surface, driver),
+        )
         self._draw_aircraft(canvas, driver)
         self._draw_axis_label(canvas, driver)
 
@@ -514,6 +525,33 @@ class VerticalView(PygameView):
             C.GRAY,
             pygame.Rect(l, t, max(r - l, 1), max(b - t, 1)),
             width=1,
+        )
+
+    def _draw_static(self, surface: pygame.Surface, driver: PygameSimDriver) -> None:
+        pygame.draw.rect(surface, _PANEL_BG, self.rect)
+        self._draw_fl_grid(surface, driver)
+        for polygon, bounds in self._polygon_overlays:
+            self._draw_polygon_band(surface, driver, polygon, bounds)
+        for point in self._point_overlays:
+            self._draw_point_marker(surface, driver, point)
+
+    def _static_key(self, driver: PygameSimDriver) -> tuple:
+        """Everything the static layer is drawn from, besides its content
+        (whose changes bump ``_static_epoch``)."""
+        viewport = self._viewport
+        return (
+            self._static_epoch,
+            driver.font is not None,
+            self._axis_kind,
+            self._axis_min,
+            self._axis_max,
+            self._axis_origin,
+            self._axis_proj,
+            self._alt_min_view,
+            self._alt_max_view,
+            viewport.zoom,
+            viewport.pan_x,
+            viewport.pan_y,
         )
 
     # --- gridlines -----------------------------------------------------
@@ -786,22 +824,28 @@ class VerticalView(PygameView):
         color = C.named(polygon.color)
         label_anchor: tuple[float, float] | None = None
         for axis_values, bucket_lo, bucket_hi in segments:
-            upper_pts: list[tuple[float, float]] = []
-            lower_pts: list[tuple[float, float]] = []
-            for axis_x, lo, hi in zip(axis_values, bucket_lo, bucket_hi):
-                if not (math.isfinite(lo) and math.isfinite(hi)):
-                    continue
-                x_px = self._axis_to_px(axis_x)
-                upper_pts.append((x_px, self._project_y(hi)))
-                lower_pts.append((x_px, self._project_y(lo)))
-            if len(upper_pts) < 2:
+            lo = np.asarray(bucket_lo, dtype=float)
+            hi = np.asarray(bucket_hi, dtype=float)
+            finite = np.isfinite(lo) & np.isfinite(hi)
+            if np.count_nonzero(finite) < 2:
                 continue
+            # The scalar projections, over arrays: the same arithmetic.
+            x_px = self._axis_to_px(np.asarray(axis_values, dtype=float)[finite]).tolist()
+            upper_pts = list(zip(x_px, self._project_y(hi[finite]).tolist()))
+            lower_pts = list(zip(x_px, self._project_y(lo[finite]).tolist()))
 
             outline = upper_pts + list(reversed(lower_pts))
-            surf = pygame.Surface(self.rect.size, pygame.SRCALPHA)
-            local = [(p[0] - self.rect.left, p[1] - self.rect.top) for p in outline]
-            pygame.draw.polygon(surf, (*color, _BAND_FILL_ALPHA), local)
-            canvas.blit(surf, self.rect.topleft)
+            # The translucent fill goes through a scratch surface just big
+            # enough for it (within the panel), placed where the panel-sized
+            # one would put the same pixels.
+            left = max(self.rect.left, math.floor(min(x_px)))
+            top = max(self.rect.top, math.floor(min(p[1] for p in outline)))
+            size = (self.rect.right - left, self.rect.bottom - top)
+            if size[0] > 0 and size[1] > 0:
+                surf = pygame.Surface(size, pygame.SRCALPHA)
+                local = [(p[0] - left, p[1] - top) for p in outline]
+                pygame.draw.polygon(surf, (*color, _BAND_FILL_ALPHA), local)
+                canvas.blit(surf, (left, top))
             pygame.draw.polygon(canvas, color, outline, width=self._BAND_OUTLINE)
 
             top_idx = min(range(len(upper_pts)), key=lambda i: upper_pts[i][1])
@@ -848,31 +892,33 @@ class VerticalView(PygameView):
     # --- aircraft -----------------------------------------------------
 
     def _draw_aircraft(self, canvas: pygame.Surface, driver: PygameSimDriver) -> None:
-        n = bs.traf.ntraf
-        if n == 0:
+        aircraft = driver.aircraft_frame()
+        if aircraft.n == 0:
             return
-        for i in range(n):
+        # Every aircraft projected at once: the same arithmetic as the
+        # scalar projections, over the frame's arrays.
+        lat, lon = aircraft.lat, aircraft.lon
+        in_front = self._is_in_front(lat, lon).tolist()
+        axis_v = self._axis_v(lat, lon)
+        xs = self._axis_to_px(axis_v).tolist()
+        ys = self._project_y(aircraft.alt_ft).tolist()
+        for i in range(aircraft.n):
             # Hide aircraft behind the slice plane - only the
             # front-side traffic ends up in the profile.
-            if not self._is_in_front(bs.traf.lat[i], bs.traf.lon[i]):
+            if not in_front[i]:
                 continue
-            alt_ft = bs.traf.alt[i] / ft
-            x = self._project_x(bs.traf.lat[i], bs.traf.lon[i])
-            y = self._project_y(alt_ft)
-            acid = bs.traf.id[i]
-            state = driver._aircraft_state(acid)
+            alt_ft = aircraft.alt_ft[i]
+            x = xs[i]
+            y = ys[i]
+            state = aircraft.state(i)
             # Query-region tint mirrors the plan view - an aircraft
             # actually inside a configured :class:`QueryRegion` (e.g.
             # the merge cone) picks up that region's color here, so
             # the side view reflects real containment rather than just
             # the axis projection (which can put a plane in a band's
             # x-range without it being inside the polygon laterally).
-            query_color = self._query_color_for_aircraft(
-                driver,
-                bs.traf.lat[i],
-                bs.traf.lon[i],
-                alt_ft,
-            )
+            query = aircraft.query_color(i)
+            query_color = None if query is None else C.named(query)
             if state == "los":
                 color = C.LOS
                 pz_color = C.LOS
@@ -889,7 +935,7 @@ class VerticalView(PygameView):
                 color = query_color or C.BLACK
                 pz_color = C.PROT_ZONE
                 pz_width = self._PROTECTION_WIDTH
-            if driver._aircraft_snapshot(acid).get("background", False):
+            if aircraft.background(i):
                 color = C.dim(color)
                 pz_color = C.dim(pz_color)
             # Protection zone cross-section: BlueSky's PZ is a vertical
@@ -908,7 +954,7 @@ class VerticalView(PygameView):
                 rpz_axis = math.degrees(rpz_m / (Rearth * cos_lat))
             else:
                 rpz_axis = math.degrees(rpz_m / Rearth)
-            axis_v_ac = self._axis_v(bs.traf.lat[i], bs.traf.lon[i])
+            axis_v_ac = axis_v[i]
             half_w_px = self._axis_to_px(axis_v_ac + rpz_axis) - self._axis_to_px(
                 axis_v_ac
             )

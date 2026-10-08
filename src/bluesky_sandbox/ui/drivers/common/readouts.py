@@ -6,7 +6,7 @@ import math
 from functools import lru_cache
 
 import bluesky as bs
-from bluesky.tools.aero import ft, kts
+from bluesky.tools.aero import ft, kts, vcas2mach
 
 from bluesky_sandbox.interface.fields._route import _active_route_waypoint
 from bluesky_sandbox.interface.fields._state import arrival_time
@@ -18,11 +18,27 @@ from bluesky_sandbox.interface.task import (
     WaypointReadoutItem,
     aircraft_readout_items,
 )
-from bluesky_sandbox.sim.performance.speeds import as_cas_ms, crossover_display
+from bluesky_sandbox.sim.performance.speeds import as_cas_ms, crossover_display, selected_cas_ms
 
 
 #: Above this altitude a label gives Mach, the speed flown there; below, CAS.
 MACH_LABEL_ALT_FT = 29000.0
+
+
+#: Climbing or descending faster than this (ft/min), a label shows it.
+LEVEL_FPM = 200.0
+#: Further than this from its selected speed - knots of CAS, or Mach - an
+#: aircraft is accelerating or slowing toward it, and a label shows it.
+SPEED_TREND_KTS = 2.0
+SPEED_TREND_MACH = 0.005
+#: The arrows a label shows for up and down; ``ASCII_TRENDS`` where the font
+#: has no arrows.
+ARROW_TRENDS = ("\u2191", "\u2193")
+ASCII_TRENDS = ("^", "v")
+
+
+def _trend(sign: int, glyphs: tuple[str, str]) -> str:
+    return glyphs[0] if sign > 0 else glyphs[1] if sign < 0 else " "
 
 
 def aircraft_label_lines(
@@ -33,17 +49,24 @@ def aircraft_label_lines(
     gs_kts: float,
     cas_kts: float,
     mach: float,
+    alt_trend: int = 0,
+    speed_trend: int = 0,
+    glyphs: tuple[str, str] = ARROW_TRENDS,
 ) -> list[str]:
     """An aircraft's marker label: callsign and type, then flight level, ground
     speed and the air-mass speed it is controlled in at that altitude - Mach
-    above the crossover threshold, CAS below."""
+    above the crossover threshold, CAS below. An arrow after the level says it
+    is climbing (``alt_trend`` > 0) or descending, one after the speed that it
+    is speeding up (``speed_trend`` > 0) or slowing down."""
     fl = int(round(alt_ft / 100.0))
-    speed = f"GS{int(round(gs_kts))}"
     if alt_ft >= MACH_LABEL_ALT_FT:
-        speed += f"  M{mach:.2f}".replace("M0.", "M.")
+        air = f"M{mach:.2f}".replace("M0.", "M.")
     else:
-        speed += f"  CAS{int(round(cas_kts))}"
-    return [f"{acid}  {actype}" if actype else acid, f"FL{fl:03d}  {speed}"]
+        air = f"CAS{int(round(cas_kts))}"
+    return [
+        f"{acid}  {actype}" if actype else acid,
+        f"FL{fl:03d}{_trend(alt_trend, glyphs)} GS{int(round(gs_kts))}  {air}{_trend(speed_trend, glyphs)}".rstrip(),
+    ]
 
 
 @lru_cache(maxsize=256)
@@ -68,6 +91,9 @@ class AircraftReadoutMixin:
     # Above this altitude the marker blob appends Mach (the meaningful/limiting
     # speed near the CAS/Mach crossover); below it, ground speed alone suffices.
     _MACH_LABEL_ALT_FT = MACH_LABEL_ALT_FT
+    #: The up and down arrows a label shows: a driver whose font lacks them
+    #: sets ``ASCII_TRENDS``.
+    trend_glyphs: tuple[str, str] = ARROW_TRENDS
 
     def format_status_line(self) -> str:
         """Return the common two-line runtime status badge."""
@@ -237,9 +263,16 @@ class AircraftReadoutMixin:
         return cls._info_row(item.label, item.value)
 
     def format_aircraft_marker_label_lines(self, idx: int) -> list[str]:
-        """Return compact live-marker label lines for human GUI views."""
+        """The aircraft's label lines, as ``aircraft_labels`` says: its full
+        data block, its callsign alone, or none - the tracked aircraft's is
+        always full."""
         if not (0 <= idx < bs.traf.ntraf):
             return []
+        mode = getattr(self, "aircraft_labels", "full")
+        if mode != "full":
+            tracked = self.tracked_acid() if hasattr(self, "tracked_acid") else None
+            if bs.traf.id[idx] != tracked:
+                return [bs.traf.id[idx]] if mode == "callsign" else []
         try:
             actype = str(bs.traf.type[idx] or "")
         except (AttributeError, IndexError):
@@ -251,7 +284,25 @@ class AircraftReadoutMixin:
             gs_kts=bs.traf.gs[idx] / kts,
             cas_kts=bs.traf.cas[idx] / kts,
             mach=float(bs.traf.M[idx]),
+            **self._label_trends(idx),
+            glyphs=self.trend_glyphs,
         )
+
+    def _label_trends(self, idx: int) -> dict[str, int]:
+        """Whether the aircraft climbs or descends, and speeds up or slows
+        down - toward its selected speed, in the quantity its label gives
+        (Mach above the crossover threshold, CAS below)."""
+        vs_fpm = float(bs.traf.vs[idx]) / ft * 60.0
+        alt = 1 if vs_fpm > LEVEL_FPM else -1 if vs_fpm < -LEVEL_FPM else 0
+        target_ms = float(selected_cas_ms(idx)[0])
+        if float(bs.traf.alt[idx]) / ft >= MACH_LABEL_ALT_FT:
+            gap = float(vcas2mach(target_ms, float(bs.traf.alt[idx]))) - float(bs.traf.M[idx])
+            threshold = SPEED_TREND_MACH
+        else:
+            gap = (target_ms - float(bs.traf.cas[idx])) / kts
+            threshold = SPEED_TREND_KTS
+        speed = 1 if gap > threshold else -1 if gap < -threshold else 0
+        return {"alt_trend": alt, "speed_trend": speed}
 
     def format_aircraft_marker_label(self, idx: int) -> str:
         """Return compact live-marker label text joined for multiline renderers."""

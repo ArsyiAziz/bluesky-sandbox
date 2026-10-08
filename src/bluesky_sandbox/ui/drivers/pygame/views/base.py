@@ -26,6 +26,47 @@ if TYPE_CHECKING:
     from bluesky_sandbox.ui.drivers.pygame.driver import PygameSimDriver
 
 
+class StaticLayer:
+    """What a view draws the same way every frame, drawn once and copied.
+
+    The layer is a surface of the canvas's format, drawn in canvas
+    coordinates under the view's clip - exactly as it would be on the
+    canvas, pixel for pixel - over a copy of what the view is drawn on.
+    :meth:`blit` copies it to the canvas, redrawing it first only when the
+    caller's ``key`` (the episode's content, the projection, the panel)
+    has changed since.
+    """
+
+    def __init__(self) -> None:
+        self._surface: pygame.Surface | None = None
+        self._key: object = None
+        self.redraws = 0
+
+    def invalidate(self) -> None:
+        """Redraw on the next :meth:`blit`."""
+        self._key = None
+
+    def blit(self, canvas: pygame.Surface, rect: pygame.Rect, key, paint) -> None:
+        """Copy the layer into ``rect`` of ``canvas``; ``paint(surface)`` it
+        afresh first when ``key`` differs from the one it was drawn for."""
+        if rect.width <= 0 or rect.height <= 0:
+            return
+        # What is under the view is part of the layer: a new backdrop redraws it.
+        key = (key, tuple(rect), canvas.get_at(rect.topleft))
+        if self._surface is None or self._key != key:
+            size = (rect.right, rect.bottom)
+            if self._surface is None or self._surface.get_size() != size:
+                self._surface = pygame.Surface(size, 0, canvas)
+            surface = self._surface
+            surface.set_clip(None)
+            surface.blit(canvas, rect.topleft, area=rect)
+            surface.set_clip(rect)
+            paint(surface)
+            self._key = key
+            self.redraws += 1
+        canvas.blit(self._surface, rect.topleft, area=rect)
+
+
 class PygameView(ABC):
     """Base class for pygame view panels.
 

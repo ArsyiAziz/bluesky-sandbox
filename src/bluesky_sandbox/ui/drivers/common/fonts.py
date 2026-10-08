@@ -29,6 +29,8 @@ UI_FONT_PATHS = (
 )
 
 PANDA3D_FONT_PATHS = (
+    # Menlo first: Monaco has no up arrow, which aircraft labels show.
+    "/System/Library/Fonts/Menlo.ttc",
     "/System/Library/Fonts/Monaco.ttf",
     "/System/Library/Fonts/SFNS.ttf",
     "/System/Library/Fonts/HelveticaNeue.ttc",

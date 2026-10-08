@@ -91,16 +91,22 @@ class QtGLSimDriver(HumanSimDriver):
         # "show all routes" toggle can remove them again.
         self._route_shape_names: list[str] = []
 
-    def toggle_trails(self) -> None:
-        """Flip :attr:`show_trails` and forward to BlueSky's TRAIL command.
+    # The QtGL window draws trails, routes and labels itself, from BlueSky's
+    # stack; the velocity-obstacle overlay and label modes are not its.
+    UNSUPPORTED_CONTROLS = frozenset({"show_velocity_obstacles", "aircraft_labels"})
 
-        The QtGL window has its own trail layer driven by the BlueSky
-        ``TRAIL`` stack command; stacking ``ON`` / ``OFF`` keeps the
-        GUI's state in sync with the driver flag exposed on
-        :class:`HumanSimDriver`.
-        """
-        super().toggle_trails()
-        bs.stack.stack(f"TRAIL {'ON' if self.show_trails else 'OFF'}")
+    def on_toggled(self, toggle, value) -> None:
+        """Forward trails to BlueSky's ``TRAIL`` command, and add or remove
+        the defined-route polylines live."""
+        super().on_toggled(toggle, value)
+        if toggle.name == "show_trails":
+            bs.stack.stack(f"TRAIL {'ON' if value else 'OFF'}")
+        elif toggle.name == "show_all_routes":
+            if value:
+                self._draw_defined_routes()
+            else:
+                self._clear_defined_routes()
+                simstack.process()
 
     def start(self) -> None:
         """Bind the ZMQ broker, connect the sim node, and open the QtGL window."""
@@ -199,15 +205,6 @@ class QtGLSimDriver(HumanSimDriver):
             self._env.episode_spawn.resolved_bounds,
             self._env.episode_airspace_bounds,
         )
-
-    def toggle_all_routes(self) -> None:
-        """Flip the flag and add/remove the defined-route polylines live."""
-        super().toggle_all_routes()
-        if self.show_all_routes:
-            self._draw_defined_routes()
-        else:
-            self._clear_defined_routes()
-            simstack.process()
 
     def _draw_defined_routes(self) -> None:
         """Stack ``POLYLINE``/``COLOR`` for each of the design's defined routes."""

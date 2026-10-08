@@ -24,7 +24,7 @@ from bluesky_sandbox.ui.drivers.common import (
     ZoomPanViewport,
 )
 from bluesky_sandbox.ui.drivers.pygame import colors as C
-from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView
+from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView, StaticLayer
 
 if TYPE_CHECKING:
     from bluesky_sandbox.ui.display.overlays import Point, Polygon, Polyline
@@ -92,6 +92,8 @@ class HorizontalView(PygameView):
         # airspace bbox center).  User can drag the center dot to
         # override; cleared each on_reset.
         self._slice_center_override: tuple[float, float] | None = None
+        # The slice indicator's last layer, with what it was drawn for.
+        self._slice_layer: tuple | None = None
 
         # Cached trail geometry per aircraft, in BASE pixel space - the
         # fit projection with the pan/zoom transform NOT applied.  Both
@@ -101,6 +103,12 @@ class HorizontalView(PygameView):
         # projection itself changes (``_trail_projection_signature``).
         self._trail_pixels: dict[str, _TrailPixelCache] = {}
         self._trail_projection: tuple | None = None
+
+        # The overlays projected (``_plan``) and drawn (``_static_layer``)
+        # once per change; ``_static_epoch`` counts changes of the overlays.
+        self._plan: _StaticPlan | None = None
+        self._static_layer = StaticLayer()
+        self._static_epoch = 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -141,6 +149,7 @@ class HorizontalView(PygameView):
         self._polygon_overlays = []
         self._point_overlays = []
         self._polyline_overlays = []
+        self._static_epoch += 1
         # Projection params just changed, every cached pixel is stale.
         # ``_draw_trails`` would catch this via its projection signature
         # anyway; dropping it here frees the arrays at the reset instead
@@ -178,6 +187,14 @@ class HorizontalView(PygameView):
     def _effective_lat_per_px(self) -> float:
         return self._lat_per_px / max(self._viewport.zoom, 1e-9)
 
+    def _project_arrays(self, lat_deg: np.ndarray, lon_deg: np.ndarray) -> tuple[list, list]:
+        """:meth:`project` over arrays - the same arithmetic, one pass;
+        returns the x and y lists."""
+        cx, cy = self._viewport_center()
+        x = cx + (lon_deg - self._center_lon) / self._lon_per_px
+        y = cy - (lat_deg - self._center_lat) / self._lat_per_px
+        return self._viewport.apply_x(x, cx).tolist(), self._viewport.apply_y(y, cy).tolist()
+
     def _project_many(
         self, verts: list[tuple[float, float]]
     ) -> list[tuple[float, float]]:
@@ -208,61 +225,45 @@ class HorizontalView(PygameView):
 
     def add_polygon(self, driver: PygameSimDriver, polygon: Polygon) -> None:
         self._polygon_overlays.append(polygon)
+        self._static_epoch += 1
 
     def add_point(self, driver: PygameSimDriver, point: Point) -> None:
         self._point_overlays.append(point)
+        self._static_epoch += 1
 
     def add_polyline(self, driver: PygameSimDriver, polyline: Polyline) -> None:
         self._polyline_overlays.append(polyline)
+        self._static_epoch += 1
 
     # ------------------------------------------------------------------
     # Render
     # ------------------------------------------------------------------
 
     def render(self, canvas: pygame.Surface, driver: PygameSimDriver) -> None:
-        # Boundary labels share a placed-rects list so overlapping zones
-        # (e.g. a spawn box sitting inside a query region) stack vertically
-        # rather than scribbling text on top of text.  The placed rect
-        # also lands in self._label_hits paired with its info dict, so a
-        # later hover lookup can pop full info for any visible label.
-        placed_labels: list[pygame.Rect] = []
-        self._label_hits = []
-
-        # Polylines first so polygon outlines sit cleanly on top.
-        for prim in self._polyline_overlays:
-            if len(prim.points) < 2:
-                continue
-            pts_px = self._project_many(prim.points)
-            color = C.named(prim.color)
-            pygame.draw.lines(canvas, color, False, pts_px, width=self._POLY_WIDTH)
-
-        # Aircraft trails - read straight off the driver's per-aircraft
-        # history dict (shared with panda3d) and project to pixels
-        # here.  Painted before polygons / chevrons so the trail sits
-        # *under* the live marker, never occluding it.
-        if driver.show_trails:
+        # Polylines, polygons, points and their labels change only with the
+        # episode, the projection or a moving region: projected once into a
+        # plan, drawn once into a layer, copied after. Trails go between
+        # the polylines and the polygons, so with trails on the layer holds
+        # the polylines only and the rest of the plan is drawn over them.
+        plan = self._static_plan(driver)
+        trails = driver.show_trails
+        self._static_layer.blit(
+            canvas,
+            self.rect,
+            (plan, trails),
+            lambda surface: plan.draw(surface, polylines_only=trails),
+        )
+        if trails:
+            # Aircraft trails - read straight off the driver's per-aircraft
+            # history dict (shared with panda3d) and project to pixels
+            # here.  Painted before polygons / chevrons so the trail sits
+            # *under* the live marker, never occluding it.
             self._draw_trails(canvas, driver)
+            plan.draw(canvas, polylines_only=False, polylines=False)
 
-        for prim in self._polygon_overlays:
-            verts_px = self._project_many(prim.vertices)
-            color = C.named(prim.color)
-            width = self._polygon_width(prim)
-            pygame.draw.polygon(canvas, color, verts_px, width=width)
-            rect = self._draw_polygon_label(
-                canvas, driver, verts_px, prim.label, color, placed_labels
-            )
-            if rect is not None:
-                self._label_hits.append((rect, prim.meta))
-
-        # Point markers - drawn above polygons so a point inside a region
-        # is still visible, below aircraft so an aircraft on top of a
-        # point still reads as the aircraft.
-        for prim in self._point_overlays:
-            pos_px = self.project(prim.lat, prim.lon)
-            rect = self._draw_point_marker(canvas, driver, pos_px, prim, placed_labels)
-            if rect is not None:
-                self._label_hits.append((rect, prim.meta))
-
+        # Route labels stack clear of the region/point labels.
+        placed_labels = list(plan.placed)
+        self._label_hits = list(plan.hits)
         self._draw_route_readout(canvas, driver, placed_labels)
         self._draw_safety_pair_lines(canvas, driver)
         if getattr(driver, "show_velocity_obstacles", False):
@@ -270,30 +271,26 @@ class HorizontalView(PygameView):
             self._draw_vo_slider(canvas, driver)
 
         # Live aircraft.  Conflict / LoS state comes from the env's info
-        # dict (via driver._aircraft_state) so the view doesn't depend
-        # on bs.traf.cd directly.
+        # dict (via the driver's aircraft frame) so the view doesn't depend
+        # on bs.traf.cd directly.  Positions are projected all at once.
+        aircraft = driver.aircraft_frame()
+        xs, ys = self._project_arrays(aircraft.lat, aircraft.lon)
         rpz = bs.traf.cd.rpz
-        for i in range(bs.traf.ntraf):
-            acid = bs.traf.id[i]
-            alt_ft = bs.traf.alt[i] / ft
+        for i, acid in enumerate(aircraft.ids):
+            query = aircraft.query_color(i)
             self._draw_aircraft_plan(
                 canvas,
                 driver,
                 i,
-                acid,
-                bs.traf.lat[i],
-                bs.traf.lon[i],
-                alt_ft,
-                bs.traf.hdg[i],
-                bs.traf.gs[i],
+                (xs[i], ys[i]),
+                aircraft.lat[i],
+                aircraft.lon[i],
+                aircraft.hdg[i],
+                aircraft.gs[i],
                 float(rpz[i]),
-                driver._aircraft_state(acid),
-                self._query_color_for_aircraft(
-                    driver,
-                    bs.traf.lat[i],
-                    bs.traf.lon[i],
-                    alt_ft,
-                ),
+                aircraft.state(i),
+                None if query is None else C.named(query),
+                aircraft.background(i),
             )
 
         # Compass indicator: if a VerticalView is configured, show its
@@ -302,6 +299,89 @@ class HorizontalView(PygameView):
         self._draw_axis_indicator(canvas, driver)
         # Wind arrow + readout (only when a wind field is active).
         self._draw_wind_indicator(canvas, driver)
+
+    def _static_plan(self, driver: PygameSimDriver) -> _StaticPlan:
+        """The polylines, polygons and points projected to pixels, with their
+        labels placed - remade only when what it was made from changes."""
+        viewport = self._viewport
+        key = (
+            self._static_epoch,
+            tuple(self.rect),
+            self._center_lat,
+            self._center_lon,
+            self._lat_per_px,
+            self._lon_per_px,
+            viewport.zoom,
+            viewport.pan_x,
+            viewport.pan_y,
+            bool(driver.show_labels),
+            driver.font is not None,
+        )
+        plan = self._plan
+        if plan is not None and plan.key == key:
+            return plan
+        plan = self._plan = _StaticPlan(key)
+        # Polylines first so polygon outlines sit cleanly on top.
+        for prim in self._polyline_overlays:
+            if len(prim.points) < 2:
+                continue
+            plan.polylines.append((C.named(prim.color), self._project_many(prim.points)))
+        # Boundary labels share a placed-rects list so overlapping zones
+        # (e.g. a spawn box sitting inside a query region) stack vertically
+        # rather than scribbling text on top of text.  The placed rect
+        # also lands in plan.hits paired with its info dict, so a
+        # later hover lookup can pop full info for any visible label.
+        for prim in self._polygon_overlays:
+            verts_px = self._project_many(prim.vertices)
+            color = C.named(prim.color)
+            label = None
+            if driver.show_labels and driver.font is not None and verts_px and prim.label:
+                cx = sum(v[0] for v in verts_px) / len(verts_px)
+                top_y = min(v[1] for v in verts_px)
+                label = self._place_label(
+                    driver, prim.label, color, plan.placed, (int(cx), int(top_y) - 2)
+                )
+            plan.polygons.append((color, verts_px, self._polygon_width(prim), label))
+            if label is not None:
+                plan.hits.append((label[1], prim.meta))
+        # Point markers - drawn above polygons so a point inside a region
+        # is still visible, below aircraft so an aircraft on top of a
+        # point still reads as the aircraft.
+        for prim in self._point_overlays:
+            x, y = self.project(prim.lat, prim.lon)
+            color = C.named(prim.color)
+            r = self._POINT_RADIUS_PX
+            diamond = [(x, y - r), (x + r, y), (x, y + r), (x - r, y)]
+            label = None
+            if driver.show_labels and driver.font is not None and prim.label:
+                label = self._place_label(
+                    driver, prim.label, color, plan.placed, (int(x), int(y) - r - 2)
+                )
+                plan.hits.append((label[1], prim.meta))
+            plan.points.append((color, diamond, label))
+        return plan
+
+    @staticmethod
+    def _place_label(
+        driver: PygameSimDriver,
+        name: str,
+        color: tuple[int, int, int],
+        placed: list[pygame.Rect],
+        midbottom: tuple[int, int],
+    ) -> tuple[pygame.Surface, pygame.Rect]:
+        """A label's surface and where it goes: at ``midbottom``, moved up
+        past the labels already ``placed`` (which it joins)."""
+        bg = driver.render_text_bg(name, color)
+        rect = bg.get_rect()
+        rect.midbottom = midbottom
+        while any(rect.colliderect(r) for r in placed):
+            rect.y -= rect.height + 1
+        placed.append(rect)
+        return bg, rect
+
+    def on_polygons_moved(self, driver: PygameSimDriver, polygons: list[Polygon]) -> None:
+        # Their vertices changed in place: project them anew.
+        self._static_epoch += 1
 
     def _draw_safety_pair_lines(
         self,
@@ -744,6 +824,45 @@ class HorizontalView(PygameView):
         )
         alpha = 255 if is_dragging else self._SLICE_IDLE_ALPHA
 
+        # The same slice draws the same layer: it is drawn again only when
+        # the slice, the projection or the drag state changes.
+        key = (tuple(self.rect), near_xy, far_xy, ctr_xy, alpha)
+        if self._slice_layer is None or self._slice_layer[0] != key:
+            self._slice_layer = (key, *self._draw_slice_layer(near_xy, far_xy, ctr_xy, alpha))
+        _key, layer, layer_pos, arrow_tip = self._slice_layer
+        canvas.blit(layer, layer_pos)
+
+        # Bearing label next to the perpendicular arrow tip - only
+        # while dragging, to keep the idle plan view clean.
+        if is_dragging:
+            txt = driver.font.render(
+                f"{int(round(bearing_deg)) % 360:03d} DEG",
+                True,
+                C.BLACK,
+            )
+            bg = pygame.Surface(
+                (txt.get_width() + 6, txt.get_height() + 4),
+                pygame.SRCALPHA,
+            )
+            bg.fill((255, 255, 255, 230))
+            bg.blit(txt, (3, 2))
+            canvas.blit(
+                bg,
+                (
+                    int(arrow_tip[0]) + 6,
+                    int(arrow_tip[1]) - bg.get_height() // 2,
+                ),
+            )
+
+    def _draw_slice_layer(
+        self,
+        near_xy: tuple[float, float],
+        far_xy: tuple[float, float],
+        ctr_xy: tuple[float, float],
+        alpha: int,
+    ) -> tuple[pygame.Surface, tuple[int, int], tuple[float, float]]:
+        """The slice indicator on a translucent layer: the layer (cut to what
+        is drawn on it), where it goes, and the tip of the viewing arrow."""
         # Render to a per-pixel-alpha layer so the line doesn't cover
         # underlying traffic when idle.
         layer = pygame.Surface(self.rect.size, pygame.SRCALPHA)
@@ -802,29 +921,13 @@ class HorizontalView(PygameView):
         pygame.draw.circle(layer, line_color, L(ctr_xy), dot_r)
         pygame.draw.circle(layer, ring_color, L(ctr_xy), dot_r, width=1)
 
-        canvas.blit(layer, self.rect.topleft)
-
-        # Bearing label next to the perpendicular arrow tip - only
-        # while dragging, to keep the idle plan view clean.
-        if is_dragging:
-            txt = driver.font.render(
-                f"{int(round(bearing_deg)) % 360:03d} DEG",
-                True,
-                C.BLACK,
-            )
-            bg = pygame.Surface(
-                (txt.get_width() + 6, txt.get_height() + 4),
-                pygame.SRCALPHA,
-            )
-            bg.fill((255, 255, 255, 230))
-            bg.blit(txt, (3, 2))
-            canvas.blit(
-                bg,
-                (
-                    int(arrow_tip[0]) + 6,
-                    int(arrow_tip[1]) - bg.get_height() // 2,
-                ),
-            )
+        # Only the drawn part is kept: blitting the rest changes no pixel.
+        bounds = layer.get_bounding_rect()
+        return (
+            layer.subsurface(bounds).copy(),
+            (self.rect.left + bounds.left, self.rect.top + bounds.top),
+            arrow_tip,
+        )
 
     # ------------------------------------------------------------------
     # Aircraft + label drawing (private)
@@ -835,17 +938,17 @@ class HorizontalView(PygameView):
         canvas: pygame.Surface,
         driver: PygameSimDriver,
         idx: int,
-        callsign: str,
+        pos: tuple[float, float],
         lat_deg: float,
         lon_deg: float,
-        alt_ft: float,
         hdg_deg: float,
         gs_ms: float,
         rpz_m: float,
         state,
         query_color,
+        background: bool,
     ) -> None:
-        x, y = self.project(lat_deg, lon_deg)
+        x, y = pos
         rad = math.radians(hdg_deg)
         dx, dy = math.sin(rad), -math.cos(rad)
         if state == "los":
@@ -864,7 +967,7 @@ class HorizontalView(PygameView):
             body_color = query_color or C.BLACK
             pz_color = C.PROT_ZONE
             pz_width = self._PROTECTION_WIDTH
-        if driver._aircraft_snapshot(callsign).get("background", False):
+        if background:
             body_color = C.dim(body_color)
             pz_color = C.dim(pz_color)
 
@@ -915,54 +1018,6 @@ class HorizontalView(PygameView):
         if driver.show_callsigns and driver.font is not None:
             lines = driver.format_aircraft_marker_label_lines(idx)
             driver.blit_data_block(canvas, lines, body_color, x, y)
-
-    def _draw_polygon_label(
-        self,
-        canvas: pygame.Surface,
-        driver: PygameSimDriver,
-        verts: list[tuple[float, float]],
-        name: str,
-        color: tuple[int, int, int],
-        placed: list[pygame.Rect],
-    ) -> pygame.Rect | None:
-        if not driver.show_labels or driver.font is None or not verts or not name:
-            return None
-        cx = sum(v[0] for v in verts) / len(verts)
-        top_y = min(v[1] for v in verts)
-        bg = driver.render_text_bg(name, color)
-        rect = bg.get_rect()
-        rect.midbottom = (int(cx), int(top_y) - 2)
-        while any(rect.colliderect(r) for r in placed):
-            rect.y -= rect.height + 1
-        canvas.blit(bg, rect.topleft)
-        placed.append(rect)
-        return rect
-
-    def _draw_point_marker(
-        self,
-        canvas: pygame.Surface,
-        driver: PygameSimDriver,
-        pos_px: tuple[float, float],
-        point: Point,
-        placed: list[pygame.Rect],
-    ) -> pygame.Rect | None:
-        x, y = pos_px
-        color = C.named(point.color)
-        r = self._POINT_RADIUS_PX
-        diamond = [(x, y - r), (x + r, y), (x, y + r), (x - r, y)]
-        pygame.draw.polygon(canvas, color, diamond)
-        pygame.draw.polygon(canvas, C.BLACK, diamond, width=1)
-
-        if not driver.show_labels or driver.font is None or not point.label:
-            return None
-        bg = driver.render_text_bg(point.label, color)
-        rect = bg.get_rect()
-        rect.midbottom = (int(x), int(y) - r - 2)
-        while any(rect.colliderect(other) for other in placed):
-            rect.y -= rect.height + 1
-        canvas.blit(bg, rect.topleft)
-        placed.append(rect)
-        return rect
 
     def _draw_route_readout(
         self,
@@ -1488,3 +1543,44 @@ class _TrailPixelCache:
             self.total = row + 1
         else:
             self.total = self.committed
+
+
+class _StaticPlan:
+    """The plan view's overlays in pixels, ready to draw: polylines,
+    polygons and point markers, each with its label (a surface and where it
+    goes) - and the label rects placed, for later labels to stack clear of
+    and for hover to find."""
+
+    __slots__ = ("hits", "key", "placed", "points", "polygons", "polylines")
+
+    def __init__(self, key: tuple) -> None:
+        self.key = key
+        self.polylines: list[tuple[tuple, list]] = []
+        self.polygons: list[tuple[tuple, list, int, tuple | None]] = []
+        self.points: list[tuple[tuple, list, tuple | None]] = []
+        self.placed: list[pygame.Rect] = []
+        self.hits: list[tuple[pygame.Rect, dict]] = []
+
+    def draw(
+        self,
+        surface: pygame.Surface,
+        *,
+        polylines_only: bool = False,
+        polylines: bool = True,
+    ) -> None:
+        """Draw the polylines (unless not ``polylines``), then - unless
+        ``polylines_only`` - the polygons and points, with their labels."""
+        if polylines:
+            for color, pts in self.polylines:
+                pygame.draw.lines(surface, color, False, pts, width=HorizontalView._POLY_WIDTH)
+        if polylines_only:
+            return
+        for color, verts, width, label in self.polygons:
+            pygame.draw.polygon(surface, color, verts, width=width)
+            if label is not None:
+                surface.blit(label[0], label[1].topleft)
+        for color, diamond, label in self.points:
+            pygame.draw.polygon(surface, color, diamond)
+            pygame.draw.polygon(surface, C.BLACK, diamond, width=1)
+            if label is not None:
+                surface.blit(label[0], label[1].topleft)
