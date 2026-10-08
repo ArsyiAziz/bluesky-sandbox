@@ -35,10 +35,16 @@ class IntruderPaddingWrapper(BaseParallelWrapper):
     configured (``config.intruder_obs_fields`` is None/empty).
     """
 
-    def __init__(self, env) -> None:
+    def __init__(self, env, max_intruders: int | None = None) -> None:
+        """``max_intruders`` - the padded rows; ``None`` sizes them from the
+        episode's max aircraft (``SpawnConfig.aircraft_cap``, or what its
+        regions can produce). More intruders than rows is an error, not a drop."""
         super().__init__(env)
         self._has_intruders = bool(env.unwrapped.config.intruder_obs_fields)
-        self._max_intr = env.unwrapped.max_intruders if self._has_intruders else 0
+        self._explicit_max = max_intruders is not None
+        self._max_intr = (
+            int(max_intruders) if max_intruders is not None else env.unwrapped.max_intruders
+        ) if self._has_intruders else 0
         self._n_features = 0
         self._n_per_intr = 0
         # Per-intruder aux arrays parallel to ``intruders`` (e.g. intruders_keep):
@@ -51,7 +57,7 @@ class IntruderPaddingWrapper(BaseParallelWrapper):
         """Refresh upstream feature metadata while keeping the padding cap fixed."""
         self._has_intruders = bool(self.env.unwrapped.config.intruder_obs_fields)
         current_max = self.env.unwrapped.max_intruders if self._has_intruders else 0
-        if current_max > self._max_intr:
+        if current_max > self._max_intr and not self._explicit_max:
             raise ValueError(
                 "current config would require more intruder rows than the "
                 f"construction-time padding cap ({current_max} > {self._max_intr})."
@@ -146,6 +152,13 @@ class IntruderPaddingWrapper(BaseParallelWrapper):
         out = {}
         for agent, dict_obs in observations.items():
             intr    = np.asarray(dict_obs["intruders"], dtype=np.float32)
+            if intr.ndim == 2 and intr.shape[0] > self._max_intr:
+                raise RuntimeError(
+                    f"{intr.shape[0]} intruders but {self._max_intr} padding rows for agent "
+                    f"{agent!r}: more aircraft than the padding was sized for (aircraft spawned "
+                    "from code?). Set SpawnConfig.aircraft_cap, or "
+                    "IntruderPaddingWrapper(max_intruders=...), to size it."
+                )
 
             block = np.zeros((self._max_intr, self._n_per_intr), dtype=np.float32)
             n = min(intr.shape[0], self._max_intr) if intr.ndim == 2 else 0

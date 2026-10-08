@@ -152,10 +152,10 @@ class StableIDsParallelWrapper(ParallelEnv):
     def _assign_slot(self, real: str) -> str:
         """Bind ``real`` to the next never-used stable slot and return it.
 
-        The construction-time check on :attr:`max_agents` guarantees the
-        pool can hold every aircraft the spawn config could ever emit
-        this episode, so a missing free slot here is a programming
-        invariant violation - assert rather than silently drop.
+        The construction-time check on :attr:`max_agents` covers every
+        aircraft the spawn config can emit; only aircraft spawned from code
+        past it (no ``aircraft_cap`` set) can run the pool dry - an error
+        naming the fix, rather than a silent drop.
         """
         for stable in self.possible_agents:
             if stable not in self._used_slots:
@@ -163,10 +163,11 @@ class StableIDsParallelWrapper(ParallelEnv):
                 self._real_to_stable[real] = stable
                 self._used_slots.add(stable)
                 return stable
-        raise AssertionError(
-            f"StableIDsParallelWrapper ran out of stable slots binding "
-            f"{real!r}; max_agents={self.max_agents}. The construction "
-            f"check should have prevented this."
+        raise RuntimeError(
+            f"StableIDsParallelWrapper ran out of stable slots binding {real!r} "
+            f"(max_agents={self.max_agents}): more aircraft than the spawn config's "
+            "max aircraft (aircraft spawned from code?). Set SpawnConfig.aircraft_cap, "
+            "with max_agents at least that."
         )
 
     def reset(

@@ -63,8 +63,9 @@ from bluesky_sandbox.sim.queryables import (
     RegionResult,
 )
 from bluesky_sandbox.sim.arrival import hurry_overdue
-from bluesky_sandbox.sim.bounds import Bounds, moving_in
+from bluesky_sandbox.sim.bounds import Bounds, LatLon, moving_in
 from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
+from bluesky_sandbox.sim.spawn import SpawnRequest
 from bluesky_sandbox.sim.weather import WindField, wind_from_config
 from bluesky_sandbox.ui.drivers import FRAME_DRIVERS, RenderMode, get_driver_class
 
@@ -758,6 +759,63 @@ class BlueskyBaseEnvironment(ParallelEnv):
             callsign,
             None if resolved_route is None else resolved_route.names,
         )
+
+    def spawn(
+        self,
+        at: LatLon | tuple[float, float],
+        *,
+        alt_ft: float,
+        spd_kts: float | None = None,
+        hdg_deg: float | None = None,
+        actype: str | None = None,
+        route: Any = None,
+        callsign: Callsign | None = None,
+        controlled: bool | None = None,
+        conflict_free: bool = False,
+    ) -> Callsign | None:
+        """Create one aircraft now - from a hook, mid-episode - exactly as the
+        episode's own spawns are: issued a callsign, its route resolved and
+        flown, ``on_aircraft_spawned`` called, its control state set, logged.
+
+        ``at`` - a :class:`LatLon` or ``(lat, lon)``. ``spd_kts`` - CAS; ``None``
+        draws one its flight envelope allows at ``alt_ft``. ``hdg_deg`` - ``None``
+        draws one. ``actype`` - ``None`` draws the config's aircraft type.
+        ``route`` - steps (waypoint names, step dicts) or a key into the spawn
+        config's ``routes``. ``callsign`` - ``None`` issues one. ``controlled`` -
+        ``None`` leaves it to ``define_initial_aircraft_control_state``.
+        ``conflict_free`` - only if its state is clear of live traffic over CD's
+        lookahead. Returns its callsign, or ``None`` when it was not clear.
+        """
+        lat, lon = (at.lat_deg, at.lon_deg) if isinstance(at, LatLon) else (float(at[0]), float(at[1]))
+        request = SpawnRequest(
+            at=LatLon(lat, lon),
+            alt_ft=float(alt_ft),
+            spd_kts=spd_kts,
+            hdg_deg=hdg_deg,
+            actype=actype,
+            callsign=callsign,
+            route=route,
+            time_s=self._runtime.sim_time,
+            controlled=controlled,
+        )
+        generator = self._spawn_generator
+        request = self.episode_spawn.resolved(request, self._rng, generator.plan_context())
+        return generator.spawn(generator.item_from_request(request), self._rng, conflict_free=conflict_free)
+
+    def spawn_from(self, region: str | int) -> Callsign | None:
+        """Create one aircraft now, drawn from spawn region ``region`` (its
+        name, or index) as its own aircraft are - position, type, route,
+        callsign - and cleared of live traffic as its top-ups are. Returns its
+        callsign, or ``None`` when no clear state was found."""
+        regions = self.episode_spawn.regions
+        if isinstance(region, str):
+            names = [r.name for r in regions]
+            if region not in names:
+                raise KeyError(f"spawn region {region!r} is not in the design; regions: {names}")
+            region = names.index(region)
+        if not 0 <= int(region) < len(regions):
+            raise IndexError(f"spawn region index {region} out of range ({len(regions)} regions)")
+        return self._spawn_generator.spawn_from(int(region), self._rng)
 
     def observation_space(self, agent: str):
         return self._observation_assembler.observation_space(agent)

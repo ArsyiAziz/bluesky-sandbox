@@ -13,6 +13,17 @@ from .regions import (
     SpawnRegion,
     param_alt_range,
 )
+from .sources import (
+    Mixture,
+    PlanContext,
+    PlannedSource,
+    PlannedSpawn,
+    RegionSource,
+    Replay,
+    SpawnRequest,
+    SpawnSource,
+    nearest_entry,
+)
 from .routes import (
     RouteSpec,
     RouteStep,
@@ -24,6 +35,15 @@ from .routes import (
 )
 
 __all__ = [
+    "Mixture",
+    "PlanContext",
+    "PlannedSource",
+    "PlannedSpawn",
+    "RegionSource",
+    "Replay",
+    "SpawnRequest",
+    "SpawnSource",
+    "nearest_entry",
     "RouteSpec",
     "RouteStep",
     "SpawnConfig",

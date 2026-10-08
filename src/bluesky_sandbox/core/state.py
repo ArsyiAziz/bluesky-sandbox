@@ -49,6 +49,15 @@ class SpawnQueueItem:
     callsign_prefix: str | None
     route: list[str | dict] | None
     region_index: int = -1
+    #: A callsign chosen by the caller, not issued (``env.spawn(callsign=...)``).
+    callsign: str | None = None
+    #: The control state it starts in, when the caller decides it rather than
+    #: ``define_initial_aircraft_control_state``.
+    control: AircraftControlState | None = None
+    #: The spawn source it was planned by (an index into ``SpawnConfig.sources``),
+    #: and its request - for the source's clearance policy; -1 / None otherwise.
+    source_index: int = -1
+    request: object | None = None
 
 
 class ResolvedRoute(NamedTuple):
@@ -88,6 +97,8 @@ class SpawnRecord(NamedTuple):
     route: tuple[str, ...] | None
     #: The route's waypoints as resolved for this aircraft, constraints and all.
     targets: tuple[WaypointTarget, ...] = ()
+    #: The spawn source that planned it, by name (or index), if one did.
+    source: str | None = None
 
 
 AircraftControlStates: TypeAlias = dict[Callsign, AircraftControlState]

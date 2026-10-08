@@ -11,7 +11,8 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 import numpy as np
 from bluesky.tools.aero import ft, nm
@@ -23,7 +24,7 @@ from bluesky_sandbox.sim.geometry.conflict import (
 )
 
 from bluesky_sandbox._renames import renamed
-from bluesky_sandbox.sim.bounds import Bounds
+from bluesky_sandbox.sim.bounds import Bounds, LatLon
 from bluesky_sandbox.sim.performance.envelope import (
     EnvelopeSample,
     feasible_alt_for_type,
@@ -35,6 +36,7 @@ from bluesky_sandbox.sim.sampling.distributions import (
 )
 
 from .routes import RouteSpec, RouteStep, sample_route_path
+from .sources import PlanContext, PlannedSpawn, SpawnRequest
 
 _SPAWN_BOUND_KEYS = ("lat_deg", "lon_deg", "alt_ft", "spd_kts")
 # ``alt_ft`` is optional: when omitted, the spawn altitude is sampled from the
@@ -514,9 +516,21 @@ class SpawnConfig:
     spawn_lookahead_s: float | None = None
     spawn_max_tries: int = 20
     spawn_warn_after: int = 5
+    # At most this many aircraft at once - from the regions or from code
+    # (``env.spawn``). Unset: the most the regions can produce, worked out from
+    # them, with code spawns uncapped. Set: it is the episode's max aircraft -
+    # below that to thin the traffic, above it to leave room for code - and
+    # what fixed-size wrappers (intruder padding, stable agent slots) size from.
+    aircraft_cap: int | None = None
+    # Spawn sources beyond the regions (``.sources``): each plans its
+    # aircraft at reset - a replay of data, a mixture, a script of your own.
+    sources: list[Any] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.regions = list(self.regions)
+        cap = self.aircraft_cap
+        if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 1):
+            raise ValueError(f"SpawnConfig.aircraft_cap must be an int >= 1 or None, got {cap!r}")
         for name in ("spawn_max_tries", "spawn_warn_after"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -682,6 +696,12 @@ class SpawnConfig:
         steps for any per-step crossing restrictions).
         """
         spec = region.route if region.route is not None else self.route
+        return self.resolve_route_spec(spec, rng)
+
+    def resolve_route_spec(self, spec: Any, rng: np.random.Generator) -> list[RouteStep] | None:
+        """One concrete route from ``spec``: a list of steps, a key into
+        :attr:`routes`, or a distribution over keys - subroutes expanded and
+        choices drawn, as for a region's aircraft."""
         if spec is None:
             return None
         if isinstance(spec, (list, tuple)):
@@ -699,37 +719,63 @@ class SpawnConfig:
     def max_aircraft(self) -> int:
         """Deterministic upper bound on the total aircraft count per episode.
 
-        Sums :meth:`SpawnRegion.max_n` across all regions. Used by the base env
-        to size observation spaces with intruder padding.
+        :attr:`aircraft_cap` when set; otherwise :meth:`SpawnRegion.max_n`
+        summed across all regions, plus each source's ``max_aircraft`` - the
+        most they can produce. Fixed-size
+        wrappers (intruder padding, stable agent slots) size from it.
         """
-        return sum(r.max_n() for r in self.regions)
+        if self.aircraft_cap is not None:
+            return self.aircraft_cap
+        # A source that leaves its count open adds nothing: set aircraft_cap.
+        planned = sum(int(s.max_aircraft or 0) for s in self.sources)
+        return sum(r.max_n() for r in self.regions) + planned
 
-    def iter_spawns(
+    def draw_request(self, region: SpawnRegion | int, rng: np.random.Generator) -> SpawnRequest:
+        """One aircraft drawn as ``region`` (a region, or an index into
+        :attr:`regions`) draws its own: type, callsign prefix, route, spawn
+        time, position - in that order, so a seed draws the same episode.
+
+        The one draw of a region's aircraft: the episode's spawns, a
+        ``maintain`` top-up, a blocked spawn drawn again and a
+        :class:`~.sources.RegionSource` all come from it."""
+        if not isinstance(region, SpawnRegion):
+            region = self.regions[int(region)]
+        actype = region.sample_type(rng) if region.aircraft_type is not None else self.sample_type(rng)
+        prefix = region.sample_callsign_prefix(rng)
+        route = self.sample_route(rng, region)
+        time_s = region.sample_spawn_time(rng)
+        pos = region.sample_pos(rng, actype)
+        return SpawnRequest(
+            at=LatLon(float(pos["lat_deg"]), float(pos["lon_deg"])),
+            alt_ft=float(pos["alt_ft"]),
+            # Drawn from its envelope once the aircraft's performance is known.
+            spd_kts=None if pos.get("_spd_from_envelope") else float(pos["spd_kts"]),
+            hdg_deg=pos.get("hdg_deg"),
+            actype=actype,
+            route=route,
+            time_s=float(time_s),
+            callsign_prefix=prefix,
+        )
+
+    def iter_requests(
         self,
         rng: np.random.Generator,
         *,
         limit: int | None = None,
         include_maintain: bool = False,
-    ) -> Iterator[tuple[int, float, str, dict[str, float], str | None, list[RouteStep] | None]]:
-        """Yield ``(spawn_time, actype, pos, callsign_prefix, route)`` per aircraft.
+    ) -> Iterator[tuple[int, SpawnRequest]]:
+        """``(region_index, request)`` for each aircraft the regions spawn this
+        episode, each drawn by :meth:`draw_request`.
 
-        ``spawn_time`` is seconds since episode reset; the base env materializes
+        A request's ``time_s`` is seconds since episode reset; the env creates
         each aircraft on the first ``step()`` whose ``bs.sim.simt`` has reached
-        this value. Defaults to ``0.0`` per region (immediate spawn).
-
-        ``callsign_prefix`` is a string prefix (e.g. ``"KL"``) when the region
-        specifies :attr:`SpawnRegion.callsign_prefixes`, otherwise ``None``
-        (the environment will generate random letters).
-
-        ``route`` is an optional list of waypoint queryable names sampled from
-        the spawn config for this aircraft.
+        it. ``maintain`` regions are left out - the runtime fills and tops them
+        up itself - unless ``include_maintain`` (the designer's preview shows
+        their aircraft as a snapshot). ``limit`` - at most that many, chosen at
+        random.
         """
         counts: dict[int, int] = {}
         for region_index, region in enumerate(self.regions):
-            # Maintain regions are filled and topped-up by the runtime's
-            # steady-state path (separation-guarded), not the one-shot queue.
-            # ``include_maintain`` lets the designer preview still show their
-            # target aircraft as a representative snapshot.
             if region.maintain and not include_maintain:
                 continue
             counts[region_index] = max(region.sample_n(rng), 0)
@@ -740,36 +786,54 @@ class SpawnConfig:
         candidates = []
         for region_index, n in counts.items():
             for _ in range(n):
-                candidates.append((region_index, *self.sample_region_spawn(region_index, rng)))
+                candidates.append((region_index, self.draw_request(region_index, rng)))
         if limit is not None:
             limit = int(limit)
             if limit < 0:
-                raise ValueError(f"SpawnConfig.iter_spawns limit must be >= 0, got {limit}")
+                raise ValueError(f"SpawnConfig.iter_requests limit must be >= 0, got {limit}")
             order = rng.permutation(len(candidates))
             candidates = [candidates[int(i)] for i in order[:limit]]
         yield from candidates
 
-    def sample_region_spawn(
+    def resolved(
         self,
-        region_index: int,
+        request: SpawnRequest,
         rng: np.random.Generator,
-    ) -> tuple[float, str, dict[str, float], str | None, list[RouteStep] | None]:
-        """Sample one ``(spawn_time, actype, pos, prefix, route)`` for a region.
+        ctx: PlanContext | None = None,
+        source: Any = None,
+    ) -> SpawnRequest:
+        """``request`` with its type drawn when it names none and its route -
+        its own, else its ``source``'s - resolved to concrete steps."""
+        route = source.route_for(request, ctx) if source is not None else request.route
+        actype = request.actype
+        if actype is None:
+            actype = self.sample_type(rng)
+        return replace(request, actype=actype, route=self.resolve_route_spec(route, rng))
 
-        Shared by :meth:`iter_spawns` (episode-start fill) and the runtime's
-        steady-state ``maintain`` top-up, so a respawn is drawn exactly like an
-        initial spawn for that region.
-        """
-        region = self.regions[region_index]
-        actype = (
-            region.sample_type(rng)
-            if region.aircraft_type is not None
-            else self.sample_type(rng)
-        )
-        prefix = region.sample_callsign_prefix(rng)
-        route = self.sample_route(rng, region)
-        t = region.sample_spawn_time(rng)
-        return (t, actype, region.sample_pos(rng, actype), prefix, route)
+    def plan_episode(
+        self,
+        rng: np.random.Generator,
+        ctx: PlanContext,
+        *,
+        limit: int | None = None,
+        include_maintain: bool = False,
+    ) -> list[PlannedSpawn]:
+        """The episode's aircraft, by time: the regions' (:meth:`iter_requests`)
+        then each source's plan, resolved - within :attr:`aircraft_cap`, the
+        rest dropped at random. What the environment queues at reset, and what
+        the designer's preview shows."""
+        planned = [
+            PlannedSpawn(request, region_index=index)
+            for index, request in self.iter_requests(rng, limit=limit, include_maintain=include_maintain)
+        ]
+        for index, source in enumerate(self.sources):
+            for request in source.plan(rng, ctx):
+                planned.append(PlannedSpawn(self.resolved(request, rng, ctx, source), source_index=index))
+        cap = self.aircraft_cap
+        if cap is not None and len(planned) > cap:
+            order = rng.permutation(len(planned))
+            planned = [planned[int(i)] for i in order[:cap]]
+        return sorted(planned, key=lambda p: p.request.time_s)
 
     @property
     def has_maintain_regions(self) -> bool:

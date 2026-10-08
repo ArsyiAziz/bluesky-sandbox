@@ -46,7 +46,8 @@ from bluesky_sandbox.sim.performance.envelope import (
 )
 from bluesky_sandbox.sim.queryables import Waypoint, WaypointTarget
 from bluesky_sandbox.sim.sampling.distributions import Categorical
-from bluesky_sandbox.sim.spawn import route_step_name
+from bluesky_sandbox.sim.spawn import PlanContext, SpawnRequest, route_step_name
+from bluesky_sandbox.sim.spawn.regions import _ENVELOPE_PROVISIONAL_SPD_KTS
 
 from .state import (
     AircraftControlState,
@@ -111,6 +112,195 @@ class SpawnGenerator:
     def maintain(self, rng: np.random.Generator) -> None:
         """Top up each steady-state region to its target live count."""
         self._maintain_spawns(rng)
+
+    def plan_context(self) -> PlanContext:
+        """What a spawn source plans from: this episode's geometry."""
+        return PlanContext(
+            shapes=self.env.episode_shapes,
+            queryables=self.env.episode_queryables,
+            airspace=self.env.episode_airspace_bounds,
+            spawn=self.env.episode_spawn,
+        )
+
+    def item_from_request(
+        self,
+        request: SpawnRequest,
+        *,
+        region_index: int = -1,
+        source_index: int = -1,
+    ) -> SpawnQueueItem:
+        """A resolved request (:meth:`SpawnConfig.resolved` - its type and
+        route concrete) as a queue item, from spawn region ``region_index`` or
+        source ``source_index``."""
+        control = None
+        if request.controlled is not None:
+            control = AircraftControlState.CONTROLLED if request.controlled else AircraftControlState.BACKGROUND
+        return SpawnQueueItem(
+            spawn_time=float(request.time_s),
+            actype=request.actype,
+            position=SpawnPosition(
+                lat_deg=float(request.at.lat_deg),
+                lon_deg=float(request.at.lon_deg),
+                alt_ft=float(request.alt_ft),
+                spd_kts=float(request.spd_kts) if request.spd_kts is not None else _ENVELOPE_PROVISIONAL_SPD_KTS,
+                hdg_deg=None if request.hdg_deg is None else float(request.hdg_deg),
+                spd_from_envelope=request.spd_kts is None,
+            ),
+            callsign_prefix=request.callsign_prefix,
+            route=request.route,
+            region_index=region_index,
+            callsign=request.callsign,
+            control=control,
+            source_index=source_index,
+            request=request,
+        )
+
+    def _redraw(self, item: SpawnQueueItem, rng: np.random.Generator):
+        """How a blocked ``item`` is drawn again - by its region, or by its
+        source when it resamples - at the same time; ``None`` when it cannot be."""
+        spawn = self.env.episode_spawn
+        if item.region_index >= 0:
+
+            def again(blocked: SpawnQueueItem) -> SpawnQueueItem:
+                request = replace(spawn.draw_request(item.region_index, rng), time_s=blocked.spawn_time)
+                return self.item_from_request(request, region_index=item.region_index)
+
+            return again
+        if item.source_index >= 0 and spawn.sources[item.source_index].when_blocked == "resample":
+            source = spawn.sources[item.source_index]
+            ctx = self.plan_context()
+
+            def again(blocked: SpawnQueueItem) -> SpawnQueueItem | None:
+                request = source.redraw(blocked.request, rng, ctx)
+                if request is None:
+                    return None
+                request = spawn.resolved(request, rng, ctx, source)
+                return self.item_from_request(request, source_index=item.source_index)
+
+            return again
+        return None
+
+    def _cleared(
+        self,
+        item: SpawnQueueItem,
+        rng: np.random.Generator,
+        *,
+        conflict_free: bool,
+        separation: tuple[float | None, float | None, float | None] = (None, None, None),
+        tries: int = 1,
+        redraw=None,
+    ) -> SpawnQueueItem | None:
+        """``item`` once its state is clear of live traffic - over CD's
+        lookahead when ``conflict_free``, else at its present position (see
+        :meth:`_spawn_position_clear`) - its envelope speed and heading pinned
+        first, so the cleared state is the one flown. Up to ``tries`` times,
+        drawn again by ``redraw`` between; ``None`` when none was clear.
+
+        The one clearing of every spawn: a region's, a top-up, a source's
+        planned one, one from code."""
+        sep_nm, sep_ft, look_s = separation
+        for attempt in range(tries):
+            pos = item.position
+            if conflict_free:
+                pos = self._resolve_spawn_speed(item.actype, pos, rng)
+            hdg = self._spawn_hdg(pos, rng)
+            if self._spawn_position_clear(
+                pos, hdg, conflict_free, sep_nm=sep_nm, sep_ft=sep_ft, lookahead_s=look_s
+            ):
+                return replace(item, position=replace(pos, hdg_deg=hdg))
+            if redraw is None or attempt == tries - 1:
+                break
+            item = redraw(item)
+            if item is None:
+                break
+        return None
+
+    def _clear_queued(self, item: SpawnQueueItem, rng: np.random.Generator) -> tuple[SpawnQueueItem | None, str]:
+        """A queued spawn, cleared by its region's or source's rules:
+        ``(item, "spawn")`` ready to create, or ``(None, "defer")`` /
+        ``(None, "skip")``."""
+        spawn = self.env.episode_spawn
+        if item.source_index >= 0:
+            source = spawn.sources[item.source_index]
+            if not source.conflict_free or source.when_blocked == "allow":
+                return item, "spawn"
+            blocked = "skip" if source.when_blocked == "skip" else "defer"
+            separation = (None, None, None)
+        else:
+            if not spawn.region_conflict_free(item.region_index):
+                return item, "spawn"
+            blocked = "defer"
+            separation = spawn.region_spawn_separation(item.region_index)
+        redraw = self._redraw(item, rng)
+        cleared = self._cleared(
+            item,
+            rng,
+            conflict_free=True,
+            separation=separation,
+            tries=spawn.spawn_max_tries if redraw is not None else 1,
+            redraw=redraw,
+        )
+        return (cleared, "spawn") if cleared is not None else (None, blocked)
+
+    def _source_label(self, index: int) -> str | None:
+        if index < 0:
+            return None
+        sources = self.env.episode_spawn.sources
+        return (getattr(sources[index], "name", "") or f"source {index}") if index < len(sources) else None
+
+    def room(self) -> int | None:
+        """How many more aircraft :attr:`SpawnConfig.aircraft_cap` leaves room
+        for - less those live, those still queued, and the top-ups its
+        ``maintain`` regions are owed, so a spawn from code never takes one the
+        episode's own spawns need. ``None``: no cap, no limit."""
+        cap = self.env.episode_spawn.aircraft_cap
+        if cap is None:
+            return None
+        live = self.env._live_agent_id_set()
+        counts: dict[int, int] = {}
+        for acid, region_index in self.env._aircraft_region.items():
+            if acid in live:
+                counts[region_index] = counts.get(region_index, 0) + 1
+        owed = sum(max(0, target - counts.get(r, 0)) for r, target in self._maintain_target.items())
+        return int(cap) - len(bs.traf.id) - len(self._queue) - owed
+
+    def _require_room(self) -> None:
+        room = self.room()
+        if room is not None and room <= 0:
+            raise RuntimeError(
+                f"SpawnConfig.aircraft_cap ({self.env.episode_spawn.aircraft_cap}) reached: "
+                "that many aircraft are live or still to spawn. Raise the cap to make room."
+            )
+
+    def spawn(self, item: SpawnQueueItem, rng: np.random.Generator, *, conflict_free: bool = False) -> Callsign | None:
+        """Create one aircraft now, from ``item`` - the way the queue and
+        ``maintain`` do: callsign, route, hooks, control state, spawn log.
+
+        ``conflict_free``: only if its state is clear of live traffic over CD's
+        lookahead (its envelope speed and heading pinned first, so the cleared
+        state is the flown one); ``None`` when it is not. Its callsign, or
+        ``None``. Refused when the episode has no :meth:`room` for it.
+        """
+        self._require_room()
+        if conflict_free:
+            item = self._cleared(item, rng, conflict_free=True)
+            if item is None:
+                return None
+        before = len(self.log)
+        if self._materialize_spawn(item, set(self.env._runtime.agent_ids), rng):
+            self.env._invalidate_agent_cache()
+        return self.log[before].callsign if len(self.log) > before else None
+
+    def spawn_from(self, region_index: int, rng: np.random.Generator) -> Callsign | None:
+        """Create one aircraft now, drawn from spawn region ``region_index`` as
+        its own spawns are - and cleared as its top-ups are (CPA when the
+        region is conflict-free, else its present position). Its callsign, or
+        ``None`` when no clear state was found."""
+        self._require_room()
+        item = self._sample_clear_spawn(region_index, rng)
+        if item is None:
+            return None
+        return self.spawn(item, rng)
 
     def resolve_route(
         self,
@@ -250,43 +440,6 @@ class SpawnGenerator:
             self.env._runtime.delete_aircraft(callsign)
         return replace(pos, spd_kts=cas_kts, spd_from_envelope=False)
 
-    def _conflict_free_item(
-        self, item: SpawnQueueItem, rng: np.random.Generator
-    ) -> SpawnQueueItem | None:
-        """Resample a queued spawn until its state is clear.
-
-        Resolves and pins the spawn speed (envelope draw) and heading before
-        each check, so the materialized aircraft flies exactly the state that
-        was cleared. Returns ``None`` when no clear candidate is found within
-        ``SpawnConfig.spawn_max_tries`` - the caller defers the spawn instead of
-        creating an aircraft in (predicted) conflict.
-        """
-        spawn = self.env.episode_spawn
-        sep_nm, sep_ft, look_s = spawn.region_spawn_separation(item.region_index)
-        for _ in range(spawn.spawn_max_tries):
-            pos = self._resolve_spawn_speed(item.actype, item.position, rng)
-            hdg = self._spawn_hdg(pos, rng)
-            if self._spawn_position_clear(
-                pos,
-                hdg,
-                conflict_free=True,
-                sep_nm=sep_nm,
-                sep_ft=sep_ft,
-                lookahead_s=look_s,
-            ):
-                return replace(item, position=replace(pos, hdg_deg=hdg))
-            _t, actype, position, prefix, route = (
-                self.env.episode_spawn.sample_region_spawn(item.region_index, rng)
-            )
-            item = replace(
-                item,
-                actype=actype,
-                position=SpawnPosition.from_mapping(position),
-                callsign_prefix=prefix,
-                route=route,
-            )
-        return None
-
     def _sample_clear_spawn(
         self,
         region_index: int,
@@ -303,33 +456,21 @@ class SpawnGenerator:
         spawn = self.env.episode_spawn
         conflict_free = spawn.region_conflict_free(region_index)
         sep_nm, sep_ft, look_s = spawn.region_spawn_separation(region_index)
-        for _ in range(spawn.spawn_max_tries):
-            _spawn_time, actype, position, prefix, route = (
-                self.env.episode_spawn.sample_region_spawn(region_index, rng)
-            )
-            pos = SpawnPosition.from_mapping(position)
-            if conflict_free:
-                # Pin the envelope speed before the check so the cleared state
-                # is the flown state (see ``_resolve_spawn_speed``).
-                pos = self._resolve_spawn_speed(actype, pos, rng)
-            hdg = self._spawn_hdg(pos, rng)
-            if self._spawn_position_clear(
-                pos,
-                hdg,
-                conflict_free,
-                sep_nm=sep_nm,
-                sep_ft=sep_ft,
-                lookahead_s=look_s,
-            ):
-                self._maintain_failures.pop(region_index, None)
-                return SpawnQueueItem(
-                    spawn_time=self.env._runtime.sim_time,
-                    actype=actype,
-                    position=replace(pos, hdg_deg=hdg),
-                    callsign_prefix=prefix,
-                    route=route,
-                    region_index=region_index,
-                )
+        now = self.env._runtime.sim_time
+        item = self.item_from_request(
+            replace(spawn.draw_request(region_index, rng), time_s=now), region_index=region_index
+        )
+        cleared = self._cleared(
+            item,
+            rng,
+            conflict_free=conflict_free,
+            separation=(sep_nm, sep_ft, look_s),
+            tries=spawn.spawn_max_tries,
+            redraw=self._redraw(item, rng),
+        )
+        if cleared is not None:
+            self._maintain_failures.pop(region_index, None)
+            return cleared
         n = self._maintain_failures.get(region_index, 0) + 1
         self._maintain_failures[region_index] = n
         if n == spawn.spawn_warn_after:
@@ -515,8 +656,12 @@ class SpawnGenerator:
         top-up. ``used`` is the set of callsigns already taken this pass and is
         updated in place.
         """
-        callsign = self._callsigns.issue(
-            used, item.callsign_prefix, self._prefix_options(item.region_index)
+        callsign = (
+            self._callsigns.claim(item.callsign, used)
+            if item.callsign
+            else self._callsigns.issue(
+                used, item.callsign_prefix, self._prefix_options(item.region_index)
+            )
         )
         used.add(callsign)
         hdg = (
@@ -580,9 +725,10 @@ class SpawnGenerator:
         # restrictions only reaches ADDWPT above.
         route_names = route.names if route else None
         self.env._hooks.on_aircraft_spawned(callsign, route_names)
-        state = self.env._hooks.define_initial_aircraft_control_state(
-            callsign,
-            route_names,
+        state = (
+            item.control
+            if item.control is not None
+            else self.env._hooks.define_initial_aircraft_control_state(callsign, route_names)
         )
         # A spawn region marked ``controlled=False`` forces its aircraft to
         # background (uncooperative) traffic regardless of the task hook: they
@@ -601,7 +747,12 @@ class SpawnGenerator:
         self.env._aircraft_region[callsign] = item.region_index
         controlled = state is AircraftControlState.CONTROLLED
         self._record(
-            callsign, item.region_index, controlled, route_names, route.targets if route else ()
+            callsign,
+            item.region_index,
+            controlled,
+            route_names,
+            route.targets if route else (),
+            self._source_label(item.source_index),
         )
         return controlled
 
@@ -612,6 +763,7 @@ class SpawnGenerator:
         controlled: bool,
         route: list[str] | None,
         targets: Sequence[WaypointTarget] = (),
+        source: str | None = None,
     ) -> None:
         idx = self.env._runtime.index(callsign)
         traf = bs.traf
@@ -631,6 +783,7 @@ class SpawnGenerator:
                 region_index=region_index,
                 route=tuple(route) if route else None,
                 targets=tuple(targets),
+                source=source,
             )
         )
 
@@ -645,25 +798,13 @@ class SpawnGenerator:
         path can stop as soon as it hits an entry that isn't due yet.
         """
         self._maintain_failures.clear()
-        self._queue = sorted(
-            (
-                SpawnQueueItem(
-                    spawn_time=spawn_time,
-                    actype=actype,
-                    position=SpawnPosition.from_mapping(position),
-                    callsign_prefix=callsign_prefix,
-                    route=route,
-                    region_index=region_index,
-                )
-                for region_index, spawn_time, actype, position, callsign_prefix, route in (
-                    self.env.episode_spawn.iter_spawns(
-                        rng,
-                        limit=self.env.episode_max_aircraft,
-                    )
-                )
-            ),
-            key=lambda item: item.spawn_time,
+        planned = self.env.episode_spawn.plan_episode(
+            rng, self.plan_context(), limit=self.env.episode_max_aircraft
         )
+        self._queue = [
+            self.item_from_request(p.request, region_index=p.region_index, source_index=p.source_index)
+            for p in planned
+        ]
 
     def _sample_maintain_targets(self, rng: np.random.Generator) -> None:
         """Fix each ``maintain`` region's target live count for this episode."""
@@ -693,21 +834,20 @@ class SpawnGenerator:
             if item.spawn_time > now:
                 break
             i += 1
-            if self.env.episode_spawn.region_conflict_free(item.region_index):
-                cleared = self._conflict_free_item(item, rng)
-                if cleared is None:
-                    retry_at = now + (float(self._config().dt) or 1.0)
+            cleared, outcome = self._clear_queued(item, rng)
+            if outcome == "skip":
+                continue
+            if outcome == "defer":
+                retry_at = now + (float(self._config().dt) or 1.0)
+                if item.region_index >= 0:
                     print(
                         "[spawn] no conflict-free spawn state found after "
                         f"{self.env.episode_spawn.spawn_max_tries} tries (region "
                         f"{item.region_index}); deferring to t={retry_at:.0f}s"
                     )
-                    deferred.append(replace(item, spawn_time=retry_at))
-                    continue
-                item = cleared
-            agent_cache_changed = (
-                self._materialize_spawn(item, used, rng) or agent_cache_changed
-            )
+                deferred.append(replace(item, spawn_time=retry_at))
+                continue
+            agent_cache_changed = self._materialize_spawn(cleared, used, rng) or agent_cache_changed
         if i:
             del self._queue[:i]
         if deferred:
@@ -733,8 +873,12 @@ class SpawnGenerator:
                 counts[region_index] = counts.get(region_index, 0) + 1
         used = set(self.env._runtime.agent_ids)
         changed = False
+        cap = self.env.episode_spawn.aircraft_cap
         for region_index, target in self._maintain_target.items():
             for _ in range(max(0, target - counts.get(region_index, 0))):
+                # Never past the cap: not even a top-up the region is owed.
+                if cap is not None and len(bs.traf.id) + len(self._queue) >= cap:
+                    break
                 item = self._sample_clear_spawn(region_index, rng)
                 if item is None:
                     break  # too crowded to place clear of traffic; retry later
@@ -825,6 +969,20 @@ class _CallsignIssuer:
             if prefix is None:
                 raise RuntimeError(_callsigns_exhausted(full, prefix_options))
         return self._draw(prefix)
+
+    def claim(self, callsign: Callsign, live: set[Callsign]) -> Callsign:
+        """Take ``callsign`` - one the caller chose - upper-cased as BlueSky's
+        stack has it; refused if it is live or was issued this episode."""
+        if self._rng is None:
+            raise RuntimeError("_CallsignIssuer.start_episode has not been called.")
+        for taken in live:
+            self._take(taken)
+        self._take_created()
+        callsign = str(callsign).upper()
+        if callsign in self._taken:
+            raise ValueError(f"callsign {callsign!r} is already in use this episode")
+        self._take(callsign)
+        return callsign
 
     def _draw(self, prefix: str | None) -> Callsign:
         # Ends: the caller checked a free callsign exists in this group.
