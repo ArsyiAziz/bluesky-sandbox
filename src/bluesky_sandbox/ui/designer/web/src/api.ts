@@ -18,7 +18,8 @@ export interface ValidateResult {
     state_fields: string[];
     intruder_state_fields: string[];
     action_fields: string[];
-    allowed_aircraft: string[];
+    // Every type the spawn regions name.
+    aircraft_types: string[];
     max_aircraft: number;
     has_airspace: boolean;
     queryables: string[];

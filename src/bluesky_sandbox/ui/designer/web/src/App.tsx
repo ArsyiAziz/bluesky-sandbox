@@ -2,7 +2,7 @@ import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMe
 import { api, type SpecDict, type ValidateResult } from "./api";
 import { forgetModuleMembers, useCodeIntel } from "./code/pythonEditor";
 import { DEFAULT_SPEC } from "./defaultSpec";
-import { migrateRewardHooks, migrateRotationGroups, migrateShapeKeys, normalizeToRegions } from "./specHelpers";
+import { migrateRewardHooks, migrateRotationGroups, migrateShapeKeys, migrateTypesOntoRegions, normalizeToRegions } from "./specHelpers";
 import { migrateWaypointMembers } from "./groupTree";
 import { migrateWaypointsToPoints } from "./waypointPoints";
 import MapTab from "./components/MapTab";
@@ -23,7 +23,9 @@ import { setThemePreference, type ThemePreference, useTheme } from "./theme";
 type Tab = "map" | "route" | "spaces" | "config" | "code" | "metadata";
 
 const normalizeSpec = (spec: SpecDict): SpecDict => {
-  const next = migrateRotationGroups(migrateRewardHooks(normalizeToRegions(migrateShapeKeys(spec) as SpecDict)));
+  const next = migrateTypesOntoRegions(
+    migrateRotationGroups(migrateRewardHooks(normalizeToRegions(migrateShapeKeys(spec) as SpecDict))),
+  );
   // Older designs' waypoints: grouped directly (`wp:` members, now anchors),
   // and positioned on themselves - each moved onto a point of its own.
   const older =

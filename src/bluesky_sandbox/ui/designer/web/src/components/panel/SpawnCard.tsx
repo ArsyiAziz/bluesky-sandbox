@@ -11,6 +11,7 @@ import { CollapsibleCard, EyeToggle } from "./Section";
 import { FieldGroup } from "./FieldGroup";
 import { VisualizationToggles } from "./QueryableCard";
 import { RouteSpecControl } from "./RouteSettings";
+import { AircraftTypes } from "./AircraftTypes";
 import { useRefresh } from "../../refresh";
 
 type SpawnBodyProps = {
@@ -28,6 +29,8 @@ type SpawnBodyProps = {
   // left unset, so "follow global" can say what it actually resolves to.
   globalConflictFree?: boolean;
   globalMaintainMinSepNm?: number | null;
+  // The design's performance model: the types there are to pick from.
+  performanceModel?: string;
 };
 
 // The grouped field editor for one spawn region (no card chrome). Spawn altitude
@@ -45,6 +48,7 @@ export function SpawnBody({
   onFocus,
   globalConflictFree,
   globalMaintainMinSepNm,
+  performanceModel,
 }: SpawnBodyProps) {
   // The zone a conflict-free spawn is actually cleared against, from BlueSky's
   // CD rather than hardcoded here, so the buffers say what they are added to.
@@ -94,6 +98,16 @@ export function SpawnBody({
         <div className="muted small">when spawn altitude is unset, it follows the bounds altitude band ↑</div>
       </FieldGroup>
       <FieldGroup title="Traffic" defaultOpen>
+        <div className="value-field">
+          <div className="vf-head">
+            <span className="vf-label">aircraft types</span>
+          </div>
+          <AircraftTypes
+            value={region.aircraft_type}
+            model={performanceModel ?? "openap"}
+            onChange={(aircraft_type) => onChange({ ...region, aircraft_type })}
+          />
+        </div>
         <ValueField
           label={region.maintain ? "target in airspace" : "count"}
           int

@@ -51,7 +51,7 @@ import { SpawnBody } from "./SpawnCard";
 import { RouteSettings } from "./RouteSettings";
 import { useRefresh } from "../../refresh";
 
-const emptySpawn = (): SpecDict => ({ type: "spawn_config", regions: [], aircraft_type: null, route: null, routes: {} });
+const emptySpawn = (): SpecDict => ({ type: "spawn_config", regions: [], route: null, routes: {} });
 
 // Selection covers the map's edit targets plus a panel-only "routes" view (the
 // route library has no single map target, so it's selected from the outline).
@@ -857,6 +857,7 @@ export default function GeometryTab({
             <LockableBody locked={lockedElements.has(`spawn:${sel.index}`)}>
               <SpawnBody
                 region={spawnRegions[sel.index]}
+                performanceModel={spec.env?.performance_model ?? "openap"}
                 globalConflictFree={spec.spawn?.conflict_free_spawn === true}
                 globalMaintainMinSepNm={
                   spec.spawn?.maintain_min_sep_nm as number | null | undefined

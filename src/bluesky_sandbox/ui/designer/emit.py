@@ -658,7 +658,6 @@ from bluesky_sandbox.interface.fields import queryables as qobs
 {custom_import}'''
     return {
         "imports": imports.rstrip(),
-        "allowed_aircraft": repr(env.allowed_aircraft),
         "dt": repr(env.dt),
         "simdt": repr(env.simdt),
         "asas_dt": repr(env.asas_dt),
@@ -851,6 +850,8 @@ def _emit_spawn_sources(spec: DesignSpec) -> str:
             f'    """Spawn source {name!r}: this episode\'s aircraft."""\n{indented}\n'
         )
         policies = [f"name={name!r}"]
+        if d.get("aircraft_type") is not None:
+            policies.append(f"aircraft_type={_Emitter().value(d['aircraft_type'])}")
         if d.get("conflict_free"):
             policies.append("conflict_free=True")
         if d.get("when_blocked"):
@@ -982,7 +983,6 @@ from bluesky_sandbox.sim.sampling.distributions import Bounded, Categorical
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
 
-ALLOWED_AIRCRAFT = {env.allowed_aircraft!r}
 DT = {env.dt!r}
 SIMDT = {env.simdt!r}
 CD_METHOD = {env.cd_method!r}

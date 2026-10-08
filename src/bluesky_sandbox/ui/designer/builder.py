@@ -957,6 +957,8 @@ def spawn_sources_of(spec: DesignSpec) -> list[dict[str, Any]]:
 def spawn_source_policies(d: dict[str, Any]) -> dict[str, Any]:
     """A design spawn source's policies, as :class:`SpawnSource` takes them."""
     out: dict[str, Any] = {"name": d["name"]}
+    if d.get("aircraft_type") is not None:
+        out["aircraft_type"] = _spec.load_value(d["aircraft_type"])
     if d.get("conflict_free"):
         out["conflict_free"] = True
     if d.get("when_blocked"):
@@ -1403,7 +1405,6 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
             state_fields=state_fields,
             intruder_state_fields=intruder_state_fields,
             action_fields=[resolve_action_field(f) for f in env.action_fields],
-            allowed_aircraft=list(env.allowed_aircraft),
             dt=env.dt,
             simdt=env.simdt,
             asas_dt=env.asas_dt,

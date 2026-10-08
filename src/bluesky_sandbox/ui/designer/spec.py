@@ -33,6 +33,8 @@ Two deliberate fidelity choices:
 
 from __future__ import annotations
 
+import copy
+
 import ast
 import dataclasses
 import importlib
@@ -955,11 +957,45 @@ def _spawn_region_load(d: dict[str, Any]) -> SpawnRegion:
     )
 
 
+#: What an earlier design spawned when it named no types: its default.
+_EARLIER_DEFAULT_TYPES = ["B744"]
+
+
+def _types_onto_regions(d: dict[str, Any]) -> dict[str, Any]:
+    """An earlier design's aircraft types - ``env.allowed_aircraft`` (B744
+    when absent) and ``spawn.aircraft_type`` - onto each spawn region and
+    source naming none, as they drew them; then dropped: every region names
+    its own types now."""
+    env = d.get("env") if isinstance(d.get("env"), dict) else {}
+    spawn = d.get("spawn") if isinstance(d.get("spawn"), dict) else {}
+    if "allowed_aircraft" not in env and "aircraft_type" not in spawn:
+        return d
+    d = copy.deepcopy(d)
+    env, spawn = d.get("env", {}), d.get("spawn", {})
+    earlier = "allowed_aircraft" in env or spawn.get("aircraft_type") is not None
+    allowed = env.pop("allowed_aircraft", None)
+    globally = spawn.pop("aircraft_type", None)
+    if not earlier:  # a null left by an editor: nothing to carry over
+        return d
+    if globally is None:
+        types = [str(t).upper() for t in (allowed if allowed is not None else _EARLIER_DEFAULT_TYPES)]
+        globally = (
+            types[0] if len(types) == 1
+            else {"type": "categorical", "weights": {t: 1.0 for t in types}} if types else None
+        )
+    if globally is not None:
+        for entry in [*(spawn.get("regions") or []), *(spawn.get("sources") or [])]:
+            if isinstance(entry, dict) and entry.get("aircraft_type") is None:
+                entry["aircraft_type"] = copy.deepcopy(globally)
+    return d
+
+
 def _spawn_config_dump(c: SpawnConfig) -> dict[str, Any]:
     return {
         "type": "spawn_config",
         "regions": [_spawn_region_dump(r) for r in c.regions],
-        "aircraft_type": dump_value(c.aircraft_type),
+        # Each region names its own types; the deprecated global only when set.
+        **({} if c.aircraft_type is None else {"aircraft_type": dump_value(c.aircraft_type)}),
         "route": dump_value(c.route),
         "routes": {k: list(v) for k, v in c.routes.items()},
         "conflict_free_spawn": c.conflict_free_spawn,
@@ -1190,7 +1226,6 @@ class EnvSpec:
     # imports, constants, and helpers shared by hook methods.
     hook_setup: str = ""
     hooks: dict[str, str] = field(default_factory=dict)
-    allowed_aircraft: list[str] = field(default_factory=lambda: ["B744"])
     dt: float = 1.0
     simdt: float | None = None
     asas_dt: float | None = None
@@ -1246,7 +1281,6 @@ class EnvSpec:
             "task_info_providers": list(self.task_info_providers),
             "hook_setup": self.hook_setup,
             "hooks": dict(self.hooks),
-            "allowed_aircraft": list(self.allowed_aircraft),
             "dt": self.dt,
             "simdt": self.simdt,
             "asas_dt": self.asas_dt,
@@ -1300,7 +1334,6 @@ class EnvSpec:
             task_info_providers=list(d.get("task_info_providers", [])),
             hook_setup=str(d.get("hook_setup", "")),
             hooks=dict(d.get("hooks", {})),
-            allowed_aircraft=list(d.get("allowed_aircraft", ["B744"])),
             dt=d.get("dt", 1.0),
             simdt=d.get("simdt"),
             asas_dt=d.get("asas_dt"),
@@ -1410,6 +1443,7 @@ class DesignSpec:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> DesignSpec:
+        d = _types_onto_regions(d)
         version = d.get("version", _SPEC_VERSION)
         if version != _SPEC_VERSION:
             raise SpecError(

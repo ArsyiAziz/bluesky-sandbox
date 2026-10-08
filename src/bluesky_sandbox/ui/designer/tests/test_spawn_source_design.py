@@ -32,7 +32,7 @@ def _design(**source) -> S.DesignSpec:
     spec.scenario_setup = "TIMES = (0.0, 30.0)"
     spec.spawn = {
         **spec.spawn,
-        "sources": [{"name": "adsb", "plan": PLAN, "max_aircraft": 2, "when_blocked": "skip", **source}],
+        "sources": [{"name": "adsb", "plan": PLAN, "max_aircraft": 2, "when_blocked": "skip", "aircraft_type": "B744", **source}],
     }
     return S.DesignSpec.from_json(spec.to_json())
 
@@ -78,7 +78,7 @@ def test_the_generated_package_plans_the_same(tmp_path):
     scenario_py = next(p for p in files if p.endswith("scenario.py"))
     text = files[scenario_py]
     assert "def _plan_adsb(rng, ctx):" in text
-    assert "PlannedSource(_plan_adsb, name='adsb', when_blocked='skip', max_aircraft=2)" in text
+    assert "PlannedSource(_plan_adsb, name='adsb', aircraft_type='B744', when_blocked='skip', max_aircraft=2)" in text
     assert "sources=SPAWN_SOURCES" in text
     for rel, body in files.items():
         path = tmp_path / rel

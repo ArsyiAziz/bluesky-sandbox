@@ -292,6 +292,7 @@ def _example_design_spec() -> S.DesignSpec:
                 RegionBounds(BoxFootprint(51.6, 52.4, 4.1, 5.4)),
                 n_aircraft=randint(2, 6),
                 params={"alt_ft": (5_000, 15_000), "spd_kts": (200, 280)},
+                aircraft_type=Categorical({"A320": 1.0, "B738": 1.0}),
             )
         ]
     )
@@ -310,7 +311,6 @@ def _example_design_spec() -> S.DesignSpec:
             S.FieldRef("HdgDeg"),
             S.FieldRef("SpdKts", kwargs={"normalizer": {"type": "normalizer", "name": "SymmetricNormalizer", "kwargs": {"clipped": True}}}),
         ],
-        allowed_aircraft=["A320", "B738"],
     )
     return S.DesignSpec(
         env=env,
@@ -978,7 +978,7 @@ def test_build_scenario_and_env_config():
     # round-trip like any other kwarg - and reaches the palette, which only
     # exposes scalar-defaulted constructor params.
     assert cfg.obs_fields[2].normalizer.normalized_interval == (0.0, 1.0)
-    assert cfg.allowed_aircraft == ["A320", "B738"]
+    assert cfg.allowed_aircraft is None  # each region names its own types
     assert len(cfg.task_info_providers) == 1
     # Config remains static; scenario airspace is not injected into field bounds.
     lat_field = cfg.obs_fields[0]
@@ -1186,7 +1186,7 @@ def test_codegen_generates_importable_package():
     assert "def make_scenario" not in scenario_py
     config_py = files[f"{pkg}/config.py"]
     assert "obs.LatDeg(" in config_py
-    assert "allowed_aircraft=list(['A320', 'B738'])" in config_py
+    assert "allowed_aircraft" not in config_py
     assert "TASK_INFO_PROVIDERS" not in config_py
     assert "INTRUDER_OBS_FIELDS" not in config_py
     env_py = files[f"{pkg}/env.py"]

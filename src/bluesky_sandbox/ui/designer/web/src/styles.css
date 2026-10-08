@@ -4906,3 +4906,83 @@ button:disabled {
 .mdp-plot figcaption.mdp-plot-title {
   padding: 0 0 4px 52px;
 }
+
+/* Aircraft types: each with what it is (fixed-wing, drone; propulsion, wake, mass). */
+.aircraft-types {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 8px;
+}
+
+.aircraft-type-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The code and its tags, wrapping among themselves - the share and the remove
+   button stay at the row's end. */
+.aircraft-type-what {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 6px;
+}
+
+.type-code {
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+}
+
+.type-code.missing {
+  text-decoration: line-through;
+}
+
+.type-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.type-tag {
+  font-size: 10.5px;
+  line-height: 1.5;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--chip-bg, rgba(127, 127, 127, 0.16));
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.type-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.type-share input {
+  width: 3.5em;
+}
+
+/* The share a weight makes: read, not edited. */
+.type-share-pct {
+  min-width: 3.2em;
+  text-align: right;
+}
+
+/* A spawn region's route mix: each route's weight and the share it makes. */
+.route-weight-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.route-weight-row .type-share-pct {
+  font-size: 11px;
+  color: var(--muted);
+}

@@ -12,7 +12,6 @@ export const DEFAULT_SPEC: SpecDict = {
   spawn: {
     type: "spawn_config",
     regions: [],
-    aircraft_type: null,
     route: null,
     routes: {},
   },
@@ -33,7 +32,6 @@ export const DEFAULT_SPEC: SpecDict = {
       terminated: "# return context.query(\"goal\").current.inside\nreturn False",
       truncated: "return False",
     },
-    allowed_aircraft: ["A320", "B738"],
     dt: 1.0,
     simdt: null,
     cd_method: "CSTATEBASED",

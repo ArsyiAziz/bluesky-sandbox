@@ -509,7 +509,6 @@ CONFIG = EnvConfig(
     obs_fields=list({env_sources["obs_fields"]}),
     intruder_obs_fields={intruder_expr},
 {critic_lines}    action_fields=list({env_sources["action_fields"]}),
-    allowed_aircraft=list({env_sources["allowed_aircraft"]}),
     dt={env_sources["dt"]},
     simdt={env_sources["simdt"]},
     asas_dt={env_sources["asas_dt"]},

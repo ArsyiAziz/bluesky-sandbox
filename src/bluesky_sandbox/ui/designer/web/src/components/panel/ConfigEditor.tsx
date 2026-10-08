@@ -230,15 +230,16 @@ export function ConfigEditor({
   onCodeChange: (code: Record<string, string>) => void;
 }) {
   const set = (patch: SpecDict) => onChange({ ...env, ...patch });
-  const aircraft: string[] = env.allowed_aircraft ?? [];
-  const aircraftSet = new Set(aircraft.map((ac) => ac.toUpperCase()));
-  // Available aircraft for the *selected* performance model; an object with an
-  // `error` means that model's database isn't installed (e.g. BADA).
+  // The selected performance model's types: what each spawn region picks from.
   const model = env.performance_model ?? "openap";
   const avail = catalog?.aircraft?.[model];
   const availError: string | null = avail && !Array.isArray(avail) ? avail.error : null;
-  const available: string[] = Array.isArray(avail) ? avail : [];
-  const allSelected = available.length > 0 && available.every((a) => aircraftSet.has(a.toUpperCase()));
+  const available: { type: string; tags: string[] }[] = Array.isArray(avail) ? avail : [];
+  const kinds = available.reduce<Record<string, number>>((acc, t) => {
+    const kind = t.tags[0] ?? "other";
+    acc[kind] = (acc[kind] ?? 0) + 1;
+    return acc;
+  }, {});
   const bs = catalog?.bluesky_defaults ?? {};
   return (
     <>
@@ -251,6 +252,9 @@ export function ConfigEditor({
             <NumberInput unit="s" step={0.01} min={0} placeholder={`${bs.simdt ?? "BlueSky"} (default)`}
               value={env.simdt} onChange={(v) => set({ simdt: v })} />
           </FormRow>
+        </FormCard>
+
+        <FormCard title="Aircraft" help="The performance model sets which types there are, and how each flies; each spawn region picks its own from them.">
           <FormRow label="performance">
             <Picker
               searchable={false}
@@ -260,45 +264,14 @@ export function ConfigEditor({
               options={[{ value: "openap" }, { value: "bada" }]}
             />
           </FormRow>
-        </FormCard>
-
-        <FormCard title="Aircraft" help="Each spawned aircraft's type is drawn from these.">
           {availError ? (
             <div className="error-text small">{model}: {availError}</div>
           ) : (
-            <>
-              <label className="form-check" title="sample uniformly across every aircraft type in the model">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  disabled={available.length === 0}
-                  onChange={(e) => set({ allowed_aircraft: e.target.checked ? [...available] : [] })}
-                />
-                every type in {model} ({available.length})
-              </label>
-              {!allSelected && (
-                <>
-                  <div className="chips">
-                    {aircraft.map((ac, i) => (
-                      <span className="chip" key={`${ac}-${i}`}>
-                        {ac}
-                        <button className="chip-x" onClick={() => set({ allowed_aircraft: aircraft.filter((_, j) => j !== i) })}>
-                          ✕
-                        </button>
-                      </span>
-                    ))}
-                    {aircraft.length === 0 && <span className="muted">none yet</span>}
-                  </div>
-                  <Picker
-                    placeholder="+ add aircraft…"
-                    onChange={(v) => set({ allowed_aircraft: [...aircraft, v] })}
-                    options={available
-                      .filter((a) => !aircraftSet.has(a.toUpperCase()))
-                      .map((a) => ({ value: a }))}
-                  />
-                </>
-              )}
-            </>
+            <div className="muted small">
+              {model} carries{" "}
+              {Object.entries(kinds).map(([kind, n]) => `${n} ${kind.toLowerCase()}`).join(", ") || "no types"}.
+              Each spawn region names the types it spawns (Shapes ▸ its spawn area ▸ Traffic).
+            </div>
           )}
         </FormCard>
       </FormColumn>

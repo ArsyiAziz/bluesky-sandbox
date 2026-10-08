@@ -35,7 +35,7 @@ from bluesky_sandbox.sim.geometry.conflict import (
     cd_lookahead_s,
     cd_rpz_m,
 )
-from bluesky_sandbox.sim.performance.models import spawnable_types
+from bluesky_sandbox.sim.performance.models import MODELS, spawnable_types, type_info
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
@@ -892,18 +892,28 @@ def aircraft_types(model: str | None = None) -> list[str]:
 def aircraft_by_model() -> dict[str, Any]:
     """Available aircraft per performance model.
 
-    Each value is either a sorted list of ICAO types or ``{"error": msg}`` when
-    that model's database can't be loaded (e.g. BADA not installed).
+    Each value is a list of ``{"type", "name", "tags"}`` - sorted by type, as
+    the model BlueSky flies carries them - or ``{"error": msg}`` when that
+    model's database can't be loaded (e.g. BADA not installed).
     """
     out: dict[str, Any] = {}
-    for model in ("openap", "bada"):
+    for model in MODELS:
         try:
             # Offer only types with envelope bounds: a design that picks one
             # without them looks fine until a spawn tries to sample an altitude.
-            out[model] = sorted(t.upper() for t in spawnable_types(model))
+            types = sorted(t.upper() for t in spawnable_types(model))
         except Exception as e:  # model unavailable -> surface the reason
             out[model] = {"error": str(e)}
+            continue
+        out[model] = [_described(t, model) for t in types]
     return out
+
+
+def _described(actype: str, model: str) -> dict[str, Any]:
+    """A type as the picker offers it: its ICAO code, name, and tags - what
+    it is, from the model's own data (``type_info``)."""
+    info = type_info(actype, model) or {}
+    return {"type": actype, "name": info.get("name"), "tags": info.get("tags") or []}
 
 
 def scenario_hooks() -> list[dict[str, Any]]:

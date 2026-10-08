@@ -26,6 +26,7 @@ def _example_spec_dict() -> dict:
                 RegionBounds(BoxFootprint(51.6, 52.4, 4.1, 5.4)),
                 n_aircraft=randint(2, 6),
                 params={"alt_ft": (5_000, 15_000), "spd_kts": (200, 280)},
+                aircraft_type="A320",
             )
         ]
     )
@@ -37,7 +38,6 @@ def _example_spec_dict() -> dict:
         obs_fields=[S.FieldRef("LatDeg"), S.FieldRef("LonDeg"), S.FieldRef("AltFt")],
         intruder_obs_fields=[S.FieldRef("DistToOwnNm")],
         action_fields=[S.FieldRef("HdgDeg"), S.FieldRef("SpdKts")],
-        allowed_aircraft=["A320", "B738"],
     )
     return S.DesignSpec(
         env=env,

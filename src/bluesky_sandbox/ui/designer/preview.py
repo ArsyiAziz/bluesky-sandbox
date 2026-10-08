@@ -24,32 +24,37 @@ from bluesky_sandbox.sim.sampling.distributions import Categorical
 from bluesky_sandbox.sim.scenario import transforms as _t
 from bluesky_sandbox.sim.spawn import PlanContext, SpawnConfig
 
-from .builder import build_scenario, lower_waypoints
+from .builder import BuildError, build_scenario, lower_waypoints
 from .spec import DesignSpec
 
 
-def _resolve_spawn_types(spawn: SpawnConfig, allowed_aircraft: list[str]) -> None:
-    """Fill in ``aircraft_type`` the way the env would, for standalone preview.
-
-    ``iter_spawns`` needs a non-``None`` global ``aircraft_type``; the env
-    resolves it every ``reset()`` via
-    :func:`~bluesky_sandbox.config.resolve_spawn_aircraft_types`. Preview builds
-    the scenario without an ``EnvConfig`` (so the map renders even when code
-    refs are incomplete), so we replicate just that resolution here.
-    """
-    allowed = [a.upper() for a in allowed_aircraft] or ["B744"]
+def _resolve_spawn_types(spawn: SpawnConfig) -> None:
+    """Each spawn region's types as the env resolves them, for standalone
+    preview: a :class:`Categorical`. Preview builds the scenario without an
+    ``EnvConfig`` (so the map renders even when code refs are incomplete), so
+    this is the part of :func:`~bluesky_sandbox.config.resolve_spawn_aircraft_types`
+    it needs. A region naming no types is refused, as the env refuses it."""
 
     def resolve(t):
         if isinstance(t, Categorical):
             return t
-        if isinstance(t, str):
-            return Categorical({t.upper(): 1.0})
-        return Categorical({a: 1.0 for a in allowed})
+        if isinstance(t, (list, tuple)):
+            return Categorical({str(a).upper(): 1.0 for a in t})
+        return Categorical({str(t).upper(): 1.0})
 
-    spawn.aircraft_type = resolve(spawn.aircraft_type)
-    for region in spawn.regions:
-        if region.aircraft_type is not None:
+    if spawn.aircraft_type is not None:  # an earlier design's, in code
+        spawn.aircraft_type = resolve(spawn.aircraft_type)
+    for i, region in enumerate(spawn.regions):
+        if region.aircraft_type is None:
+            if spawn.aircraft_type is None:
+                name = region.name or f"spawn {i}"
+                raise BuildError(f"spawn region {name!r} has no aircraft type: name the types it spawns.")
+            region.aircraft_type = spawn.aircraft_type
+        else:
             region.aircraft_type = resolve(region.aircraft_type)
+    for source in spawn.sources:
+        if getattr(source, "aircraft_type", None) is not None:
+            source.aircraft_type = resolve(source.aircraft_type)
 
 
 def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
@@ -65,7 +70,7 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
     # Sample (not support) so per-episode randomization - rotation and, below,
     # spawn locations - is what the map shows; reseeding varies it.
     episode = scenario.sample(rng)
-    _resolve_spawn_types(episode.spawn, spec.env.allowed_aircraft)
+    _resolve_spawn_types(episode.spawn)
 
     airspace = (
         bounds_geometry(episode.airspace_bounds)

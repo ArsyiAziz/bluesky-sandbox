@@ -270,7 +270,8 @@ export const defaultSpawnRegion = (lat = 52.0, lon = 4.75, altLo = 5000, altHi =
     params: {
       spd_kts: { type: "range", low: 200, high: 280 },
     },
-    aircraft_type: null,
+    // Its types: a mix of two common jets, to start from.
+    aircraft_type: { type: "categorical", weights: { A320: 1, B738: 1 } },
     callsign_prefixes: null,
     spawn_time: 0.0,
     route: null,
@@ -635,4 +636,29 @@ export const stripClass = (source: string, className: string): string => {
   while (before.length && before[before.length - 1].trim() === "") before.pop();
   const after = lines.slice(end);
   return [...before, "", ...after].join("\n");
+};
+
+// An earlier design's aircraft types - env.allowed_aircraft (B744 when absent)
+// and spawn.aircraft_type - onto each spawn region and source naming none, as
+// they drew them; then dropped: every region names its own types now. As the
+// backend reads it (spec.py _types_onto_regions).
+export const migrateTypesOntoRegions = (spec: SpecDict): SpecDict => {
+  const env = spec?.env ?? {};
+  const spawn = spec?.spawn ?? {};
+  if (!("allowed_aircraft" in env) && !("aircraft_type" in spawn)) return spec;
+  const earlier = "allowed_aircraft" in env || (spawn.aircraft_type ?? null) !== null;
+  const { allowed_aircraft: allowed, ...restEnv } = env;
+  const { aircraft_type: globally, ...restSpawn } = spawn;
+  const next: SpecDict = { ...spec, env: restEnv, spawn: restSpawn };
+  if (!earlier) return next;
+  let types: any = globally ?? null;
+  if (types === null) {
+    const list: string[] = (allowed ?? ["B744"]).map((t: string) => t.toUpperCase());
+    types = list.length === 1 ? list[0] : list.length ? { type: "categorical", weights: Object.fromEntries(list.map((t) => [t, 1])) } : null;
+  }
+  if (types === null) return next;
+  const fill = (entries: SpecDict[] | undefined) =>
+    (entries ?? []).map((e) => (e && (e.aircraft_type ?? null) === null ? { ...e, aircraft_type: JSON.parse(JSON.stringify(types)) } : e));
+  next.spawn = { ...restSpawn, regions: fill(restSpawn.regions), ...(restSpawn.sources ? { sources: fill(restSpawn.sources) } : {}) };
+  return next;
 };

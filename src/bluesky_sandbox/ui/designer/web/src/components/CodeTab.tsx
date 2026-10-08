@@ -711,8 +711,8 @@ export default function CodeTab({
               </button>
             </dd>
             <dt>aircraft</dt>
-            <dd title={validation.summary.allowed_aircraft.join(", ")}>
-              {validation.summary.allowed_aircraft.length} types
+            <dd title={validation.summary.aircraft_types.join(", ")}>
+              {validation.summary.aircraft_types.length} types, from the spawn regions
             </dd>
             <dt>queryables</dt>
             <dd>{validation.summary.queryables.join(", ") || "none"}</dd>

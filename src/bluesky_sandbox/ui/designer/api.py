@@ -92,11 +92,24 @@ def _spec_summary(spec: DesignSpec) -> dict[str, Any]:
             f.meta.name for f in cfg.intruder_state_fields or ()
         ],
         "action_fields": [f.meta.name for f in cfg.action_fields],
-        "allowed_aircraft": list(cfg.allowed_aircraft),
+        # Every type the spawn regions name.
+        "aircraft_types": sorted({
+            str(t).upper()
+            for region in support.spawn.regions
+            for t in _type_names(region.aircraft_type)
+        }),
         "max_aircraft": spec_max_aircraft(spec),
         "has_airspace": support.airspace_bounds is not None,
         "queryables": list(support.queryables),
     }
+
+
+def _type_names(types: Any) -> list[str]:
+    if types is None:
+        return []
+    if isinstance(types, str):
+        return [types]
+    return list(getattr(types, "weights", {}) or [])
 
 
 def spec_max_aircraft(spec: DesignSpec) -> int:
