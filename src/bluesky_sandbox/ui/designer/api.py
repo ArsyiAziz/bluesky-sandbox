@@ -39,6 +39,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from bluesky_sandbox import __version__
+
 from . import catalog as _catalog
 from . import codegen as _codegen
 from . import nav as _nav
@@ -164,7 +166,7 @@ def create_app() -> FastAPI:
     # ----------------------------------------------------------------- health
     @app.get("/api/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "version": __version__}
 
     @app.post("/api/refresh")
     def refresh() -> dict[str, bool]:

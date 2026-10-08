@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type SpecDict, type ValidateResult } from "./api";
 import { forgetModuleMembers, useCodeIntel } from "./code/pythonEditor";
 import { DEFAULT_SPEC } from "./defaultSpec";
@@ -13,7 +13,10 @@ import { RefreshContext } from "./refresh";
 import { EpisodeContext, useEpisodeState } from "./episode";
 import MetadataTab from "./components/MetadataTab";
 import RunModal from "./components/RunModal";
+import AboutModal from "./components/AboutModal";
 import { Picker } from "./components/panel/Picker";
+import brandMark from "@brand/bluesky-sandbox-icon-small.svg";
+import { setThemePreference, type ThemePreference, useTheme } from "./theme";
 
 type Tab = "map" | "route" | "spaces" | "config" | "code" | "metadata";
 
@@ -21,13 +24,44 @@ const normalizeSpec = (spec: SpecDict): SpecDict =>
   migrateRotationGroups(migrateRewardHooks(normalizeToRegions(spec)));
 
 const IMPORT_JSON_VALUE = "__import_json__";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "map", label: "Map" },
-  { id: "route", label: "Route" },
-  { id: "spaces", label: "Spaces" },
-  { id: "config", label: "Config" },
-  { id: "code", label: "Code" },
-  { id: "metadata", label: "Metadata" },
+// Each tab: its label, what it is for (its tooltip), and its icon's path (24px).
+const TABS: { id: Tab; label: string; hint: string; icon: string }[] = [
+  {
+    id: "map",
+    label: "Map",
+    hint: "The airspace, regions, waypoints and spawns, on the map",
+    icon: "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Zm0 2.2 6 2v11.6l-6-2V6.2Z",
+  },
+  {
+    id: "route",
+    label: "Route",
+    hint: "The routes aircraft fly, leg by leg",
+    icon: "M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm12 12a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM9 6h7a3 3 0 0 1 0 6H8a3 3 0 0 0 0 6h7v-2H8a1 1 0 0 1 0-2h8a5 5 0 0 0 0-10H9v2Z",
+  },
+  {
+    id: "spaces",
+    label: "Spaces",
+    hint: "What the policy observes and what it does: the observation and action spaces",
+    icon: "M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z",
+  },
+  {
+    id: "config",
+    label: "Config",
+    hint: "How the simulator runs: timing, aircraft, conflict detection, wind",
+    icon: "M4 6h10v2H4V6Zm14 0h2v2h-2v2h-2V4h2v2ZM4 16h4v2H4v-2Zm8 0h8v2h-8v-2Zm-2-2h2v6h-2v-6Zm-6-5h8v2H4V9Zm12 0h4v2h-4V9Z",
+  },
+  {
+    id: "code",
+    label: "Code",
+    hint: "The design's code: hooks, task info, custom fields, and the spec itself",
+    icon: "m8.6 16.6-4.6-4.6 4.6-4.6L7.2 6 1.2 12l6 6 1.4-1.4Zm6.8 0 4.6-4.6-4.6-4.6L16.8 6l6 6-6 6-1.4-1.4Z",
+  },
+  {
+    id: "metadata",
+    label: "Metadata",
+    hint: "The design's name, description and notes",
+    icon: "M6 2h9l5 5v15H6V2Zm8 1.5V8h4.5L14 3.5ZM8 12v2h8v-2H8Zm0 4v2h8v-2H8Z",
+  },
 ];
 const NEW_PROJECT_VALUE = "__new_project__";
 const DELETE_PROJECT_VALUE = "__delete_project__";
@@ -44,6 +78,8 @@ export default function App() {
   const [status, setStatus] = useState<string>("");
   const [generateOpen, setGenerateOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
+  // About opens from the brand, the status bar, or a link to #about.
+  const [aboutOpen, setAboutOpen] = useState(() => window.location.hash === "#about");
   const [refreshKey, setRefreshKey] = useState(0);
   const episode = useEpisodeState();
   const [refreshing, setRefreshing] = useState(false);
@@ -342,16 +378,32 @@ export default function App() {
     <RefreshContext.Provider value={refreshKey}>
     <EpisodeContext.Provider value={episode}>
     <div className="app">
+      <a className="skip-link" href="#design">
+        Skip to the design
+      </a>
       <header className="toolbar">
-        <strong className="brand">Environment Designer</strong>
-        <div className="tabs">
-          {TABS.map((t) => (
-            <button key={t.id} className={tab === t.id ? "tab active" : "tab"} onClick={() => setTab(t.id)}>
-              {t.label}
-            </button>
-          ))}
+        <div className="toolbar-main">
+        <button
+          type="button"
+          className="brand"
+          title="About BlueSky Sandbox"
+          aria-label="About BlueSky Sandbox"
+          onClick={() => setAboutOpen(true)}
+        >
+          <img className="brand-mark" src={brandMark} alt="" width={28} height={28} />
+          <span className="brand-text" aria-hidden="true">
+            <span className="brand-name">
+              <span className="brand-name-blue">BlueSky</span> Sandbox
+            </span>
+            <span className="brand-app">Environment Designer</span>
+          </span>
+        </button>
+        <nav className="tabs" aria-label="Design sections">
+          <TabList tab={tab} onSelect={setTab} />
+        </nav>
         </div>
-        <div className="undo-redo">
+        <div className="toolbar-tools">
+        <div className="undo-redo joined" role="group" aria-label="History">
           <button onClick={undo} disabled={!canUndo} title="Undo (⌘/Ctrl+Z)" aria-label="Undo">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               <path
@@ -370,28 +422,27 @@ export default function App() {
           </button>
         </div>
         <div className="spacer" />
-        <div className="toolbar-group">
+        <div className="toolbar-group" role="group" aria-label="Project">
+          <div className="joined project-save">
           <input
             className="name-input"
             value={saveName}
             onChange={(e) => setSaveName(e.target.value)}
             placeholder="untitled"
             title="Project name: the saved design's name and the generated package's"
-            aria-label="project name"
+            aria-label="Project name"
           />
           <button onClick={onSave} disabled={!spec} title="Save (⌘/Ctrl+S)">
             Save
           </button>
-          <Picker className="load-select" placeholder="Project…" onChange={onLoad} options={loadOptions} />
-          <input
-            ref={importInputRef}
-            className="hidden-file-input"
-            type="file"
-            accept="application/json,.json"
-            onChange={(e) => {
-              onImportFile(e.currentTarget.files?.[0] ?? null);
-              e.currentTarget.value = "";
-            }}
+          </div>
+          <div className="joined project-open">
+          <Picker
+            className="load-select"
+            placeholder="Project…"
+            ariaLabel="Open, import or delete a project"
+            onChange={onLoad}
+            options={loadOptions}
           />
           <button
             className="icon-btn"
@@ -407,23 +458,48 @@ export default function App() {
               />
             </svg>
           </button>
+          </div>
+          <input
+            ref={importInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="application/json,.json"
+            onChange={(e) => {
+              onImportFile(e.currentTarget.files?.[0] ?? null);
+              e.currentTarget.value = "";
+            }}
+          />
         </div>
-        <span className="toolbar-divider" />
-        <button
-          className="run-btn"
-          onClick={() => setRunOpen(true)}
-          disabled={!spec || !validation?.ok}
-          title="launch the design in a real driver window"
-        >
-          ▶ Run
-        </button>
-        <button className="generate-btn" onClick={() => setGenerateOpen(true)} disabled={!spec || !validation?.ok}>
-          Generate task
-        </button>
-        <ValidationBadge validation={validation} />
+        <span className="toolbar-divider" aria-hidden="true" />
+        <div className="toolbar-actions" role="group" aria-label="Design">
+          <button
+            className="run-btn"
+            onClick={() => setRunOpen(true)}
+            disabled={!spec || !validation?.ok}
+            title="Launch the design in a real driver window"
+          >
+            <span aria-hidden="true">▶</span> Run
+          </button>
+          <button
+            className="generate-btn"
+            onClick={() => setGenerateOpen(true)}
+            disabled={!spec || !validation?.ok}
+            title="Generate the design as a task package"
+          >
+            Generate<span className="generate-more"> task</span>
+          </button>
+          <ValidationBadge validation={validation} />
+        </div>
+        </div>
       </header>
 
-      <main className="content">
+      <main
+        id="design"
+        className="content"
+        role="tabpanel"
+        aria-labelledby={`tab-${tab}`}
+        tabIndex={-1}
+      >
         {tab === "map" ? (
           <MapTab spec={spec} onSpecChange={updateSpec} />
         ) : tab === "route" ? (
@@ -453,10 +529,12 @@ export default function App() {
       <footer className={validation && !validation.ok ? "statusbar invalid" : "statusbar"}>
         {validation && !validation.ok ? (
           <span className="invalid-reason" title={validation.error}>
-            ⚠ {validation.error}
+            <span aria-hidden="true">⚠</span> {validation.error}
           </span>
         ) : (
-          <span>{status}</span>
+          <span role="status" aria-live="polite">
+            {status}
+          </span>
         )}
         <span className="spacer" />
         {validation?.ok && validation.summary && (
@@ -467,6 +545,10 @@ export default function App() {
             {validation.summary.queryables.length}
           </span>
         )}
+        <button type="button" className="statusbar-btn" onClick={() => setAboutOpen(true)}>
+          About
+        </button>
+        <ThemeSwitch />
       </footer>
 
       {generateOpen && spec && (
@@ -478,18 +560,125 @@ export default function App() {
         />
       )}
       {runOpen && spec && <RunModal spec={spec} onClose={() => setRunOpen(false)} />}
+      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
     </div>
     </EpisodeContext.Provider>
     </RefreshContext.Provider>
   );
 }
 
+// The design sections as tabs. Arrow keys (and Home / End) move between them,
+// Enter or Space opens one - a tab builds its whole view, so focus alone does
+// not switch it - and Tab leaves the list for the toolbar.
+function TabList({ tab, onSelect }: { tab: Tab; onSelect: (tab: Tab) => void }) {
+  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [focused, setFocused] = useState<Tab>(tab);
+  useEffect(() => setFocused(tab), [tab]);
+  const move = (to: number) => {
+    const next = TABS[(to + TABS.length) % TABS.length].id;
+    setFocused(next);
+    refs.current[next]?.focus();
+  };
+  const onKeyDown = (e: ReactKeyboardEvent) => {
+    const at = TABS.findIndex((t) => t.id === focused);
+    const keys: Record<string, () => void> = {
+      ArrowRight: () => move(at + 1),
+      ArrowLeft: () => move(at - 1),
+      Home: () => move(0),
+      End: () => move(TABS.length - 1),
+    };
+    if (keys[e.key]) {
+      e.preventDefault();
+      keys[e.key]();
+    }
+  };
+  return (
+    <div role="tablist" aria-label="Design sections" onKeyDown={onKeyDown}>
+      {TABS.map((t) => (
+        <button
+          key={t.id}
+          id={`tab-${t.id}`}
+          ref={(el) => (refs.current[t.id] = el)}
+          role="tab"
+          type="button"
+          aria-selected={tab === t.id}
+          aria-controls="design"
+          tabIndex={t.id === focused ? 0 : -1}
+          className={tab === t.id ? "tab active" : "tab"}
+          title={t.hint}
+          onClick={() => onSelect(t.id)}
+          onFocus={() => setFocused(t.id)}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path fill="currentColor" d={t.icon} />
+          </svg>
+          <span className="tab-label">{t.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Light, dark, or the system's: three buttons, one pressed.
+const THEMES: { id: ThemePreference; label: string; icon: string }[] = [
+  {
+    id: "light",
+    label: "Light theme",
+    icon: "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10ZM11 1h2v3h-2V1Zm0 19h2v3h-2v-3ZM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1Zm13.4 13.4 1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1ZM1 11h3v2H1v-2Zm19 0h3v2h-3v-2ZM3.5 19.1l2.1-2.1 1.4 1.4-2.1 2.1-1.4-1.4ZM16.9 5.6 19 3.5l1.4 1.4-2.1 2.1-1.4-1.4Z",
+  },
+  {
+    id: "dark",
+    label: "Dark theme",
+    icon: "M21 14.5A8.5 8.5 0 0 1 9.5 3a8.5 8.5 0 1 0 11.5 11.5Z",
+  },
+  {
+    id: "system",
+    label: "Theme of the system",
+    icon: "M3 4h18v12H3V4Zm2 2v8h14V6H5Zm3 12h8v2H8v-2Z",
+  },
+];
+
+function ThemeSwitch() {
+  const { preference } = useTheme();
+  return (
+    <div className="theme-switch" role="group" aria-label="Theme">
+      {THEMES.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          className={preference === t.id ? "on" : ""}
+          aria-pressed={preference === t.id}
+          aria-label={t.label}
+          title={t.label}
+          onClick={() => setThemePreference(t.id)}
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path fill="currentColor" d={t.icon} />
+          </svg>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Whether the design builds: a word and a sign, not color alone.
 function ValidationBadge({ validation }: { validation: ValidateResult | null }) {
-  if (!validation) return <span className="badge pending">…</span>;
-  if (validation.ok) return <span className="badge ok">valid</span>;
+  if (!validation)
+    return (
+      <span className="badge pending" title="Checking the design…">
+        <span aria-hidden="true">…</span>
+        <span className="visually-hidden">Checking the design</span>
+      </span>
+    );
+  if (validation.ok)
+    return (
+      <span className="badge ok" title="The design builds">
+        <span aria-hidden="true">✓</span> Valid
+      </span>
+    );
   return (
     <span className="badge error" title={validation.error}>
-      invalid
+      <span aria-hidden="true">⚠</span> Invalid
     </span>
   );
 }
