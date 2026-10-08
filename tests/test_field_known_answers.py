@@ -5,28 +5,28 @@ its ``_expected_pair`` states; they cannot tell whether that statement is what
 the field is FOR - a wrong sign convention or frame would be written the same
 way in both. These pin the meaning on setups simple enough to solve on paper.
 
-Aircraft sit on the equator, where one arcminute of longitude is close to one
-nautical mile (10' is 10.018 nm on WGS-84, 10.006 nm on the flat-earth
-conflict geometry's mean radius), so the tolerance is 1%: these check units,
-signs and frames, not rounding. Speeds, tracks and vertical speeds are written
-straight into BlueSky's arrays so each encounter is exactly as described.
+Each encounter is a situation (:mod:`bluesky_sandbox.checks`): the ownship on
+the equator, the intruder placed by distance and bearing from it, every speed,
+track and vertical speed set exactly as described. The tolerance is 1%: these
+check units, signs and frames, not rounding (the conflict geometry is
+flat-earth, the placement great-circle).
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import bluesky as bs
 import pytest
 from bluesky.tools.aero import ft, kts, nm
 
+from bluesky_sandbox.checks import Aircraft, Case, Situation, Tolerance, place, run_cases
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import observations as obs
 from bluesky_sandbox.sim.scenario import EpisodeSpec
 from bluesky_sandbox.sim.spawn import SpawnConfig
-
-_TEN_NM = 10 / 60  # degrees of longitude at the equator
 
 
 class _Empty:
@@ -51,31 +51,37 @@ def env():
     env.close()
 
 
-def _place(acid, lat, lon, track, gs_kts, alt_ft=10_000.0, vs_fpm=0.0) -> int:
-    assert bs.traf.cre(acid, "B744", lat, lon, track, alt_ft * ft, 250) is True
-    idx = bs.traf.id.index(acid)
-    bs.traf.trk[idx] = bs.traf.hdg[idx] = track
-    bs.traf.gs[idx] = bs.traf.tas[idx] = gs_kts * kts
-    bs.traf.alt[idx] = alt_ft * ft
-    bs.traf.vs[idx] = vs_fpm * ft / 60.0
-    return idx
+_OWN = Aircraft("OWN", lat=0.0, lon=0.0, track_deg=90.0, gs_kts=250.0, alt_ft=10_000.0, actype="B744")
+
+
+def _own(env, **state) -> int:
+    """Only the ownship, flying east at 250 kts - as changed by ``state``."""
+    return place(env, Situation("ownship", (dataclasses.replace(_OWN, **state),)))["OWN"]
+
+
+def _intruder(**state) -> Aircraft:
+    return Aircraft("INTR", relative_to="OWN", **{"gs_kts": 250.0, "alt_ft": 10_000.0, "actype": "B744", **state})
 
 
 # Each encounter: the ownship at the origin flying east at 250 kts, and an
-# intruder placed and moving as named. Fresh callsigns per encounter, so the
-# per-step conflict geometry (cached by aircraft set) is computed anew.
-_ENCOUNTERS = {
-    # Intruder 10 nm dead ahead, flying straight at the ownship at 250 kts.
-    "head-on": dict(lat=0.0, lon=_TEN_NM, track=270.0),
-    # Intruder 10 nm north, flying alongside: nothing changes, ever.
-    "abeam": dict(lat=_TEN_NM, lon=0.0, track=90.0),
-    # Intruder 10 nm north, flying south across the ownship's path.
-    "crossing": dict(lat=_TEN_NM, lon=0.0, track=180.0),
-    # Head-on, but 1000 ft above and descending 500 ft/min.
-    "head-on, descending": dict(
-        lat=0.0, lon=_TEN_NM, track=270.0, alt_ft=11_000.0, vs_fpm=-500.0
-    ),
+# intruder placed and moving as named.
+_SITUATIONS = {
+    s.name: s
+    for s in (
+        # Intruder 10 nm dead ahead, flying straight at the ownship at 250 kts.
+        Situation("head-on", (_OWN, _intruder(distance_nm=10, bearing_deg=90, track_deg=270))),
+        # Intruder 10 nm north, flying alongside: nothing changes, ever.
+        Situation("abeam", (_OWN, _intruder(distance_nm=10, bearing_deg=0, track_deg=90))),
+        # Intruder 10 nm north, flying south across the ownship's path.
+        Situation("crossing", (_OWN, _intruder(distance_nm=10, bearing_deg=0, track_deg=180))),
+        # Head-on, but 1000 ft above and descending 500 ft/min.
+        Situation(
+            "head-on, descending",
+            (_OWN, _intruder(distance_nm=10, bearing_deg=90, track_deg=270, alt_ft=11_000, vs_fpm=-500)),
+        ),
+    )
 }
+_CLOSE = Tolerance(abs=1e-6, rel=1e-2)
 
 # Crossing, by hand: relative position (east, north) = (0, 10) nm, relative
 # velocity = (-250, -250) kts. tcpa = 2500 / 125000 h = 72 s, at which the
@@ -130,22 +136,17 @@ _CASES = [
     ids=[f"{e}-{type(f).__name__}" for e, f, _x in _CASES],
 )
 def test_a_hand_worked_encounter(env, encounter, field, expected):
-    env.reset(seed=0)
-    tag = f"{list(_ENCOUNTERS).index(encounter):02d}"
-    own = _place(f"OWN{tag}", 0.0, 0.0, 90.0, 250.0)
-    other = _place(f"INTR{tag}", gs_kts=250.0, **_ENCOUNTERS[encounter])
-    got = float(field.get_pairs(own, [other])[0])
-    assert got == pytest.approx(expected, rel=1e-2, abs=1e-6)
+    run_cases(env, _SITUATIONS.values(), [Case(encounter, field, expected, _CLOSE, of="INTR")]).assert_ok()
     # The field's own plain statement of the value agrees with the hand answer.
-    assert float(field._expected_pair(own, other)) == pytest.approx(
+    at = place(env, _SITUATIONS[encounter])
+    assert float(field._expected_pair(at["OWN"], at["INTR"])) == pytest.approx(
         expected, rel=1e-2, abs=1e-6
     )
 
 
 def test_turn_radius_at_the_bank_limit(env):
     # r = v^2 / (g tan(bank)): 250 kts at 25 degrees of bank is 1.95 nm.
-    env.reset(seed=0)
-    idx = _place("OWN", 0.0, 0.0, 90.0, 250.0)
+    idx = _own(env)
     bs.traf.ap.bankdef[idx] = math.radians(25.0)
     expected = (250 * kts) ** 2 / (9.80665 * math.tan(math.radians(25.0))) / nm
     assert expected == pytest.approx(1.953, abs=1e-3)
@@ -156,14 +157,10 @@ def test_a_reset_does_not_serve_the_last_episodes_geometry(env):
     # Same callsigns at the same sim time (0, after each reset) - the one thing
     # the geometry cache's key cannot tell apart - in different places.
     field = obs.InConf(rpz_nm=5.0, vpz_ft=1000.0)
-    env.reset(seed=0)
-    own = _place("OWN", 0.0, 0.0, 90.0, 250.0)
-    other = _place("INTR", gs_kts=250.0, **_ENCOUNTERS["head-on"])
-    assert float(field.get_pairs(own, [other])[0]) == 1.0
-    env.reset(seed=0)
-    own = _place("OWN", 0.0, 0.0, 90.0, 250.0)
-    other = _place("INTR", gs_kts=250.0, **_ENCOUNTERS["abeam"])
-    assert float(field.get_pairs(own, [other])[0]) == 0.0
+    at = place(env, _SITUATIONS["head-on"])
+    assert float(field.get_pairs(at["OWN"], [at["INTR"]])[0]) == 1.0
+    at = place(env, _SITUATIONS["abeam"])
+    assert float(field.get_pairs(at["OWN"], [at["INTR"]])[0]) == 0.0
 
 
 # --- units --------------------------------------------------------------------
@@ -196,8 +193,7 @@ def test_the_conversion_constants_are_the_unit_definitions():
     ids=[f"{u.__name__}-{s.__name__}" for u, s, _f in _UNIT_PAIRS],
 )
 def test_a_unit_variant_is_its_si_twin_converted(env, in_unit, in_si, factor):
-    env.reset(seed=0)
-    idx = _place("OWN", 0.0, 0.0, 90.0, 250.0, alt_ft=12_000.0, vs_fpm=-800.0)
+    idx = _own(env, alt_ft=12_000.0, vs_fpm=-800.0)
     bs.traf.selalt[idx] = 9_000.0 * ft
     bs.traf.selspd[idx] = 230.0 * kts
     unit, si = in_unit(), in_si()
@@ -207,8 +203,7 @@ def test_a_unit_variant_is_its_si_twin_converted(env, in_unit, in_si, factor):
 
 
 def test_the_speed_error_bounds_reach_either_end_of_the_envelope(env):
-    env.reset(seed=0)
-    idx = _place("OWN", 0.0, 0.0, 90.0, 250.0)
+    idx = _own(env)
     low, high = obs.ApCasErrorKts().bounds(idx)
     cas = float(bs.traf.cas[idx]) / kts
     vmin, vmax = (
