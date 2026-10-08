@@ -15,12 +15,7 @@ from bluesky_sandbox.core.base_environment import (
     overridable,
 )
 from bluesky_sandbox.core.batch import StepBatch
-from bluesky_sandbox.interface.fields.base import (
-    ActionField,
-    EnvObsField,
-    ObsField,
-    PairObsField,
-)
+from bluesky_sandbox.interface.fields.base import EnvObsField, ObsField
 from bluesky_sandbox.interface.task import (
     AgentStepContext,
     AircraftReadouts,
@@ -114,18 +109,6 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         if any(not callable(provider) for provider in task_info_providers):
             raise ValueError("define_task_info_providers() must return callables.")
         self.config.task_info_providers.extend(task_info_providers)
-
-    @overridable
-    def define_obs_fields(self) -> Sequence[ObsField]:
-        raise NotImplementedError
-
-    @overridable
-    def define_intruder_obs_fields(self) -> Sequence[ObsField | PairObsField] | None:
-        return None
-
-    @overridable
-    def define_action_fields(self) -> Sequence[ActionField]:
-        return ()
 
     @overridable
     def define_task_info_providers(self) -> Sequence[TaskInfoProvider]:
