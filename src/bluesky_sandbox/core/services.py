@@ -149,6 +149,14 @@ def _normalize_field_values_batch(field, values, idx: int) -> np.ndarray:
 
 
 def _denormalize_action_value(field, values, idx: int):
+    """The value ``field`` is set to: the policy's values through its
+    normalizer, then on its grid."""
+    value = _denormalized(field, values, idx)
+    grid = getattr(field, "grid", None)
+    return value if grid is None else grid.apply(field, value, idx)
+
+
+def _denormalized(field, values, idx: int):
     values = np.asarray(values, dtype=np.float32).reshape(-1)
     normalizer = _field_normalizer(field)
     if normalizer is None:

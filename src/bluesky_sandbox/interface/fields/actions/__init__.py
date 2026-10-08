@@ -14,6 +14,7 @@ from ..base import (
     SwitchActionMixin,
     Unit,
 )
+from ..grid import Grid
 from .autopilot import (
     ApAltDeltaFt,
     ApAltDeltaM,
@@ -61,6 +62,7 @@ __all__ = [
     "ControlAxis",
     "SwitchActionMixin",
     "Unit",
+    "Grid",
     "HdgDeg",
     "HdgDeltaDeg",
     "ApHdgDeltaDeg",

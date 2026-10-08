@@ -78,6 +78,7 @@ def test_expanding_twice_changes_nothing():
         ),
         ({"duration_from": "captured"}, ValueError, "counted from capture needs"),
         ({"duration": (0, 60), "duration_from": "later"}, ValueError, "must be"),
+        ({"duration_grid": act.Grid(30.0)}, ValueError, "duration_grid needs a duration"),
     ],
     ids=[
         "lock without duration",
@@ -87,11 +88,25 @@ def test_expanding_twice_changes_nothing():
         "normalizer without duration",
         "captured without duration",
         "unknown start",
+        "grid without duration",
     ],
 )
 def test_a_clearance_that_cannot_be_made_is_refused(kwargs, error, match):
     with pytest.raises(error, match=match):
         act.Clearance(act.HdgDeg(), **kwargs)
+
+
+def test_a_clearance_puts_its_duration_on_its_grid():
+    from bluesky_sandbox.core.services import _denormalize_action_value
+
+    clearance = act.Clearance(act.HdgDeg(), duration=(0, 600), duration_grid=act.Grid(30.0))
+    _, duration, _ = clearance.action_fields()
+    assert duration.grid == act.Grid(30.0)
+    assert [_denormalize_action_value(duration, [s], 0) for s in (14.0, 16.0, 599.0)] == [
+        0.0,
+        30.0,
+        600.0,
+    ]
 
 
 def test_a_clearance_wraps_an_action_and_only_one():

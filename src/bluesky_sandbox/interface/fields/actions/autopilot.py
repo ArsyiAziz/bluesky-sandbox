@@ -19,9 +19,9 @@ from ..base import (
     Unit,
 )
 from ._targets import (
-    _FMT,
     _CrossoverSpeedAxis,
     _DeltaTarget,
+    _HeadingTarget,
 )
 from .kinematics import AltDeltaFt, AltDeltaM, SpdDeltaKts
 
@@ -36,7 +36,9 @@ class _AutopilotSwitch(SwitchActionMixin, ActionField):
 
     A command goes to BlueSky only when the mode changes: turning a mode off
     also resets the selections it hands back to (see ``capture_off_reference``),
-    which repeated every step would undo the other actions' targets.
+    which repeated every step would undo the other actions' targets. Turning it
+    on is a change until the mode is FULLY engaged (:meth:`fully_on`): VNAV with
+    a cleared speed holding has its speed guidance off, and a resume restores it.
     """
 
     switch_names: ClassVar[tuple[str, ...]] = ()
@@ -55,9 +57,13 @@ class _AutopilotSwitch(SwitchActionMixin, ActionField):
     def capture_off_reference(self, idx: int) -> None:
         return None
 
+    def fully_on(self, idx: int) -> bool:
+        """Whether every part of the mode is engaged - nothing to turn on."""
+        return self.current_switch_state(idx)
+
     def set(self, idx: int, value: float) -> None:
         command = self.switch_command(value)
-        if command == self.current_switch_state(idx):
+        if self.fully_on(idx) if command else not self.current_switch_state(idx):
             return
         acid = bs.traf.id[idx]
         if not command:
@@ -104,6 +110,10 @@ class AutopilotVnav(_AutopilotSwitch):
     def current_switch_state(self, idx: int) -> bool:
         return bool(bs.traf.swvnav[idx])
 
+    def fully_on(self, idx: int) -> bool:
+        # A speed clearance turns VNAV's speed guidance off, VNAV still on.
+        return bool(bs.traf.swvnav[idx]) and bool(bs.traf.swvnavspd[idx])
+
     def capture_off_reference(self, idx: int) -> None:
         self.capture_vnav_reference(idx)
 
@@ -128,13 +138,17 @@ class AutopilotLnavVnav(_AutopilotSwitch):
     def current_switch_state(self, idx: int) -> bool:
         return bool(bs.traf.swlnav[idx]) and bool(bs.traf.swvnav[idx])
 
+    def fully_on(self, idx: int) -> bool:
+        # A speed clearance turns VNAV's speed guidance off, LNAV and VNAV on.
+        return self.current_switch_state(idx) and bool(bs.traf.swvnavspd[idx])
+
     def capture_off_reference(self, idx: int) -> None:
         self.capture_lnav_reference(idx)
         self.capture_vnav_reference(idx)
 
 
 @dataclass(frozen=True)
-class ApHdgDeltaDeg(ActionField):
+class ApHdgDeltaDeg(_HeadingTarget):
     """Set autopilot selected heading relative to current track."""
 
     meta = ActionMeta(
@@ -153,9 +167,8 @@ class ApHdgDeltaDeg(ActionField):
         "autopilot heading offset degrees; None = full turn range",
     ] = None
 
-    def set(self, idx: int, value: float) -> None:
-        target = (bs.traf.trk[idx] + value) % 360.0
-        bs.stack.stack(f"HDG {bs.traf.id[idx]} {target:{_FMT}}")
+    def nominal(self, idx: int) -> float:
+        return float(bs.traf.trk[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._dynamic_or_configured_bounds(lambda: (-180.0, 180.0))

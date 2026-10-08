@@ -12,6 +12,8 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 import bluesky as bs
 import numpy as np
 
+from .grid import Grid
+
 ContextT = TypeVar("ContextT")
 
 
@@ -138,6 +140,12 @@ class ControlAxis(StrEnum):
     SPEED = "speed"
     ALTITUDE = "altitude"
     AUTOPILOT = "autopilot"
+
+    @property
+    def period(self) -> float | None:
+        """Where the axis wraps round to 0 - a heading's 360 deg - or None for
+        one that does not."""
+        return 360.0 if self is ControlAxis.HEADING else None
 
 
 class ActionMode(StrEnum):
@@ -753,13 +761,14 @@ class SwitchActionMixin(ABC):
 
     A binary action (:attr:`kind`): it sits in the ``binary`` part of the action
     space, which holds only 0 and 1, so its bounds are fixed at ``(0, 1)`` and
-    there is no normalizer.
+    there is no normalizer and no grid.
     """
 
     kind: ClassVar[ActionKind] = ActionKind.BINARY
     low: float = dataclass_field(default=0.0, init=False)
     high: float = dataclass_field(default=1.0, init=False)
     normalizer: Any | None = dataclass_field(default=None, init=False)
+    grid: Grid | None = dataclass_field(default=None, init=False)
 
     def _validate_switch_policy(self) -> None:
         if (self.low, self.high, self.normalizer) != (0.0, 1.0, None):
@@ -796,6 +805,17 @@ class ActionField(_BoundedField, ABC):
     #: The part of the action space this action is in.
     kind: ClassVar[ActionKind] = ActionKind.CONTINUOUS
 
+    #: Whole steps the value - or the target it commands - is put on, after
+    #: the normalizer: see :class:`~.grid.Grid`.
+    grid: Grid | None = None
+
+    def nominal(self, idx: int) -> float:
+        """What the action's value counts from for the aircraft at ``idx``, in
+        its own unit, so the target it commands is ``nominal + value``: for a
+        delta, the present value (or a waypoint's) it adds to; 0 for an
+        absolute action."""
+        return 0.0
+
     def reach(self, idx: int) -> tuple[float, float]:
         """The values this action can take for the aircraft at ``idx`` now, in
         its own unit: its bounds, unless they are narrower than what it can
@@ -826,6 +846,33 @@ class ActionField(_BoundedField, ABC):
                 "is not configured as a switch action."
             )
         self._validate_bound_policy(dynamic=self.meta.dynamic_bounds)
+        self._validate_grid()
+
+    def _validate_grid(self) -> None:
+        """A grid needs one value to put on it - and, on an axis that wraps
+        (a heading), one that goes round it evenly."""
+        grid = self.grid
+        if grid is None:
+            return
+        name = self.__class__.__name__
+        if not isinstance(grid, Grid):
+            raise TypeError(f"{name} grid must be a Grid or None, got {grid!r}.")
+        output_size = getattr(self, "output_size", None)
+        if callable(output_size) and int(output_size()) != 1:
+            raise ValueError(f"{name} takes {output_size()} values: no grid fits it.")
+        # A delta's change on its grid does not wrap; a value or a target on
+        # an axis that does must go round it in whole steps.
+        axis = self.meta.control_axis
+        period = None if axis is None else axis.period
+        snaps_the_axis = grid.on == "target" or self.meta.mode is not ActionMode.DELTA
+        if period and snaps_the_axis:
+            turns = period / grid.step
+            if abs(turns - round(turns)) > 1e-9:
+                raise ValueError(
+                    f"{name} grid of {grid.step:g} on the {axis} axis, which wraps "
+                    f"at {period:g}: it must divide {period:g}, or the values either "
+                    "side of the wrap are off it."
+                )
 
     @abstractmethod
     def set(self, idx: int, value: float) -> None:

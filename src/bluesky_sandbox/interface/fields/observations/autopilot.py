@@ -166,6 +166,25 @@ class ApLnavOn(_BroadcastObs, ObsField):
 
 
 @dataclass(frozen=True)
+class ApVnavOn(_BroadcastObs, ObsField):
+    """Whether VNAV is enabled: the aircraft flies its route's levels, rather
+    than an altitude it was given."""
+
+    meta = ObsMeta("ap_vnav_on", Unit.SWITCH, ObsQuantity.AUTOPILOT)
+    low: Annotated[float, "autopilot switch off"] = 0.0
+    high: Annotated[float, "autopilot switch on"] = 1.0
+
+    def _values(self, indices: Any) -> Any:
+        return np.asarray(bs.traf.swvnav[_indices_array(indices)], dtype=bool)
+
+    def _expected(self, idx: int) -> Any:
+        return float(bool(bs.traf.swvnav[idx]))
+
+    def bounds(self, idx: int) -> tuple[float, float]:
+        return self._configured_bounds()
+
+
+@dataclass(frozen=True)
 class ApLnavVnavOn(_BroadcastObs, ObsField):
     """Whether both LNAV and VNAV are enabled."""
 

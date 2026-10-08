@@ -98,8 +98,9 @@ def test_one_turns_a_mode_on_and_zero_turns_it_off(aircraft, sent):
 @pytest.mark.parametrize(("state", "value"), [(False, 0.0), (True, 1.0)])
 def test_a_mode_already_in_that_state_is_not_commanded(aircraft, sent, state, value):
     # VNAV OFF resets the selected speed and altitude; sent every step, it
-    # would undo the targets the other actions set.
-    bs.traf.swvnav[aircraft] = state
+    # would undo the targets the other actions set. On is VNAV with its speed
+    # guidance: fully engaged.
+    bs.traf.swvnav[aircraft] = bs.traf.swvnavspd[aircraft] = state
     act.AutopilotVnav().set(aircraft, value)
     assert sent == []
 

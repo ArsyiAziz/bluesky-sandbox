@@ -10,18 +10,18 @@ from typing import Annotated
 import bluesky as bs
 
 from .._common import _InFeet, _InKnots, _InMeters, _InMetersPerSecond
-from ..base import ActionField, ActionMeta, ActionMode, ControlAxis, Unit
+from ..base import ActionMeta, ActionMode, ControlAxis, Unit
 from ._targets import (
-    _FMT,
     _AbsoluteTarget,
     _AltitudeAxis,
     _DeltaTarget,
+    _HeadingTarget,
     _SpeedAxis,
 )
 
 
 @dataclass(frozen=True)
-class HdgDeg(ActionField):
+class HdgDeg(_HeadingTarget):
     """Set target heading in degrees."""
 
     meta = ActionMeta(
@@ -33,15 +33,12 @@ class HdgDeg(ActionField):
     low: Annotated[float, "heading degrees"] = 0.0
     high: Annotated[float, "heading degrees"] = 360.0
 
-    def set(self, idx: int, value: float) -> None:
-        bs.stack.stack(f"HDG {bs.traf.id[idx]} {value:{_FMT}}")
-
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()
 
 
 @dataclass(frozen=True)
-class HdgDeltaDeg(ActionField):
+class HdgDeltaDeg(_HeadingTarget):
     """Adjust heading by a delta in degrees."""
 
     meta = ActionMeta(
@@ -53,10 +50,8 @@ class HdgDeltaDeg(ActionField):
     low: Annotated[float, "heading delta degrees"] = -180.0
     high: Annotated[float, "heading delta degrees"] = 180.0
 
-    def set(self, idx: int, value: float) -> None:
-        bs.stack.stack(
-            f"HDG {bs.traf.id[idx]} {(bs.traf.hdg[idx] + value) % 360.0:{_FMT}}"
-        )
+    def nominal(self, idx: int) -> float:
+        return float(bs.traf.hdg[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()

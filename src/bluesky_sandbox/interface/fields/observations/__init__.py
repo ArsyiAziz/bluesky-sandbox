@@ -32,6 +32,7 @@ from .autopilot import (
     ApHdgErrorDeg,
     ApLnavOn,
     ApLnavVnavOn,
+    ApVnavOn,
 )
 from .comm import (
     IntruderCommMessage,
@@ -187,6 +188,7 @@ __all__ = [
     "ApAltM",
     "ApLnavOn",
     "ApLnavVnavOn",
+    "ApVnavOn",
     "ApHdgErrorDeg",
     "ApCasErrorKts",
     "ApAltErrorFt",

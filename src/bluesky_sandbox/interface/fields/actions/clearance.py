@@ -7,7 +7,8 @@ One :class:`Clearance` per action declares everything that makes it one, and
 * the action itself - its value;
 * an :class:`~.mask.ActionMask` - the policy says nothing unless it clears it,
   and the aircraft flies on what it was last given;
-* with ``duration``, a :class:`~.mask.ClearanceDuration` - how long it lasts,
+* with ``duration``, a :class:`~.mask.ClearanceDuration` - how long it lasts
+  (scaled by ``duration_normalizer``, on ``duration_grid``),
   after which own navigation takes the axis back; counted from when it is given,
   or - ``duration_from="captured"`` - from when the aircraft has flown it, so
   every clearance is flown in full and then held;
@@ -36,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ..base import ActionField
+from ..grid import Grid
 from .mask import ActionMask, ClearanceDuration
 
 __all__ = ["Clearance", "expand_clearances"]
@@ -49,8 +51,9 @@ class Clearance:
     """``action`` as a clearance: given when the policy decides, held for
     ``duration`` seconds (a ``(low, high)`` range the policy chooses in; ``None``
     - until changed or resumed), with its axis locked per ``lock``.
-    ``duration_normalizer`` scales the duration in the action space, as any
-    action's normalizer does. ``duration_from`` is when the duration starts:
+    ``duration_normalizer`` scales the duration in the action space, and
+    ``duration_grid`` puts it on whole steps (``Grid(30)``: 30, 60, 90 s ...),
+    as any action's normalizer and grid do. ``duration_from`` is when the duration starts:
     when the clearance is given (``"issued"``), or once the aircraft has
     captured it (``"captured"``) - the duration is then the hold after it."""
 
@@ -59,6 +62,7 @@ class Clearance:
     lock: Lock | None = None
     duration_normalizer: Any | None = None
     duration_from: DurationFrom = "issued"
+    duration_grid: Grid | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.action, ActionField) or isinstance(
@@ -83,6 +87,8 @@ class Clearance:
             raise ValueError("a Clearance locked for its duration needs a duration.")
         if self.duration_normalizer is not None and self.duration is None:
             raise ValueError("a Clearance's duration_normalizer needs a duration.")
+        if self.duration_grid is not None and self.duration is None:
+            raise ValueError("a Clearance's duration_grid needs a duration.")
         if self.duration_from not in ("issued", "captured"):
             raise ValueError(
                 f"Clearance duration_from must be 'issued' or 'captured', got "
@@ -106,6 +112,7 @@ class Clearance:
                     low=low,
                     high=high,
                     normalizer=self.duration_normalizer,
+                    grid=self.duration_grid,
                     from_capture=self.duration_from == "captured",
                 )
             )

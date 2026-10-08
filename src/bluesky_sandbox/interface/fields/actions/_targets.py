@@ -1,18 +1,23 @@
-"""What the speed and altitude actions are built from.
+"""What the heading, speed and altitude actions are built from.
 
 An action commanding a speed or an altitude is an axis (:class:`_SpeedAxis`,
 :class:`_AltitudeAxis`, ...), which works in SI, plus a unit mixin and a kind:
 absolute (:class:`_AbsoluteTarget`) or a delta from a nominal
-(:class:`_DeltaTarget`).
+(:class:`_DeltaTarget`). One commanding a heading is a :class:`_HeadingTarget`.
+
+Whole steps - flight levels, turns in 10 deg - are not theirs: any action takes
+a :class:`~bluesky_sandbox.interface.fields.grid.Grid`, applied to its value
+before :meth:`set`. What an action gives the grid is its ``nominal`` and its
+``reach``.
 """
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Annotated, ClassVar
 
 import bluesky as bs
+import numpy as np
 from bluesky.tools.aero import kts
 
 from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms as _cas_ceiling_ms
@@ -65,13 +70,6 @@ class _TargetAction(ActionField):
     action is absolute or a delta. Where they leave nothing reachable - an
     aircraft already below the floor - the floor wins, so the command is never
     below it.
-
-    ``command_step`` puts the target on a grid, the way air traffic control
-    assigns them: flight levels (1,000 ft), speeds in 10 kt. A delta then
-    counts from the grid point nearest the nominal, so "+1,000 ft" from
-    23,344 ft is 24,000 ft - a level, not 24,344 ft. Paired with a
-    :class:`~bluesky_sandbox.interface.wrappers.observations.normalizer.StepNormalizer`
-    of the same step, every value an action takes is a whole number of levels.
     """
 
     _scale: ClassVar[float] = 1.0
@@ -83,19 +81,8 @@ class _TargetAction(ActionField):
         float | None,
         "highest target ever commanded, in this action's unit; None = none",
     ] = None
-    command_step: Annotated[
-        float | None,
-        "grid the target is put on, in this action's unit (e.g. 1000 ft: flight "
-        "levels); None = none",
-    ] = None
-
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.command_step is not None and not self.command_step > 0.0:
-            raise ValueError(
-                f"{type(self).__name__} command_step must be > 0.0 or None, got "
-                f"{self.command_step}"
-            )
         for name in ("command_floor", "command_ceiling"):
             value = getattr(self, name)
             if value is not None and value < 0.0:
@@ -115,6 +102,11 @@ class _TargetAction(ActionField):
     # --- the axis: SI, provided by _SpeedAxis / _AltitudeAxis ---------------
     def _envelope_si(self, idx: int) -> tuple[float, float]:
         raise NotImplementedError
+
+    def _held_si(self, idx: int) -> float | None:
+        """The target a clearance on this axis holds now, or ``None`` while the
+        aircraft flies its own (its navigation governs the axis)."""
+        return None
 
     def _current_si(self, idx: int) -> float:
         raise NotImplementedError
@@ -146,24 +138,34 @@ class _TargetAction(ActionField):
         """What a zero delta means: the current value, unless overridden."""
         return self._convert(self._current_si(idx))
 
-    def _snap(self, value: float) -> float:
-        """``value`` on the ``command_step`` grid (unchanged without one)."""
-        if self.command_step is None:
-            return float(value)
-        step = float(self.command_step)
-        return round(float(value) / step) * step
+    def held(self, idx: int) -> float | None:
+        """The target a clearance on this axis holds now, in this action's unit,
+        or ``None`` while the aircraft flies its own."""
+        si = self._held_si(idx)
+        return None if si is None else self._convert(si)
 
-    def _target(self, target: float, low: float, high: float) -> float:
-        """``target`` within ``[low, high]`` - on the grid point nearest it
-        that is, where the grid has one there."""
-        if self.command_step is None:
-            return _clip(target, low, high)
-        step = float(self.command_step)
-        grid_low = math.ceil(low / step - 1e-9) * step
-        grid_high = math.floor(high / step + 1e-9) * step
-        if grid_low > grid_high:  # no level fits: the nearest reachable value
-            return _clip(target, low, high)
-        return _clip(self._snap(target), grid_low, grid_high)
+    def targets(self, idx: int, values: np.ndarray) -> np.ndarray:
+        """The target each of ``values`` commands (``nominal + value``),
+        before the command limits."""
+        return self.nominal(idx) + np.asarray(values, dtype=np.float64)
+
+
+@dataclass(frozen=True)
+class _HeadingTarget(ActionField):
+    """An action that commands a heading: absolute, or a turn from a nominal."""
+
+    def held(self, idx: int) -> float | None:
+        """The track a heading clearance holds now, or ``None`` on LNAV."""
+        return None if bool(bs.traf.swlnav[idx]) else float(bs.traf.ap.trk[idx]) % 360.0
+
+    def targets(self, idx: int, values: np.ndarray) -> np.ndarray:
+        """The heading each of ``values`` commands."""
+        return (self.nominal(idx) + np.asarray(values, dtype=np.float64)) % 360.0
+
+    def set(self, idx: int, value: float) -> None:
+        """Command ``nominal + value``, round the circle."""
+        target = (self.nominal(idx) + float(value)) % 360.0
+        bs.stack.stack(f"HDG {bs.traf.id[idx]} {target:{_FMT}}")
 
 
 @dataclass(frozen=True)
@@ -172,7 +174,7 @@ class _AbsoluteTarget(_TargetAction):
 
     def set(self, idx: int, value: float) -> None:
         low, high = self.bounds(idx)
-        self._command(idx, self._target(value, low, high))
+        self._command(idx, _clip(value, low, high))
 
     def bounds(self, idx: int) -> tuple[float, float]:
         low, high = self._dynamic_or_configured_bounds(
@@ -183,24 +185,22 @@ class _AbsoluteTarget(_TargetAction):
 
 @dataclass(frozen=True)
 class _DeltaTarget(_TargetAction):
-    """The action value is added to a nominal (``_nominal``) to make the target
-    - with a ``command_step``, to the grid point nearest the nominal."""
+    """The action value is added to a nominal (``_nominal``) to make the target."""
 
-    def _anchor(self, idx: int) -> float:
-        """What the delta counts from: the nominal, on the grid if there is one."""
-        return self._snap(self._nominal(idx))
+    def nominal(self, idx: int) -> float:
+        return self._nominal(idx)
 
     def set(self, idx: int, value: float) -> None:
         low, high = self._commandable(idx)
-        self._command(idx, self._target(self._anchor(idx) + value, low, high))
+        self._command(idx, _clip(self._nominal(idx) + value, low, high))
 
     def reach(self, idx: int) -> tuple[float, float]:
         """Every delta that can be commanded now - asymmetric, unlike
         :meth:`bounds`: near its ceiling an aircraft can still descend all the
         way. Configured bounds still hold."""
         low, high = self._commandable(idx)
-        anchor = self._anchor(idx)
-        low, high = low - anchor, high - anchor
+        nominal = self._nominal(idx)
+        low, high = low - nominal, high - nominal
         if self.bounds_overridden:
             b_low, b_high = self.bounds(idx)
             low, high = max(low, b_low), min(high, b_high)
@@ -213,7 +213,7 @@ class _DeltaTarget(_TargetAction):
             # nominal. A nominal outside that - an aircraft above its ceiling or
             # below the floor - anchors at the nearest limit, and every value
             # commands that limit.
-            nominal = self._anchor(idx)
+            nominal = self._nominal(idx)
             low, high = self._commandable(idx)
             anchor = min(max(nominal, low), high)
             delta_low, delta_high = _reachable_delta(low, high, anchor)
@@ -233,6 +233,10 @@ class _SpeedAxis:
 
     def _current_si(self, idx: int) -> float:
         return float(bs.traf.cas[idx])
+
+    def _held_si(self, idx: int) -> float | None:
+        # A speed clearance turns VNAV's speed guidance off.
+        return None if bool(bs.traf.swvnavspd[idx]) else float(bs.traf.selspd[idx])
 
     def _command(self, idx: int, target: float) -> None:
         target_kts = target * (_MS_TO_KTS / self._scale)
@@ -259,6 +263,10 @@ class _AltitudeAxis:
 
     def _current_si(self, idx: int) -> float:
         return float(bs.traf.alt[idx])
+
+    def _held_si(self, idx: int) -> float | None:
+        # A level clearance turns VNAV off.
+        return None if bool(bs.traf.swvnav[idx]) else float(bs.traf.selalt[idx])
 
     def _command(self, idx: int, target: float) -> None:
         target_ft = target * (_M_TO_FT / self._scale)

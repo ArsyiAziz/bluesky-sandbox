@@ -47,6 +47,7 @@ import bluesky_sandbox.interface.fields.observations as observations
 from bluesky_sandbox.core import services
 from bluesky_sandbox.interface.fields import _lag, base
 from bluesky_sandbox.interface.fields.observations import transforms
+from bluesky_sandbox.sim import aircraft_uids
 from bluesky_sandbox.interface.fields.base import ActionField, ObsField, PairObsField
 from bluesky_sandbox.interface.wrappers.observations import normalizer as nz
 
@@ -863,6 +864,9 @@ def lag_clock(monkeypatch):
     clock = _Clock()
     monkeypatch.setattr(transforms, "bs", clock)
     monkeypatch.setattr(_lag, "bs", clock)  # the lag rows read the callsigns
+    # A stand-in for BlueSky: keyed by callsign, whatever tracker an earlier
+    # test's env left attached to the real traffic.
+    monkeypatch.setattr(aircraft_uids, "_ATTACHED", [])
     _Recorded.value, _Recorded.calls = 0.0, 0
     yield clock
     _lag._LAG_HISTORY.clear()

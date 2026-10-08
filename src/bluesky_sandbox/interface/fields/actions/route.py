@@ -14,19 +14,19 @@ from bluesky.tools.geo import kwikqdrdist
 
 from .._common import _InFeet, _InKnots
 from .._route import _active_route_waypoint
-from ..base import ActionField, ActionMeta, ActionMode, ControlAxis, Unit
+from ..base import ActionMeta, ActionMode, ControlAxis, Unit
 from ._targets import (
-    _FMT,
     _AltitudeAxis,
     _CrossoverSpeedAxis,
     _DeltaTarget,
     _FromRouteWaypoint,
+    _HeadingTarget,
     _SpeedAxis,
 )
 
 
 @dataclass(frozen=True)
-class ActiveRouteWaypointHdgDeltaDeg(ActionField):
+class ActiveRouteWaypointHdgDeltaDeg(_HeadingTarget):
     """Steer relative to the bearing toward the active route waypoint.
 
     Commands ``bearing_to_active_waypoint + value`` (degrees); ``value == 0``
@@ -43,7 +43,7 @@ class ActiveRouteWaypointHdgDeltaDeg(ActionField):
     low: Annotated[float, "heading delta degrees from waypoint bearing"] = -180.0
     high: Annotated[float, "heading delta degrees from waypoint bearing"] = 180.0
 
-    def set(self, idx: int, value: float) -> None:
+    def nominal(self, idx: int) -> float:
         wp = _active_route_waypoint(idx)
         if wp is None:
             nominal = float(bs.traf.trk[idx])
@@ -52,7 +52,7 @@ class ActiveRouteWaypointHdgDeltaDeg(ActionField):
                 float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wp[0], wp[1]
             )
             nominal = float(qdr)
-        bs.stack.stack(f"HDG {bs.traf.id[idx]} {(nominal + value) % 360.0:{_FMT}}")
+        return nominal
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._configured_bounds()

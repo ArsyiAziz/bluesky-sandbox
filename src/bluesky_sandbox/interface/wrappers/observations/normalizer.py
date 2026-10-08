@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TypeAlias
+from typing import Annotated, Any, TypeAlias
 
 import numpy as np
 
@@ -34,6 +34,7 @@ from bluesky_sandbox.interface.fields.base import (
     PairObsField,
     Unit,
 )
+from bluesky_sandbox.interface.fields.grid import Grid
 
 FieldLike: TypeAlias = ObsField | PairObsField | ActionField
 
@@ -523,9 +524,17 @@ class StepNormalizer(Normalizer):
     the choices. Leave it out for a clearance: a call that changes nothing
     says nothing.
 
-    ``step`` may be left unset (``None``) where something sets it before use: a
-    designer design's grid gives each step action its quantity's step. Used
-    with no step, it is an error.
+    ON A GRID - an action with a :class:`~bluesky_sandbox.interface.fields.grid.Grid`
+    - the steps are the grid's, and ``step`` COUNTS them: a whole number of
+    grid steps per choice, 1 when left unset. On ``Grid(1000)``
+    (``on="value"``), ``k`` is ``k * step`` whole thousands added to the
+    nominal: from 23,344 ft, +1 is 24,344 ft (``step=2``: 25,344 ft). On
+    ``Grid(1000, on="target")`` the choices are the grid's values, counted
+    from the present one: ``k = +1`` the next grid value above it, ``-1`` the
+    next below, ``0`` the nearest - from 23,344 ft or 23,600 ft, +1 is FL240;
+    from FL240 itself, FL250 (``step=2``: two levels each, FL250 and FL260).
+    Without a grid, ``k`` is ``k * step`` in the action's unit, and ``step``
+    is required.
 
     Discretizes any scalar field the way air traffic control does - turns in
     10 deg, levels in 1,000 ft, speeds in 10 kt: a delta counts its steps from
@@ -533,15 +542,19 @@ class StepNormalizer(Normalizer):
     command still holds, dynamically: a step is clipped to the action's
     :meth:`~bluesky_sandbox.interface.fields.base.ActionField.reach` - for a
     delta its full asymmetric range - so a step the aircraft cannot take now
-    becomes the largest one it can. To put the resulting TARGETS on a grid
-    (flight levels), give the action a ``command_step``.
+    becomes the largest one it can - on a grid, the reachable grid value
+    nearest the one asked for.
     """
 
     discrete = True
 
     def __init__(
         self,
-        step: float | None = None,
+        step: Annotated[
+            float | None,
+            "one step, in the action's unit - on a grid, a whole number of grid "
+            "steps; None = one grid step",
+        ] = None,
         steps_each_way: int = 10,
         *,
         include_zero: bool = True,
@@ -557,13 +570,32 @@ class StepNormalizer(Normalizer):
         self.steps_each_way = int(steps_each_way)
         self.include_zero = bool(include_zero)
 
-    def _step(self) -> float:
+    def grid_for(self, field: Any = None) -> tuple[Grid, int]:
+        """The grid the steps are on, and how many of its steps one choice
+        is: the action's grid and ``step`` of them (1 unset) where it has one,
+        else whole steps of ``step``."""
+        grid = getattr(field, "grid", None)
+        if grid is not None:
+            every = 1.0 if self.step is None else self.step
+            if every != int(every):
+                raise ValueError(
+                    f"StepNormalizer step {self.step:g} on {field.meta.name!r}, whose "
+                    f"grid is {grid.step:g}: on a grid the step counts grid steps - "
+                    "a whole number"
+                )
+            return grid, int(every)
         if self.step is None:
             raise ValueError(
-                "StepNormalizer has no step: give it one, or set the design's grid "
-                "for this action's quantity"
+                "StepNormalizer has no step: give it one, or give the action a "
+                "grid to step along"
             )
-        return self.step
+        return Grid(self.step), 1
+
+    def step_for(self, field: Any = None) -> float:
+        """One step, in the action's unit: ``step`` grid steps on the
+        action's grid where it has one, else ``step``."""
+        grid, every = self.grid_for(field)
+        return grid.step * every
 
     def steps(self) -> list[int]:
         """Each choice's number of steps ``k``, in index order."""
@@ -578,15 +610,6 @@ class StepNormalizer(Normalizer):
     def output_bounds(self, field):
         return [0.0], [float(self.n_choices - 1)]
 
-    def _reachable(self, field: ActionField, idx: int) -> tuple[int, int]:
-        """The whole steps within the action's reach now (and steps_each_way)."""
-        low, high = field.reach(idx)
-        n = self.steps_each_way
-        step = self._step()
-        k_low = max(-n, math.ceil(low / step - 1e-9))
-        k_high = min(n, math.floor(high / step + 1e-9))
-        return k_low, k_high
-
     def denormalize(self, field, value, idx):
         """The command for choice ``value`` (an index into :meth:`steps`)."""
         if isinstance(value, Sequence):
@@ -598,19 +621,16 @@ class StepNormalizer(Normalizer):
             value = value[0]
         steps = self.steps()
         k = steps[min(max(int(round(float(value))), 0), len(steps) - 1)]
-        k_low, k_high = self._reachable(field, idx)
-        if k_low > k_high:  # no whole step fits the reach: the value nearest it
-            low, high = field.reach(idx)
-            return min(max(0.0, float(low)), float(high))
-        return float(min(max(k, k_low), k_high)) * self._step()
+        grid, every = self.grid_for(field)
+        return grid.nth(field, k, idx, every)
 
     def normalize(self, field, value, idx):
         """The choice nearest ``value`` (in the field's unit), as its index."""
         steps = np.asarray(self.steps(), dtype=np.float64)
-        return [float(np.abs(steps * self._step() - float(value)).argmin())]
+        return [float(np.abs(steps * self.step_for(field) - float(value)).argmin())]
 
     def normalize_many(self, field, values, idx):
-        steps = np.asarray(self.steps(), dtype=np.float64) * self._step()
+        steps = np.asarray(self.steps(), dtype=np.float64) * self.step_for(field)
         values = np.asarray(values, dtype=np.float64).reshape(-1, 1)
         return np.abs(values - steps[None]).argmin(-1).reshape(-1, 1).astype(np.float32)
 
