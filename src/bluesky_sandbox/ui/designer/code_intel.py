@@ -199,12 +199,11 @@ class TypeTable:
         if marker is not None:
             return self.design(marker, depth)
         cls = get_origin(annotation) or annotation
-        # A union of several types names no single type to describe.
-        if (
-            cls in (Union, pytypes.UnionType)
-            or not inspect.isclass(cls)
-            or cls in _OPAQUE
-        ):
+        # A union names no single type to describe - unless its first type's
+        # members are on every other (a result and its placeholder).
+        if cls in (Union, pytypes.UnionType):
+            cls = _alike(get_args(annotation))
+        if cls is None or not inspect.isclass(cls) or cls in _OPAQUE:
             return None
         key = f"{cls.__module__}.{cls.__qualname__}"
         if self._depth.get(key, -1) >= depth:
@@ -344,6 +343,23 @@ class TypeTable:
                 item["color"] = k.color
             items.append(item)
         self.types[key]["items"] = items
+
+
+def _public_names(cls: type) -> set[str]:
+    return {n for n in [*dir(cls), *hints(cls)] if not n.startswith("_")}
+
+
+def _alike(options: tuple[Any, ...]) -> type | None:
+    """The first of a union's types when every other has all its members -
+    ``RegionStep | UnavailableRegionStep``, a step result and the placeholder
+    that raises without temporal tracking - so what completes on it reads on
+    either. None for any other union."""
+    options = tuple(o for o in options if o is not type(None))
+    if not options or not all(inspect.isclass(o) for o in options):
+        return None
+    first, *rest = options
+    names = _public_names(first)
+    return first if rest and all(names <= _public_names(o) for o in rest) else None
 
 
 def _is_typed_dict(cls: type) -> bool:

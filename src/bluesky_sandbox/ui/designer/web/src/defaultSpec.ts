@@ -28,8 +28,12 @@ export const DEFAULT_SPEC: SpecDict = {
     // Waypoint -> .target/.current/.route/.step/.time).
     hook_setup: "",
     hooks: {
-      reward: "# goal = context.query(\"goal\")\n# return 1.0 if goal.current.inside else -0.01\nreturn 0.0",
-      terminated: "# return context.query(\"goal\").current.inside\nreturn False",
+      reward:
+        "# With a region named \"goal\" (a waypoint: .current.satisfied):\n" +
+        "# return 1.0 if context.query(\"goal\").current.inside else -0.01\nreturn 0.0",
+      terminated:
+        "# With a region named \"goal\" (a waypoint: .current.satisfied):\n" +
+        "# return context.query(\"goal\").current.inside\nreturn False",
       truncated: "return False",
     },
     dt: 1.0,

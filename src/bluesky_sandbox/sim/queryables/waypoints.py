@@ -87,7 +87,9 @@ class WaypointRoute:
 
 @dataclass(frozen=True)
 class WaypointStep:
-    """Waypoint facts accumulated during the current env step."""
+    """Waypoint facts accumulated during the current env step - kept only with
+    ``track_temporal_state=True`` on the waypoint; without it, ``satisfied``
+    and ``reached`` read False and the minimums raise."""
 
     satisfied: bool = False
     reached: bool = False

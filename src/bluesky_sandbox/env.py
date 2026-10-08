@@ -129,6 +129,8 @@ class BlueskyEnv(BlueskyBaseEnvironment):
 
     @overridable
     def define_task_info_providers(self) -> Sequence[TaskInfoProvider]:
+        """Callables that add this task's entries to each agent's
+        ``info["task"]``, after the config's own."""
         return ()
 
     @overridable
@@ -153,7 +155,8 @@ class BlueskyEnv(BlueskyBaseEnvironment):
 
     @overridable
     def on_after_spawn(self, *, rng: np.random.Generator) -> None:
-        """Hook after reset spawns have been drained and state transitioned."""
+        """Runs at reset once the episode's first aircraft are spawned, each
+        controlled or background, before the first observation."""
         del rng
 
     @overridable
@@ -163,7 +166,8 @@ class BlueskyEnv(BlueskyBaseEnvironment):
 
     @overridable
     def on_sim_step(self) -> None:
-        """Hook for tasks that need per-physics-step lifecycle sampling."""
+        """Runs once per simulator substep, after BlueSky advances - an env
+        step is several - for what must be sampled between env steps."""
         return
 
     @overridable
@@ -185,7 +189,9 @@ class BlueskyEnv(BlueskyBaseEnvironment):
 
     @overridable
     def define_waypoint_readouts(self, _acid: str) -> tuple[WaypointReadoutItem, ...]:
-        """Return atomic route-readout annotations for one aircraft."""
+        """Values to show on this aircraft's route waypoints in the GUI
+        drivers' readout: one :class:`WaypointReadoutItem` each, naming its
+        waypoint, its section (metadata or constraints), key and value."""
         return ()
 
     @overridable

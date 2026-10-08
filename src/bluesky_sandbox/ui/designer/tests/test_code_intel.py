@@ -136,6 +136,18 @@ def test_a_keyed_query_returns_that_queryables_result(intel):
     assert _type(intel, goal["type"])["name"] == "QueryRegion"
 
 
+def test_a_querys_step_and_time_complete_as_the_result_not_its_placeholder(intel):
+    # Each is typed Result | Placeholder (raising without temporal tracking):
+    # alike, so described as the result.
+    query = _attr(intel, _context(intel), "query")
+    for key, step in (("goal", {"inside"}), ("wp", {"satisfied", "reached", "min_distance_nm"})):
+        result = _item(intel, query["returns_by_key"], key)["type"]
+        assert step <= {m["name"] for m in _type(intel, _attr(intel, result, "step")["type"])["attrs"]}
+        time = _type(intel, _attr(intel, result, "time")["type"])
+        assert time["name"] == "StepTime"
+        assert {m["name"] for m in time["attrs"]} == {"total_s", "during_step_s"}
+
+
 def test_a_type_checking_import_resolves(intel):
     # AgentStepContext.airspace is annotated with a name imported only for type
     # checkers; the editor still knows it.

@@ -29,7 +29,9 @@ class RegionCurrent:
 
 @dataclass(frozen=True)
 class RegionStep:
-    """Region facts accumulated during the current env step."""
+    """Region facts accumulated during the current env step - kept only with
+    ``track_temporal_state=True`` on the region; without it, reading one
+    raises."""
 
     inside: bool = False
 

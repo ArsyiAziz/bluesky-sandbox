@@ -49,6 +49,13 @@ def _doc(obj: Any) -> str:
     return doc.splitlines()[0] if doc else ""
 
 
+def _paragraph(obj: Any) -> str:
+    """The first paragraph of ``obj``'s docstring, on one line: a sentence
+    wrapped over several lines is not cut at the first."""
+    doc = inspect.getdoc(obj) or ""
+    return " ".join(doc.split("\n\n", 1)[0].split())
+
+
 def _dataclass_params(cls) -> list[dict[str, Any]]:
     """Describe a dataclass's constructor params: name, type, default."""
     out: list[dict[str, Any]] = []
@@ -699,7 +706,8 @@ _HOOK_SCAFFOLDS: dict[str, str] = {
     ),
     "define_aircraft_readouts": (
         "# Rows for this aircraft's readout in the drivers, in order: {label: value}.\n"
-        "# acid is its callsign; self.agent_context(idx) gives its context.\n"
+        "# acid is its callsign; self.live_info.get(acid) its latest info\n"
+        "# (acidx, type, phase, ...), None for one that is not an agent.\n"
         "return {\"ACID\": acid}"
     ),
     "define_agent_context": (
@@ -757,7 +765,7 @@ def hooks() -> list[dict[str, Any]]:
                     "category": _hook_category(name),
                     "always_present": name in DEFAULT_HOOKS,
                     "scaffold": _HOOK_SCAFFOLDS.get(name),
-                    "doc": _doc(fn),
+                    "doc": _paragraph(fn),
                 }
             )
     return sorted(out, key=lambda d: d["name"])

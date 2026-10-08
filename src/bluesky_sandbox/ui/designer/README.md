@@ -249,10 +249,19 @@ return context.query("goal").current.inside
 
 `context.query("name")` evaluates a design queryable for the current aircraft
 (a `QueryRegion` returns `.current`, `.step`, and `.time`; a `Waypoint` returns
-`.target`, `.current`, `.route`, `.step`, and `.time`); `context.queryable("name")` returns
-the object itself. Other fields: `context.acid` (callsign), `context.acidx`
-(BlueSky traffic index), `context.separation` (conflict / LoS info), and
-`context.data` — your own per-aircraft payload.
+`.target`, `.current`, `.route`, `.step`, and `.time` — `.step` and `.time` need
+`track_temporal_state=True` on the queryable); `context.queryable("name")` returns
+the object itself. Other fields:
+
+- `context.acid` (callsign), `context.acidx` (BlueSky traffic index), and
+  `context.position` (its `LatLon`);
+- `context.obs`, `context.state`, `context.action` — this step's observation,
+  state fields and action in raw values: `context.obs["ownship"]["alt_ft"]`;
+- `context.shapes` / `context.shape("name")` — the design's shapes in this
+  episode; `context.airspace` — the airspace's query result (`.current.inside`);
+- `context.separation` (conflict / LoS info) and `context.conflicts` (the
+  conflict geometry between this aircraft and the others);
+- `context.data` — your own per-aircraft payload.
 
 You **define** `context.data` by overriding the `define_agent_context(acid,
 acidx)` hook (its return value becomes `context.data`); everything else on the
