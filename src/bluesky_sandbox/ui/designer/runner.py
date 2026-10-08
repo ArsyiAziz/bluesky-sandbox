@@ -20,18 +20,23 @@ loading state until the window is up.
 
 from __future__ import annotations
 
+import atexit
+import itertools
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from . import codegen
+from . import worker as _worker
 from .builder import BuildError, build_design_config
 from .spec import DesignSpec
 
@@ -399,41 +404,201 @@ if __name__ == "__main__":
 '''
 
 
-def _run_script(
-    spec: DesignSpec, pkg: str, source: str, timeout_s: float
-) -> dict[str, Any]:
-    """Generate ``spec`` as ``pkg``, run ``source`` against it in a subprocess,
-    and return the JSON it prints after the marker."""
-    files = codegen.generate_task(spec, pkg)
-    workdir = Path(tempfile.mkdtemp(prefix="bsd_sample_"))
+# ---- running a design: in the warm worker, or a process of its own ---------- #
+
+
+class _Worker:
+    """The warm process designs are sampled in (see :mod:`.worker`): started
+    on first use, reused while it flies the same performance model, and
+    started again after an error, a timeout or :attr:`MAX_JOBS` jobs."""
+
+    MAX_JOBS = 200
+    #: How long a job the caller left is given to finish (s) before the
+    #: worker is started afresh instead.
+    DRAIN_S = 5.0
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self._proc: subprocess.Popen | None = None
+        self._lines: queue.Queue[str | None] = queue.Queue()
+        self._model: str | None = None
+        self._jobs = 0
+        self._log = Path(tempfile.gettempdir()) / f"bsd_worker_{os.getpid()}.log"
+
+    def _start(self, model: str) -> None:
+        self.stop()
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(p for p in (str(_REPO_ROOT), env.get("PYTHONPATH", "")) if p)
+        log = open(self._log, "a")  # noqa: SIM115 - the process holds it
+        self._proc = subprocess.Popen(
+            [sys.executable, "-m", "bluesky_sandbox.ui.designer.worker"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=log,
+            text=True,
+            env=env,
+            cwd=tempfile.gettempdir(),
+        )
+        log.close()
+        self._lines = queue.Queue()
+        stdout = self._proc.stdout
+
+        def pump() -> None:
+            for line in stdout:
+                self._lines.put(line.rstrip("\n"))
+            self._lines.put(None)  # it exited
+
+        threading.Thread(target=pump, daemon=True).start()
+        self._model, self._jobs = model, 0
+        if not self._wait_for(_worker.READY, 120.0):
+            self.stop()
+            raise BuildError("the sampling process did not start; see " + str(self._log))
+
+    def _wait_for(self, marker: str, timeout_s: float) -> bool:
+        deadline = time.monotonic() + timeout_s
+        while (left := deadline - time.monotonic()) > 0:
+            try:
+                line = self._lines.get(timeout=left)
+            except queue.Empty:
+                return False
+            if line is None:
+                return False
+            if line == marker:
+                return True
+        return False
+
+    def stop(self) -> None:
+        if self._proc is not None and self._proc.poll() is None:
+            self._proc.kill()
+            self._proc.wait()
+        self._proc = None
+
+    def run(self, model: str, job: dict[str, Any], timeout_s: float) -> Iterator[str]:
+        """The job's output lines, until it is done. Must hold :attr:`lock`."""
+        if (
+            self._proc is None
+            or self._proc.poll() is not None
+            or self._model != model
+            or self._jobs >= self.MAX_JOBS
+        ):
+            self._start(model)
+        assert self._proc is not None and self._proc.stdin is not None
+        self._jobs += 1
+        self._proc.stdin.write(json.dumps(job) + "\n")
+        self._proc.stdin.flush()
+        deadline = time.monotonic() + timeout_s
+        finished = False
+        try:
+            while (left := deadline - time.monotonic()) > 0:
+                try:
+                    line = self._lines.get(timeout=left)
+                except queue.Empty:
+                    break
+                if line is None:  # it died
+                    break
+                if line == _worker.DONE:
+                    finished = True
+                    return
+                if line.startswith(_worker.ERROR):
+                    error = json.loads(line[len(_worker.ERROR):])["error"]
+                    self._wait_for(_worker.DONE, 10.0)
+                    finished = True
+                    raise BuildError(error)
+                yield line
+            raise BuildError("the sample did not finish in time; see " + str(self._log))
+        finally:
+            if not finished:
+                # The caller went away mid-job (an episode stream closed): let
+                # the job run out - most take well under a second - and keep
+                # the worker. Timed out or died: start afresh next time.
+                alive = self._proc is not None and self._proc.poll() is None
+                if not (alive and self._wait_for(_worker.DONE, self.DRAIN_S)):
+                    self.stop()
+
+
+_WORKER = _Worker()
+atexit.register(_WORKER.stop)
+
+
+def warm(model: str = "openap") -> None:
+    """Start the sampling worker ahead of the first sample, if it is free."""
+    if _WORKER.lock.acquire(blocking=False):
+        try:
+            if _WORKER._proc is None or _WORKER._proc.poll() is not None:
+                _WORKER._start(model)
+        except BuildError:
+            pass  # the first sample will try again, and report it
+        finally:
+            _WORKER.lock.release()
+_JOB_IDS = itertools.count(1)
+
+
+def _job_lines(spec: DesignSpec, prefix: str, template: str, params: dict[str, Any], timeout_s: float) -> Iterator[str]:
+    """Generate ``spec`` as a package of its own and run ``template`` against
+    it - in the warm worker when it is free, else in a process of its own -
+    yielding what the script prints."""
+    package = f"{prefix}_{os.getpid()}_{next(_JOB_IDS)}"
+    files = codegen.generate_task(spec, package)
+    workdir = Path(tempfile.mkdtemp(prefix=f"bsd_{prefix}_"))
     try:
         for rel, text in files.items():
             path = workdir / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
-        script = workdir / "_sample_design.py"
-        script.write_text(source)
-        env = dict(os.environ)
-        env["PYTHONPATH"] = os.pathsep.join(
-            p for p in (str(workdir), str(_REPO_ROOT), env.get("PYTHONPATH", "")) if p
-        )
-        proc = subprocess.run(
-            [sys.executable, str(script)],
-            cwd=str(workdir),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-        for line in proc.stdout.splitlines():
-            if line.startswith(_SAMPLE_MARKER):
-                return json.loads(line[len(_SAMPLE_MARKER):])
-        raise BuildError(
-            "sampling produced no output; "
-            + (proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "see logs")
-        )
+        script = workdir / f"_{prefix}.py"
+        script.write_text(template.format(pkg=package, marker=_SAMPLE_MARKER, **params))
+        model = str(getattr(spec.env, "performance_model", None) or "openap").lower()
+        if _WORKER.lock.acquire(blocking=False):
+            try:
+                job = {"workdir": str(workdir), "package": package, "script": str(script)}
+                yield from _WORKER.run(model, job, timeout_s)
+            finally:
+                _WORKER.lock.release()
+            return
+        # The worker is busy - an episode streaming, say: a process of its own.
+        yield from _own_process(workdir, script, timeout_s)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _own_process(workdir: Path, script: Path, timeout_s: float) -> Iterator[str]:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(workdir), str(_REPO_ROOT), env.get("PYTHONPATH", "")) if p)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", f"import runpy; runpy.run_path({str(script)!r}, run_name='__main__')"],
+        cwd=str(workdir),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    deadline = time.monotonic() + timeout_s
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            if time.monotonic() > deadline:
+                raise BuildError("the sample did not finish in time")
+            yield line.rstrip("\n")
+        proc.wait(timeout=10)
+        if proc.returncode:
+            err = proc.stderr.read().strip() if proc.stderr else ""
+            raise BuildError(err.splitlines()[-1] if err else "the sample failed; see logs")
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def _run_script(spec: DesignSpec, prefix: str, template: str, params: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+    """The JSON the script prints after the marker - the job read to its end,
+    so the worker finishes it and stays warm for the next."""
+    out = None
+    for line in _job_lines(spec, prefix, template, params, timeout_s):
+        if out is None and line.startswith(_SAMPLE_MARKER):
+            out = json.loads(line[len(_SAMPLE_MARKER):])
+    if out is None:
+        raise BuildError("sampling produced no output; see logs")
+    return out
 
 
 def sample_design(
@@ -452,17 +617,8 @@ def sample_design(
     and a sampled action; plus every aircraft's ranges and type.
     """
     build_design_config(spec)  # surface a broken design before spawning anything
-    pkg = "designed_sample"
-    source = _SAMPLE_TEMPLATE.format(
-        pkg=pkg,
-        seed=seed,
-        max_agents=max_agents,
-        max_intruders=max_intruders,
-        at_s=float(at_s),
-        acid=acid,
-        marker=_SAMPLE_MARKER,
-    )
-    return _run_script(spec, pkg, source, timeout_s)
+    params = {"seed": seed, "max_agents": max_agents, "max_intruders": max_intruders, "at_s": float(at_s), "acid": acid}
+    return _run_script(spec, "designed_sample", _SAMPLE_TEMPLATE, params, timeout_s)
 
 
 # One-shot script: run the seeded episode, every agent held still, until its
@@ -568,61 +724,16 @@ def iter_episode_spawns(
     heading, speeds, its pygame label and its route's resolved targets - and
     last ``{"done": {...}}``. Closing the iterator stops the run."""
     build_design_config(spec)
-    pkg = "designed_spawns"
-    files = codegen.generate_task(spec, pkg)
-    workdir = Path(tempfile.mkdtemp(prefix="bsd_spawns_"))
-    proc = None
-    try:
-        for rel, text in files.items():
-            path = workdir / rel
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text)
-        script = workdir / "_episode_spawns.py"
-        script.write_text(
-            _SPAWNS_TEMPLATE.format(
-                pkg=pkg,
-                seed=seed,
-                until_s=float(until_s),
-                max_steps=int(max_steps),
-                marker=_SAMPLE_MARKER,
-            )
-        )
-        env = dict(os.environ)
-        env["PYTHONPATH"] = os.pathsep.join(
-            p for p in (str(workdir), str(_REPO_ROOT), env.get("PYTHONPATH", "")) if p
-        )
-        proc = subprocess.Popen(
-            [sys.executable, str(script)],
-            cwd=str(workdir),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        deadline = time.monotonic() + timeout_s
-        finished = False
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            if time.monotonic() > deadline:
-                break
-            if line.startswith(_SAMPLE_MARKER):
-                item = json.loads(line[len(_SAMPLE_MARKER):])
-                yield item
-                if "done" in item:
-                    finished = True
-                    break
-        if not finished:
-            proc.wait(timeout=5)
-            err = proc.stderr.read().strip() if proc.stderr else ""
-            raise BuildError(
-                "the episode run stopped early; "
-                + (err.splitlines()[-1] if err else "see logs")
-            )
-    finally:
-        if proc is not None and proc.poll() is None:
-            proc.kill()
-            proc.wait()
-        shutil.rmtree(workdir, ignore_errors=True)
+    params = {"seed": seed, "until_s": float(until_s), "max_steps": int(max_steps)}
+    finished = False
+    for line in _job_lines(spec, "designed_spawns", _SPAWNS_TEMPLATE, params, timeout_s):
+        if line.startswith(_SAMPLE_MARKER):
+            item = json.loads(line[len(_SAMPLE_MARKER):])
+            yield item
+            if "done" in item:
+                finished = True
+    if not finished:
+        raise BuildError("the episode run stopped early; see logs")
 
 
 def episode_spawns(spec: DesignSpec, **kwargs: Any) -> dict[str, Any]:

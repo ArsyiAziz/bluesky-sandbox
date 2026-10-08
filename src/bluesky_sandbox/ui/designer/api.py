@@ -27,6 +27,7 @@ import importlib
 import inspect
 import io
 import os
+import threading
 import json
 import zipfile
 from functools import lru_cache
@@ -58,6 +59,8 @@ from .store import SpecStore
 from .trail import forget_call_trails
 
 _WEB_DIST = Path(__file__).parent / "web" / "dist"
+#: Set by :func:`main`: the server starts the sampling worker on startup.
+WARM_WORKER_ENV = "BSD_WARM_WORKER"
 
 
 def _parse_spec(body: dict[str, Any]) -> DesignSpec:
@@ -284,6 +287,13 @@ def create_app() -> FastAPI:
             )
         return out
 
+    @app.get("/api/design/schema")
+    def design_schema_json() -> dict[str, Any]:
+        """What a design file may hold, as a JSON Schema (see schema.py)."""
+        from .schema import design_schema
+
+        return design_schema()
+
     @app.post("/api/spec/code-intel")
     def spec_code_intel(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         spec = _parse_spec(body.get("spec", body))
@@ -487,6 +497,9 @@ def create_app() -> FastAPI:
                 }
             )
 
+    if os.environ.get(WARM_WORKER_ENV) == "1":
+        # Off the request path: the worker's imports take a few seconds.
+        threading.Thread(target=_runner.warm, daemon=True).start()
     return app
 
 
@@ -502,6 +515,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
+    # The server's process - uvicorn's own, under --reload - starts the
+    # sampling worker as it comes up, so the first sample is as quick as the rest.
+    os.environ[WARM_WORKER_ENV] = "1"
     uvicorn.run(
         "bluesky_sandbox.ui.designer.api:app",
         host=args.host,
