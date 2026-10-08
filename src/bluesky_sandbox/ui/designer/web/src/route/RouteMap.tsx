@@ -1,13 +1,14 @@
 // Read-only map preview for the Route tab: draws the design (regions, waypoints,
 // routes) using the same deck layers as the main map, highlights the route being
 // edited, and reports waypoint clicks so the graph editor can append them.
+import { waypointSampleRef } from "../waypointPoints";
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { LineLayer } from "@deck.gl/layers";
 import { api, type SpecDict, type PreviewResult, type ValidateResult } from "../api";
 import type { CategoryVisibility, EditTarget } from "../map/types";
-import { centroid, frontendBoundsGeometry, routePaths, waypointPositions } from "../map/geometry";
+import { centroid, frontendShapeGeometry, routePaths, waypointPositions } from "../map/geometry";
 import { deckLayers, getTooltip } from "../map/deckLayers";
 import { basemapById, DEFAULT_BASEMAP } from "../map/basemaps";
 import { useRefresh } from "../refresh";
@@ -61,11 +62,11 @@ function connectorLayers(
   const sampleLinks: { src: number[]; tgt: number[] }[] = [];
   for (const name of routeWaypoints) {
     const q = spec?.queryables?.[name];
-    const ref = q?.sample?.ref;
-    const region = ref ? spec?.regions?.[ref] : undefined;
+    const ref = q ? waypointSampleRef(spec, q) : null;
+    const region = ref ? spec?.shapes?.[ref] : undefined;
     const wp = wpPos.get(name);
     if (!region || !wp) continue;
-    const g = frontendBoundsGeometry(region);
+    const g = frontendShapeGeometry(region);
     if (!g?.vertices?.length) continue;
     const c = centroid(g.vertices);
     sampleLinks.push({ src: [wp[0], wp[1], 0], tgt: [c[0], c[1], 0] });
@@ -89,7 +90,7 @@ function connectorLayers(
 
 // Routes + their waypoints + region context; aircraft/nav off to keep it light.
 const VISIBILITY: CategoryVisibility = {
-  airspace: true, regions: true, waypoints: true, routes: true, spawnRegions: true,
+  airspace: true, regions: true, waypoints: true, routes: true, spawnRegions: true, shapes: false,
   aircraft: false, nav: false, airways: false, labels: true,
 };
 const NO_HIDDEN = new Set<string>();

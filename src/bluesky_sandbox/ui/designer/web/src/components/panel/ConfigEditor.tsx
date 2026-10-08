@@ -6,7 +6,7 @@ import type { SpecDict } from "../../api";
 import { Picker } from "./Picker";
 import { FormCard, FormColumn, FormRow, NumberInput } from "../form";
 import { ValueField } from "./ValueField";
-import { designBounds, newGroupId } from "../../specHelpers";
+import { designShapes, newGroupId } from "../../specHelpers";
 
 // Per-episode rotation groups. Each group rotates a chosen set of **bounds**
 // (named regions) by a sampled angle — rotating a bounds rotates every element
@@ -21,7 +21,7 @@ export function RotationEditor({
   onChange: (transform: SpecDict | null) => void;
 }) {
   const groups: SpecDict[] = spec.transform?.groups ?? [];
-  const bounds = designBounds(spec);
+  const bounds = designShapes(spec);
   const ownerOf = (eid: string) => groups.find((g) => (g.members ?? []).includes(eid));
 
   const setGroups = (next: SpecDict[]) => onChange(next.length ? { groups: next } : null);

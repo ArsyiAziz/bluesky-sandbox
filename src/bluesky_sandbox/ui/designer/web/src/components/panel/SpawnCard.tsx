@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 
 import { api, type SpecDict } from "../../api";
-import BoundsEditor from "../BoundsEditor";
+import ShapeEditor from "../ShapeEditor";
 import { NumInput, OptValueField, ValueField } from "./ValueField";
 import { Picker } from "./Picker";
 import { CollapsibleCard, EyeToggle } from "./Section";
@@ -21,7 +21,7 @@ type SpawnBodyProps = {
   onNewRegion: () => void;
   resolveRegion: (name: string) => SpecDict | undefined;
   onEditRegion: (name: string, bounds: SpecDict) => void;
-  boundsRefCount: (name: string) => number;
+  shapeRefCount: (name: string) => number;
   onChange: (r: SpecDict) => void;
   onFocus: () => void;
   // The effective config-level values these per-region fields fall back to when
@@ -40,7 +40,7 @@ export function SpawnBody({
   onNewRegion,
   resolveRegion,
   onEditRegion,
-  boundsRefCount,
+  shapeRefCount,
   onChange,
   onFocus,
   globalConflictFree,
@@ -61,7 +61,7 @@ export function SpawnBody({
       ? "the protected zone"
       : `${sep.pz_radius_nm} nm / ${sep.pz_height_ft} ft / ${sep.lookahead_s} s`;
 
-  const setBounds = (b: SpecDict) => onChange({ ...region, bounds: b });
+  const setShape = (b: SpecDict) => onChange({ ...region, shape: b });
   const globalCfLabel = globalConflictFree ? "conflict-free" : "as sampled";
   // What this area actually does, resolved the way
   // ``SpawnConfig.region_conflict_free`` resolves it: the region's own setting
@@ -80,16 +80,16 @@ export function SpawnBody({
   return (
     <div className="spawn-body">
       <FieldGroup title="Shape" defaultOpen>
-        <BoundsEditor
-          bounds={region.bounds}
-          onChange={setBounds}
+        <ShapeEditor
+          shape={region.shape}
+          onChange={setShape}
           onFocus={onFocus}
           regionNames={regionNames}
           requireRef
           onNewRegion={onNewRegion}
           resolveRegion={resolveRegion}
           onEditRegion={onEditRegion}
-          refCount={region.bounds?.ref ? boundsRefCount(region.bounds.ref) : undefined}
+          refCount={region.shape?.ref ? shapeRefCount(region.shape.ref) : undefined}
         />
         <div className="muted small">when spawn altitude is unset, it follows the bounds altitude band ↑</div>
       </FieldGroup>

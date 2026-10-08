@@ -9,16 +9,20 @@ import type {
   Edge,
   EditTarget,
   Face,
+  Mark,
   RGBA,
   RoutePath,
+  Selectable,
   WaypointEdge,
   WaypointFace,
 } from "./types";
 import {
   NAMED,
   addHandleDropStems,
+  atTime,
+  motionTrack,
   cssToRgb,
-  frontendBoundsGeometry,
+  frontendShapeGeometry,
   regionGeometry,
   spawnRouteLinks,
   waypointPosition,
@@ -27,7 +31,13 @@ import {
   addWaypointStem,
   waypointToleranceGeometry,
 } from "./geometry";
-import { boundsForTarget, groupBbox, groupMemberBounds, targetKey } from "./editHandles";
+import { shapesInView } from "./shapesInView";
+import { waypointLatLon, waypointPoint } from "../waypointPoints";
+import type { Pick } from "../episode";
+
+// A bounds the selection is drawn, placed or moved by: faint, dashed.
+const CONTEXT: RGBA = [148, 163, 184, 150];
+import { shapeForTarget, groupBbox, groupMemberShapes, targetKey } from "./editHandles";
 
 export const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
@@ -130,6 +140,23 @@ function segmentAngle(a: [number, number, number], b: [number, number, number]):
   return -bearing;
 }
 
+// A ring about the picked aircraft: the one whose observation is sampled.
+function pickRing(at: [number, number, number][]) {
+  return new ScatterplotLayer({
+    id: "aircraft-picked",
+    data: at,
+    getPosition: (p: [number, number, number]) => p,
+    filled: false,
+    stroked: true,
+    getLineColor: [255, 255, 255, 255],
+    lineWidthMinPixels: 2,
+    getRadius: 9,
+    radiusUnits: "pixels",
+    billboard: true,
+    parameters: { depthTest: false },
+  });
+}
+
 export function deckLayers(
   preview: PreviewResult,
   nav: NavFeatures | null,
@@ -149,7 +176,18 @@ export function deckLayers(
   flown: SpawnedAircraft[] | null = null,
   // The callsigns whose tags fit without overlapping; null tags them all.
   tagged: Set<string> | null = null,
+  // Seconds into the episode: moving regions are drawn as they are then.
+  motionT = 0,
+  // The picked aircraft's key (its callsign, or `preview:<i>` before the run
+  // names it), ringed; and how a click on an aircraft picks it.
+  picked: string | null = null,
+  onPickAircraft: ((pick: Pick) => void) | null = null,
 ) {
+  // A preview shape at the time shown, with - if it moves - its track.
+  const timed = <G extends { vertices: [number, number][] }>(g: G, color: RGBA, meta: Selectable): G => {
+    motionTrack(g as any, color, out.edges, meta);
+    return atTime(g as any, motionT) as G;
+  };
   const shown = (key: string) => !hidden.has(key);
   // The selected element is drawn from canonical (unrotated) geometry below so
   // its edit handles line up; skip its rotated preview copy here. (Per-episode
@@ -158,19 +196,22 @@ export function deckLayers(
   const isSel = (t: EditTarget) => selKey !== null && targetKey(t) === selKey;
   // Global line-width multiplier (the "lines" overlay control).
   const lw = (w: number) => w * lineScale;
-  const out = { edges: [] as Edge[], faces: [] as Face[] };
-  const draftOut = { edges: [] as Edge[], faces: [] as Face[] };
+  const out = { edges: [] as Edge[], faces: [] as Face[], marks: [] as Mark[] };
+  const draftOut = { edges: [] as Edge[], faces: [] as Face[], marks: [] as Mark[] };
   const waypointOut = { edges: [] as WaypointEdge[], faces: [] as WaypointFace[] };
-  const draftBounds = draftSpec && selectedTarget ? boundsForTarget(draftSpec, selectedTarget) : null;
-  if (draftBounds) {
-    const g = frontendBoundsGeometry(draftBounds);
+  const draftShape = draftSpec && selectedTarget ? shapeForTarget(draftSpec, selectedTarget) : null;
+  if (draftShape) {
+    const g = frontendShapeGeometry(draftShape);
     if (g && selectedTarget) regionGeometry(g, [255, 255, 255, 255], draftOut, { target: selectedTarget, name: "draft" });
   }
   if (preview.airspace && visibility.airspace && shown("airspace") && !isSel({ scope: "airspace" })) {
-    regionGeometry(preview.airspace, NAMED.blue, out, {
-      name: "airspace",
-      target: { scope: "airspace" },
-    });
+    // The airspace is a role a shape plays: clicking it picks that shape.
+    const ref = spec?.airspace?.ref;
+    const meta = {
+      name: ref ?? "airspace",
+      target: (typeof ref === "string" ? { scope: "region", name: ref } : { scope: "airspace" }) as EditTarget,
+    };
+    regionGeometry(timed(preview.airspace, NAMED.blue, meta), NAMED.blue, out, meta);
   }
   const wpts = visibility.waypoints
     ? preview.queryables
@@ -188,12 +229,15 @@ export function deckLayers(
     : [];
   if (visibility.waypoints && draftSpec && selectedTarget?.scope === "queryable") {
     const draftQ = draftSpec.queryables?.[selectedTarget.name];
-    if (draftQ?.type === "waypoint" && Number.isFinite(draftQ.lat) && Number.isFinite(draftQ.lon)) {
+    const at = draftQ?.type === "waypoint" ? waypointLatLon(draftSpec, draftQ) : null;
+    if (at) {
       wpts.push({
         ...draftQ,
+        lat: at[0],
+        lon: at[1],
         kind: "waypoint",
         name: selectedTarget.name,
-        ident: draftQ.waypoint,
+        ident: waypointPoint(draftSpec, draftQ)?.footprint?.fix ?? draftQ.waypoint,
         target: { scope: "queryable", name: selectedTarget.name },
         color: "white",
       });
@@ -204,10 +248,8 @@ export function deckLayers(
   if (visibility.regions) {
     for (const q of preview.queryables.filter((q) => q.kind === "region" && q.render_shape !== false && shown(`queryable:${q.name}`))) {
       if (isSel({ scope: "queryable", name: q.name })) continue;
-      regionGeometry(q, cssToRgb(q.color), out, {
-        name: q.name,
-        target: { scope: "queryable", name: q.name },
-      });
+      const meta = { name: q.name, target: { scope: "queryable", name: q.name } as EditTarget };
+      regionGeometry(timed(q, cssToRgb(q.color), meta), cssToRgb(q.color), out, meta);
     }
   }
   // Spawn regions are bounds too - render them as wireframes (green), like the
@@ -216,46 +258,71 @@ export function deckLayers(
     for (const [index, r] of preview.spawn_regions.entries()) {
       if (r.render_shape === false || !shown(`spawn:${index}`)) continue;
       if (isSel({ scope: "spawn", index })) continue;
-      regionGeometry(r, NAMED.green, out, {
-        name: r.name,
-        target: { scope: "spawn", index },
-      });
+      const meta = { name: r.name, target: { scope: "spawn", index } as EditTarget };
+      regionGeometry(timed(r, NAMED.green, meta), NAMED.green, out, meta);
     }
   }
   // Named bounds not already drawn by a consumer (airspace / query-region /
   // spawn) — e.g. freshly created, or used only as a waypoint sample area — are
-  // drawn standalone (neutral) so they're visible and editable on the map.
+  // drawn standalone (neutral), with the "bounds" layer on or when the
+  // selection brings them in (see shapesInView); what those depend on, faint
+  // and dashed.
   if (spec) {
+    const inView = shapesInView(spec, selectedTarget);
     const refName = (b: any): string | null => (b && typeof b.ref === "string" ? b.ref : null);
     const drawn = new Set<string>();
     const a = refName(spec.airspace);
     if (a) drawn.add(a);
     for (const q of Object.values(spec.queryables ?? {}) as any[]) {
       if (q?.type === "query_region") {
-        const r = refName(q.bounds);
+        const r = refName(q.shape);
         if (r) drawn.add(r);
       }
     }
     for (const r of (spec.spawn?.regions ?? []) as any[]) {
-      const rb = refName(r?.bounds);
+      const rb = refName(r?.shape);
       if (rb) drawn.add(rb);
     }
-    for (const [name, bounds] of Object.entries(spec.regions ?? {}) as [string, SpecDict][]) {
-      if (drawn.has(name) || !shown(`region:${name}`)) continue;
+    for (const [name, bounds] of Object.entries(spec.shapes ?? {}) as [string, SpecDict][]) {
+      if (!shown(`region:${name}`)) continue;
+      if (!visibility.shapes && !inView.own.has(name)) {
+        // Context: where the selection may go - unless an element draws it.
+        if (!inView.context.has(name) || drawn.has(name)) continue;
+        const g = preview.shapes?.[name]?.envelope ?? preview.shapes?.[name] ?? frontendShapeGeometry(bounds);
+        if (g) regionGeometry(g as any, CONTEXT, out, { name, target: { scope: "region", name } }, "dashed");
+        continue;
+      }
+      // A generated region: where its draws can fall, faint, behind whatever
+      // draws this episode's shape - and a partition as its shapes, name.0 ...
+      const envelope = preview.shapes?.[name]?.envelope;
+      if (envelope) {
+        regionGeometry(envelope, [148, 163, 184, 45], out, {
+          name: `${name} (any draw)`,
+          target: { scope: "region", name },
+        });
+        const parts = Object.values(preview.shapes ?? {}).filter(
+          (r: any) => r.generated === name && r.name !== name,
+        ) as any[];
+        for (const part of parts) {
+          regionGeometry(part, NAMED.slate, out, { name: part.name, target: { scope: "region", name } });
+        }
+        if (parts.length) continue;
+      }
+      if (drawn.has(name)) continue;
       // Prefer the sampled-episode geometry from the preview (shape draw +
       // rotation) so per-episode-randomized regions render as an episode
       // would place them; the selected region stays canonical so its edit
       // handles line up with the panel's parametric shape, with the sampled
       // copy kept visible as a faint ghost.
-      const sampled = preview.regions?.[name];
+      const rawSampled = preview.shapes?.[name];
+      const meta = { name, target: { scope: "region", name } as EditTarget };
+      const sampled = rawSampled ? timed(rawSampled, NAMED.slate, meta) : undefined;
       const selected = isSel({ scope: "region", name });
-      const g = (!selected && sampled) || frontendBoundsGeometry(bounds);
-      if (g) regionGeometry(g, NAMED.slate, out, { name, target: { scope: "region", name } });
+      const g = (!selected && sampled) || frontendShapeGeometry(bounds);
+      if (g) regionGeometry(g, NAMED.slate, out, meta);
+      // Selected: the shape you edit is solid; this episode's draw dashed.
       if (selected && sampled) {
-        regionGeometry(sampled, [148, 163, 184, 70], out, {
-          name: `${name} (sampled)`,
-          target: { scope: "region", name },
-        });
+        regionGeometry(sampled, NAMED.slate, out, { name: `${name} (this episode)`, target: meta.target }, "dashed");
       }
     }
   }
@@ -265,8 +332,8 @@ export function deckLayers(
   // canonical above; waypoints have no bounds to draw here.)
   const selDropStems: Edge[] = [];
   if (spec && selectedTarget && selectedTarget.scope !== "region" && selectedTarget.scope !== "group") {
-    const selBounds = boundsForTarget(spec, selectedTarget);
-    const g = selBounds ? frontendBoundsGeometry(selBounds) : null;
+    const selShape = shapeForTarget(spec, selectedTarget);
+    const g = selShape ? frontendShapeGeometry(selShape) : null;
     if (g) {
       const color =
         selectedTarget.scope === "airspace"
@@ -276,6 +343,17 @@ export function deckLayers(
             : cssToRgb(spec.queryables?.[selectedTarget.name]?.color);
       regionGeometry(g, color, out, { name: "selected", target: selectedTarget });
       addHandleDropStems(g, color, selDropStems);
+      // And this episode's draw of it, dashed - placed, generated, moving.
+      const episode =
+        selectedTarget.scope === "airspace"
+          ? preview.airspace
+          : selectedTarget.scope === "spawn"
+            ? preview.spawn_regions[selectedTarget.index]
+            : preview.queryables.find((q) => q.name === (selectedTarget as any).name && q.kind === "region");
+      if (episode) {
+        const meta = { name: "selected (this episode)", target: selectedTarget };
+        regionGeometry(timed(episode as any, color, meta), color, out, meta, "dashed");
+      }
     }
   }
 
@@ -297,8 +375,8 @@ export function deckLayers(
         const a = corners[i], b = corners[(i + 1) % 4];
         out.edges.push({ target: selectedTarget, name: "group", src: [a[1], a[0], 0], tgt: [b[1], b[0], 0], color: violet });
       }
-      for (const bounds of groupMemberBounds(spec, selectedTarget.id)) {
-        const g = frontendBoundsGeometry(bounds);
+      for (const bounds of groupMemberShapes(spec, selectedTarget.id)) {
+        const g = frontendShapeGeometry(bounds);
         if (g) regionGeometry(g, violet, out, { target: selectedTarget, name: "group" });
       }
     }
@@ -473,6 +551,26 @@ export function deckLayers(
       },
       parameters: { depthTest: false },
     }),
+    // Point bounds: a ring with a dot, hollow for this episode's draw.
+    new ScatterplotLayer({
+      id: "bound-marks",
+      data: [...out.marks, ...draftOut.marks.map((m) => ({ ...m, color: [255, 255, 255, 245] as RGBA }))],
+      getPosition: (d: Mark) => d.position as [number, number, number],
+      getFillColor: (d: Mark) => (d.dashed ? [0, 0, 0, 0] : [d.color[0], d.color[1], d.color[2], 90]),
+      getLineColor: (d: Mark) => [d.color[0], d.color[1], d.color[2], 255],
+      stroked: true,
+      filled: true,
+      getRadius: 7,
+      radiusUnits: "pixels",
+      lineWidthMinPixels: lw(2),
+      billboard: true,
+      pickable: true,
+      onClick: (info: any) => {
+        if (info.object?.target) onSelect(info.object.target);
+        return true;
+      },
+      parameters: { depthTest: false },
+    }),
     new SolidPolygonLayer({
       id: "draft-bound-faces",
       data: draftOut.faces,
@@ -626,7 +724,7 @@ export function deckLayers(
   // Aircraft: a dot in space at the sampled altitude (toggleable).
   if (visibility.aircraft) {
     // Per-aircraft goal: a faint line to each aircraft's sampled target plus a
-    // hollow ring at it, so reseeding shows the per-aircraft destination spread.
+    // hollow ring at it, so stepping the episode shows the per-aircraft destination spread.
     // Once the episode run is in, its aircraft's own resolved targets are
     // drawn below instead of the preview's draw of them.
     const targeted = flown ? [] : preview.sampled_aircraft.filter((a: any) => a.target);
@@ -754,8 +852,14 @@ export function deckLayers(
           radiusUnits: "pixels",
           billboard: true,
           pickable: true,
+          onClick: (info) => {
+            const a = info.object as SpawnedAircraft | undefined;
+            if (a) onPickAircraft?.({ key: a.callsign, at_s: a.time_s, acid: a.callsign, actype: a.actype });
+            return !!a;
+          },
           parameters: { depthTest: false },
         }),
+        pickRing(flown.filter((a) => a.callsign === picked).map((a) => [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)])),
       );
       // Each aircraft's route as resolved for it: a line through its targets,
       // and at each target its constraint window - the reach disc, the
@@ -878,8 +982,18 @@ export function deckLayers(
           radiusUnits: "pixels",
           billboard: true,
           pickable: true,
+          onClick: (info) => {
+            const a = info.object as any;
+            if (a) onPickAircraft?.({ key: `preview:${info.index}`, at_s: a.spawn_time, acid: null, actype: a.actype });
+            return !!a;
+          },
           parameters: { depthTest: false },
         }),
+        pickRing(
+          preview.sampled_aircraft
+            .filter((_: any, i: number) => `preview:${i}` === picked)
+            .map((a: any) => [a.lon, a.lat, zMeters(a.alt_ft)]),
+        ),
       );
     }
   }

@@ -3,8 +3,7 @@
 // Shape/Position · Constraints · Appearance · Advanced sub-groups; `QueryableCard`
 // wraps that body in a collapsible card for any legacy list view.
 import type { SpecDict } from "../../api";
-import BoundsEditor, { NumField } from "../BoundsEditor";
-import { footprintCenter } from "../../specHelpers";
+import ShapeEditor, { NumField } from "../ShapeEditor";
 import { CollapsibleCard, EyeToggle } from "./Section";
 import { FieldGroup } from "./FieldGroup";
 import { Picker } from "./Picker";
@@ -17,11 +16,11 @@ type QueryableBodyProps = {
   regionNames: string[];
   namedRegions: Record<string, SpecDict>;
   namedRegionNames: string[];
-  onNewBoundsRegion: () => void;
-  onNewSampleRegion: () => void;
+  // A new bounds for it: an area for a region, a point for a waypoint.
+  onNewShape: () => void;
   resolveRegion: (name: string) => SpecDict | undefined;
   onEditRegion: (name: string, bounds: SpecDict) => void;
-  boundsRefCount: (name: string) => number;
+  shapeRefCount: (name: string) => number;
   onChange: (q: SpecDict) => void;
   onFocus: () => void;
 };
@@ -34,11 +33,10 @@ export function QueryableBody({
   regionNames,
   namedRegions,
   namedRegionNames,
-  onNewBoundsRegion,
-  onNewSampleRegion,
+  onNewShape,
   resolveRegion,
   onEditRegion,
-  boundsRefCount,
+  shapeRefCount,
   onChange,
   onFocus,
 }: QueryableBodyProps) {
@@ -83,11 +81,12 @@ export function QueryableBody({
             q={q}
             namedRegions={namedRegions}
             namedRegionNames={namedRegionNames}
-            onNewSampleRegion={onNewSampleRegion}
+            onNewPoint={onNewShape}
             resolveRegion={resolveRegion}
             onEditRegion={onEditRegion}
-            boundsRefCount={boundsRefCount}
+            shapeRefCount={shapeRefCount}
             onChange={onChange}
+            onFocus={onFocus}
           />
         </FieldGroup>
         <FieldGroup title="Constraints">
@@ -101,16 +100,17 @@ export function QueryableBody({
   return (
     <div className="queryable-body">
       <FieldGroup title="Shape" defaultOpen>
-        <BoundsEditor
-          bounds={q.bounds}
-          onChange={(b) => onChange({ ...q, bounds: b })}
+        <ShapeEditor
+          shape={q.shape}
+          onChange={(b) => onChange({ ...q, shape: b })}
           onFocus={onFocus}
           regionNames={namedRegionNames}
+          areaOnly
           requireRef
-          onNewRegion={onNewBoundsRegion}
+          onNewRegion={onNewShape}
           resolveRegion={resolveRegion}
           onEditRegion={onEditRegion}
-          refCount={q.bounds?.ref ? boundsRefCount(q.bounds.ref) : undefined}
+          refCount={q.shape?.ref ? shapeRefCount(q.shape.ref) : undefined}
         />
       </FieldGroup>
       {appearance}
@@ -178,80 +178,53 @@ export function VisualizationToggles({
   );
 }
 
-// Position / shape source for a waypoint: a navdb fix, a fixed lat/lon, or a
-// position sampled within a region (per episode or per aircraft).
+// Where a waypoint is: its point bounds - at a lat/lon or a navdb fix, placed
+// anew each episode, in a group - edited here in place. A placed point can be
+// drawn once an episode for every aircraft, or for each aircraft on its own.
 function WaypointPosition({
   q,
   namedRegions,
   namedRegionNames,
-  onNewSampleRegion,
+  onNewPoint,
   resolveRegion,
   onEditRegion,
-  boundsRefCount,
+  shapeRefCount,
   onChange,
+  onFocus,
 }: {
   q: SpecDict;
   namedRegions: Record<string, SpecDict>;
   namedRegionNames: string[];
-  onNewSampleRegion: () => void;
+  onNewPoint: () => void;
   resolveRegion: (name: string) => SpecDict | undefined;
   onEditRegion: (name: string, bounds: SpecDict) => void;
-  boundsRefCount: (name: string) => number;
+  shapeRefCount: (name: string) => number;
   onChange: (q: SpecDict) => void;
+  onFocus: () => void;
 }) {
-  const named = q.waypoint != null;
-  const sampled = q.sample != null;
-  // Sampled waypoint specs keep lat/lon in sync with the sample region center
-  // so the static query target stays schema-stable. Per-aircraft samples are
-  // compiled onto route steps when this waypoint is used in a spawn route.
-  const setSampleRegion = (bounds: SpecDict) => {
-    const resolved = bounds?.ref ? namedRegions[bounds.ref] : bounds;
-    const fp = resolved?.footprint ?? resolved;
-    const [lat, lon] = footprintCenter(fp);
-    const next: SpecDict = { ...q, sample: bounds };
-    if (Number.isFinite(lat) && Number.isFinite(lon)) {
-      next.lat = lat;
-      next.lon = lon;
-    }
-    onChange(next);
-  };
+  const ref = q.shape?.ref;
+  const placed = !!(ref && namedRegions[ref]?.placement);
   return (
     <div>
-      <div className="row">
-        <label className="radio">
-          <input type="radio" checked={named} onChange={() => onChange({ ...stripPos(q), waypoint: q.waypoint ?? "EKROS" })} />
-          navdb fix
-        </label>
-        <label className="radio">
-          <input type="radio" checked={!named} onChange={() => onChange({ ...stripPos(q), lat: q.lat ?? 52.0, lon: q.lon ?? 4.75 })} />
-          lat/lon
-        </label>
-      </div>
-      {!named && (
-        <label className="radio">
-          <input
-            type="checkbox"
-            checked={sampled}
-            onChange={(e) => {
-              if (e.target.checked) onNewSampleRegion();
-              else onChange(stripSample(q));
-            }}
-          />
-          sample position within a region
-        </label>
-      )}
-      {named ? (
-        <label className="numfield inline">
-          <span>fix</span>
-          <input value={q.waypoint ?? ""} onChange={(e) => onChange({ ...q, waypoint: e.target.value.toUpperCase() })} />
-        </label>
-      ) : sampled ? (
+      <ShapeEditor
+        shape={q.shape ?? {}}
+        onChange={(b) => onChange({ ...q, shape: b })}
+        onFocus={onFocus}
+        regionNames={namedRegionNames}
+        pointOnly
+        requireRef
+        onNewRegion={onNewPoint}
+        resolveRegion={resolveRegion}
+        onEditRegion={onEditRegion}
+        refCount={ref ? shapeRefCount(ref) : undefined}
+      />
+      {placed && (
         <div className="sample-region">
           <label className="numfield inline">
-            <span>sample</span>
+            <span>drawn</span>
             <Picker
               searchable={false}
-              placeholder="per episode (shared)"
+              placeholder="once an episode"
               value={q.sample_per === "aircraft" ? "aircraft" : "episode"}
               onChange={(v) => {
                 const next = { ...q };
@@ -260,31 +233,16 @@ function WaypointPosition({
                 onChange(next);
               }}
               options={[
-                { value: "episode", label: "per episode (shared)" },
-                { value: "aircraft", label: "per aircraft (unique)" },
+                { value: "episode", label: "once an episode", description: "where the point is placed, for every aircraft" },
+                { value: "aircraft", label: "for each aircraft", description: "each aircraft its own spot in the point's region" },
               ]}
             />
           </label>
           <div className="muted small">
             {q.sample_per === "aircraft"
-              ? "when this waypoint appears in a spawn route, each aircraft draws its route target from these bounds at spawn; query fields then read that target from BlueSky."
-              : "one position (lat/lon + altitude) drawn from these bounds each episode, shared by all aircraft; reseed to preview."}
+              ? "when this waypoint is on a spawn route, each aircraft draws its own target in the point's region at spawn; query fields read that target from BlueSky."
+              : "the point's spot this episode, the same for every aircraft and whatever else uses the point; step the map's episode to see another."}
           </div>
-          <BoundsEditor
-            bounds={q.sample}
-            onChange={setSampleRegion}
-            regionNames={namedRegionNames}
-            requireRef
-            onNewRegion={onNewSampleRegion}
-            resolveRegion={resolveRegion}
-            onEditRegion={onEditRegion}
-            refCount={q.sample?.ref ? boundsRefCount(q.sample.ref) : undefined}
-          />
-        </div>
-      ) : (
-        <div className="grid2">
-          <NumField label="lat" value={q.lat} onChange={(v) => onChange({ ...q, lat: v })} />
-          <NumField label="lon" value={q.lon} onChange={(v) => onChange({ ...q, lon: v })} />
         </div>
       )}
     </div>
@@ -553,12 +511,4 @@ export function OptNumField({
   );
 }
 
-function stripPos(q: SpecDict): SpecDict {
-  const { lat, lon, waypoint, sample, ...rest } = q;
-  return rest;
-}
 
-function stripSample(q: SpecDict): SpecDict {
-  const { sample, ...rest } = q;
-  return rest;
-}

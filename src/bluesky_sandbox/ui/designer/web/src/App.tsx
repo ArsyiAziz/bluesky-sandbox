@@ -2,7 +2,9 @@ import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMe
 import { api, type SpecDict, type ValidateResult } from "./api";
 import { forgetModuleMembers, useCodeIntel } from "./code/pythonEditor";
 import { DEFAULT_SPEC } from "./defaultSpec";
-import { migrateRewardHooks, migrateRotationGroups, normalizeToRegions } from "./specHelpers";
+import { migrateRewardHooks, migrateRotationGroups, migrateShapeKeys, normalizeToRegions } from "./specHelpers";
+import { migrateWaypointMembers } from "./groupTree";
+import { migrateWaypointsToPoints } from "./waypointPoints";
 import MapTab from "./components/MapTab";
 import CodeTab from "./components/CodeTab";
 import RouteTab from "./route/RouteTab";
@@ -20,8 +22,19 @@ import { setThemePreference, type ThemePreference, useTheme } from "./theme";
 
 type Tab = "map" | "route" | "spaces" | "config" | "code" | "metadata";
 
-const normalizeSpec = (spec: SpecDict): SpecDict =>
-  migrateRotationGroups(migrateRewardHooks(normalizeToRegions(spec)));
+const normalizeSpec = (spec: SpecDict): SpecDict => {
+  const next = migrateRotationGroups(migrateRewardHooks(normalizeToRegions(migrateShapeKeys(spec) as SpecDict)));
+  // Older designs' waypoints: grouped directly (`wp:` members, now anchors),
+  // and positioned on themselves - each moved onto a point of its own.
+  const older =
+    (next?.transform?.groups ?? []).some((g: SpecDict) => (g.members ?? []).some((m: string) => m.startsWith("wp:"))) ||
+    Object.values(next?.queryables ?? {}).some((q: any) => q?.type === "waypoint" && !q.shape);
+  if (!older) return next;
+  const out = structuredClone(next);
+  migrateWaypointMembers(out);
+  migrateWaypointsToPoints(out);
+  return out;
+};
 
 const IMPORT_JSON_VALUE = "__import_json__";
 // Each tab: its label, what it is for (its tooltip), and its icon's path (24px).
@@ -88,7 +101,8 @@ export default function App() {
   // Parse the editor text into a spec object; null while the JSON is invalid.
   const { spec, parseError } = useMemo<{ spec: SpecDict | null; parseError: string | null }>(() => {
     try {
-      return { spec: JSON.parse(specText), parseError: null };
+      // Typed JSON may use the older keys ("regions", an element's "bounds").
+      return { spec: migrateShapeKeys(JSON.parse(specText)), parseError: null };
     } catch (e) {
       return { spec: null, parseError: (e as Error).message };
     }
@@ -526,10 +540,18 @@ export default function App() {
         )}
       </main>
 
-      <footer className={validation && !validation.ok ? "statusbar invalid" : "statusbar"}>
+      <footer
+        className={
+          validation && !validation.ok ? "statusbar invalid" : validation?.warnings?.length ? "statusbar warned" : "statusbar"
+        }
+      >
         {validation && !validation.ok ? (
           <span className="invalid-reason" title={validation.error}>
             <span aria-hidden="true">⚠</span> {validation.error}
+          </span>
+        ) : validation?.warnings?.length ? (
+          <span className="invalid-reason" title={validation.warnings.join("\n")}>
+            <span aria-hidden="true">⚠</span> {validation.warnings.join(" · ")}
           </span>
         ) : (
           <span role="status" aria-live="polite">
@@ -668,6 +690,13 @@ function ValidationBadge({ validation }: { validation: ValidateResult | null }) 
       <span className="badge pending" title="Checking the design…">
         <span aria-hidden="true">…</span>
         <span className="visually-hidden">Checking the design</span>
+      </span>
+    );
+  if (validation.ok && validation.warnings?.length)
+    return (
+      <span className="badge warn" title={`The design builds - ${validation.warnings.join("; ")}`}>
+        <span aria-hidden="true">✓</span> Valid · {validation.warnings.length} warning
+        {validation.warnings.length === 1 ? "" : "s"}
       </span>
     );
   if (validation.ok)

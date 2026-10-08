@@ -9,9 +9,11 @@ export function Section({
   title,
   subtitle,
   hint,
+  defaultOpen = true,
   children,
 }: {
   title: string;
+  defaultOpen?: boolean;
   subtitle?: string;
   /** What this section is for, shown on hover. A marker is rendered beside the
    *  title so a reader can tell a hint exists rather than having to hover
@@ -19,7 +21,7 @@ export function Section({
   hint?: string;
   children: any;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="panel-section">
       <h4 onClick={() => setOpen(!open)}>

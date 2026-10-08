@@ -1,17 +1,19 @@
 // Drag-edit handles: derive the draggable control points for the selected
 // element (box corners, polygon vertices, center, move, rotate) and apply a
 // handle drag back onto the spec. Pure functions over the spec + geometry.
+import { waypointLatLon, waypointPoint } from "../waypointPoints";
 import type { PreviewResult, SpecDict } from "../api";
 import { isSampledValue } from "../specHelpers";
+import { anchoredWaypoints, shapesInGroup } from "../groupTree";
 import type { DragState, EditHandle, EditTarget, RGBA } from "./types";
 import {
   NAMED,
   WAYPOINT_LIFT_M,
-  boundsCenter,
-  boundsRadiusDeg,
+  shapeCenter,
+  shapeRadiusDeg,
   boxCorner,
   cssToRgb,
-  frontendBoundsGeometry,
+  frontendShapeGeometry,
   inverseRotateLatLon,
   latLonObj,
   moveFootprint,
@@ -32,31 +34,53 @@ export function targetKey(target: EditTarget | null | undefined): string {
 
 // The member bounds of a transform group, resolved to their RegionBounds.
 // (Waypoint members — ``wp:<name>`` — have no bounds and are skipped.)
-export function groupMemberBounds(spec: SpecDict | null, id: string): SpecDict[] {
-  const group = (spec?.transform?.groups ?? []).find((g: any) => g.id === id);
-  if (!group) return [];
-  return (group.members ?? [])
-    .filter((m: string) => !m.startsWith("wp:"))
-    .map((name: string) => spec?.regions?.[name])
+export function groupMemberShapes(spec: SpecDict | null, id: string): SpecDict[] {
+  return shapesInGroup(spec, id)
+    .map((name: string) => spec?.shapes?.[name])
     .filter(Boolean) as SpecDict[];
 }
 
 // Lat/lon points of every member of a group: footprint vertices for bounds, the
 // position for ``wp:<name>`` waypoint members.
 function groupMemberPoints(spec: SpecDict | null, id: string): [number, number][] {
-  const group = (spec?.transform?.groups ?? []).find((g: any) => g.id === id);
-  if (!group) return [];
   const pts: [number, number][] = [];
-  for (const m of group.members ?? []) {
-    if (typeof m === "string" && m.startsWith("wp:")) {
-      const q = spec?.queryables?.[m.slice(3)];
-      if (q && Number.isFinite(q.lat) && Number.isFinite(q.lon)) pts.push([q.lat, q.lon]);
-    } else {
-      const g = spec?.regions?.[m] ? frontendBoundsGeometry(spec.regions[m]) : null;
-      if (g) for (const v of g.vertices) pts.push(v);
-    }
+  const bounds = shapesInGroup(spec, id);
+  for (const m of bounds) {
+    const g = spec?.shapes?.[m] ? frontendShapeGeometry(spec.shapes[m]) : null;
+    if (g) for (const v of g.vertices) pts.push(v);
+  }
+  for (const name of anchoredWaypoints(spec, bounds, id)) {
+    const q = spec?.queryables?.[name];
+    if (q && Number.isFinite(q.lat) && Number.isFinite(q.lon)) pts.push([q.lat, q.lon]);
   }
   return pts;
+}
+
+// Move waypoints anchored to a bounds with it: from where the drag started,
+// through ``map``.
+function carryAnchored(
+  next: SpecDict,
+  base: SpecDict,
+  names: string[],
+  map: (lat: number, lon: number) => [number, number],
+) {
+  for (const name of names) {
+    const startQ = base.queryables?.[name];
+    const q = next.queryables?.[name];
+    if (!startQ || !q || !Number.isFinite(startQ.lat) || !Number.isFinite(startQ.lon)) continue;
+    const { waypoint: _fix, ...rest } = q;
+    const [lat, lon] = map(startQ.lat, startQ.lon);
+    next.queryables[name] = { ...rest, lat, lon };
+  }
+}
+
+// The named bounds an edit target draws from, if it is one.
+function shapeNameOf(spec: SpecDict, target: EditTarget): string | null {
+  if (target.scope === "region") return target.name;
+  if (target.scope === "airspace") return spec.airspace?.ref ?? null;
+  if (target.scope === "queryable") return spec.queryables?.[target.name]?.shape?.ref ?? null;
+  if (target.scope === "spawn") return spec.spawn?.regions?.[target.index]?.shape?.ref ?? null;
+  return null;
 }
 
 // Lat/lon bounding box of a group's member geometry, and its center.
@@ -76,30 +100,32 @@ export function sameTarget(a: EditTarget | null | undefined, b: EditTarget | nul
 
 // Geometry lives in named regions; a consumer's bounds may be a {ref: name}.
 // Resolve to the underlying region so handles draw on — and edits flow to — it.
-export function resolveBounds(spec: SpecDict | null, b: any): SpecDict | null {
+export function resolveShape(spec: SpecDict | null, b: any): SpecDict | null {
   if (!spec || !b) return null;
-  if (typeof b.ref === "string") return spec.regions?.[b.ref] ?? null;
+  if (typeof b.ref === "string") return spec.shapes?.[b.ref] ?? null;
   return b;
 }
 
 export function buildEditHandles(spec: SpecDict | null, preview?: PreviewResult | null, selected?: EditTarget | null): EditHandle[] {
   if (!spec || !selected) return [];
   const handles: EditHandle[] = [];
-  const airspaceBounds = resolveBounds(spec, spec.airspace);
-  if (airspaceBounds && sameTarget(selected, { scope: "airspace" })) {
-    handles.push(...boundsEditHandles(airspaceBounds, { scope: "airspace" }, "airspace", NAMED.blue));
+  const airspaceShape = resolveShape(spec, spec.airspace);
+  if (airspaceShape && sameTarget(selected, { scope: "airspace" })) {
+    handles.push(...shapeEditHandles(airspaceShape, { scope: "airspace" }, "airspace", NAMED.blue));
   }
   for (const [name, q] of Object.entries(spec.queryables ?? {})) {
     const target: EditTarget = { scope: "queryable", name };
     if (!sameTarget(selected, target)) continue;
     const item = q as SpecDict;
     if (item.type === "waypoint") {
-      // A sampled waypoint has no fixed point to drag — its position is drawn
-      // from its sample region (per episode or per aircraft), so skip the handle.
-      if (item.sample) continue;
+      // A placed point (or an older sampled waypoint) has no fixed spot to
+      // drag - it is drawn anew each episode - so no handle.
+      const point = waypointPoint(spec, item);
+      if (item.sample || point?.placement) continue;
       const resolved = preview?.queryables.find((p: any) => p.kind === "waypoint" && p.name === name) as any;
-      const lon = Number.isFinite(item.lon) ? item.lon : resolved?.lon;
-      const lat = Number.isFinite(item.lat) ? item.lat : resolved?.lat;
+      const at = waypointLatLon(spec, item);
+      const lat = at ? at[0] : resolved?.lat;
+      const lon = at ? at[1] : resolved?.lon;
       const altFt = Number.isFinite(item.alt_ft) ? item.alt_ft : resolved?.alt_ft;
       if (Number.isFinite(lat) && Number.isFinite(lon)) {
         handles.push({
@@ -114,21 +140,21 @@ export function buildEditHandles(spec: SpecDict | null, preview?: PreviewResult 
         });
       }
     } else {
-      const bounds = resolveBounds(spec, item.bounds);
-      if (bounds) handles.push(...boundsEditHandles(bounds, target, name, cssToRgb(item.color)));
+      const bounds = resolveShape(spec, item.shape);
+      if (bounds) handles.push(...shapeEditHandles(bounds, target, name, cssToRgb(item.color)));
     }
   }
   (spec.spawn?.regions ?? []).forEach((region: SpecDict, index: number) => {
     const target: EditTarget = { scope: "spawn", index };
     if (sameTarget(selected, target)) {
-      const bounds = resolveBounds(spec, region.bounds);
-      if (bounds) handles.push(...boundsEditHandles(bounds, target, region.name ?? `spawn_${index}`, NAMED.green));
+      const bounds = resolveShape(spec, region.shape);
+      if (bounds) handles.push(...shapeEditHandles(bounds, target, region.name ?? `spawn_${index}`, NAMED.green));
     }
   });
   // Standalone named bounds (not yet referenced, or sample-only) edit directly.
   if (selected.scope === "region") {
-    const bounds = spec.regions?.[selected.name];
-    if (bounds) handles.push(...boundsEditHandles(bounds, selected, selected.name, NAMED.slate));
+    const bounds = spec.shapes?.[selected.name];
+    if (bounds) handles.push(...shapeEditHandles(bounds, selected, selected.name, NAMED.slate));
   }
   // A transform group: a single move handle at the members' center + a rotate
   // handle, which translate / spin every member bounds together (static edit).
@@ -146,11 +172,11 @@ export function buildEditHandles(spec: SpecDict | null, preview?: PreviewResult 
   return handles;
 }
 
-export function boundsEditHandles(bounds: SpecDict, target: EditTarget, name: string, color: RGBA): EditHandle[] {
+export function shapeEditHandles(bounds: SpecDict, target: EditTarget, name: string, color: RGBA): EditHandle[] {
   const fp = bounds?.footprint;
   if (!fp) return [];
   const base = `${target.scope}:${"name" in target ? target.name : "index" in target ? target.index : "airspace"}`;
-  const center = boundsCenter(bounds);
+  const center = shapeCenter(bounds);
   const rotation = bounds.rotation_deg ?? 0;
   const handle = (role: EditHandle["role"], lat: number, lon: number, extra: Partial<EditHandle> = {}): EditHandle => ({
     id: `${base}:${role}:${extra.index ?? 0}`,
@@ -191,9 +217,16 @@ export function boundsEditHandles(bounds: SpecDict, target: EditTarget, name: st
     default:
       break;
   }
-  if (center) {
+  // A generated shape is drawn at a random turn each episode: it moves, but a
+  // rotation would mean nothing.
+  if (center && fp.type === "generated") {
+    if (fp.params?.center) handles.push(handle("move-shape", center[0], center[1]));
+  } else if (center && fp.type === "point") {
+    // A point only moves: turning it about itself changes nothing.
     handles.push(handle("move-shape", center[0], center[1]));
-    const radius = Math.max(0.05, boundsRadiusDeg(bounds) * 0.65);
+  } else if (center) {
+    handles.push(handle("move-shape", center[0], center[1]));
+    const radius = Math.max(0.05, shapeRadiusDeg(bounds) * 0.65);
     const cosLat = Math.max(0.01, Math.cos((center[0] * Math.PI) / 180));
     // Sit at the shape's "north" point and travel with it: the handle angle uses
     // the same CCW convention as rotateLatLon, so dragging spins the shape the
@@ -204,14 +237,14 @@ export function boundsEditHandles(bounds: SpecDict, target: EditTarget, name: st
   return handles;
 }
 
-export function boundsForTarget(spec: SpecDict, target: EditTarget): SpecDict | null {
+export function shapeForTarget(spec: SpecDict, target: EditTarget): SpecDict | null {
   // Resolve through {ref} so handle edits mutate the shared named region in
   // place (every consumer referencing it updates together).
-  if (target.scope === "airspace") return resolveBounds(spec, spec.airspace);
-  if (target.scope === "queryable") return resolveBounds(spec, spec.queryables?.[target.name]?.bounds);
-  if (target.scope === "region") return spec.regions?.[target.name] ?? null;
+  if (target.scope === "airspace") return resolveShape(spec, spec.airspace);
+  if (target.scope === "queryable") return resolveShape(spec, spec.queryables?.[target.name]?.shape);
+  if (target.scope === "region") return spec.shapes?.[target.name] ?? null;
   if (target.scope === "group") return null; // a group has no single bounds
-  return resolveBounds(spec, spec.spawn?.regions?.[target.index]?.bounds);
+  return resolveShape(spec, spec.spawn?.regions?.[target.index]?.shape);
 }
 
 export function dragStateForHandle(handle: EditHandle, spec: SpecDict, startY: number): DragState {
@@ -220,13 +253,13 @@ export function dragStateForHandle(handle: EditHandle, spec: SpecDict, startY: n
     const box = groupBbox(startSpec, handle.target.id);
     return { handle, startSpec, startY, rotationCenter: box?.center ?? null, rotationDeg: 0 };
   }
-  const startBounds = boundsForTarget(startSpec, handle.target);
+  const startShape = shapeForTarget(startSpec, handle.target);
   return {
     handle,
     startSpec,
     startY,
-    rotationCenter: startBounds ? boundsCenter(startBounds) : null,
-    rotationDeg: startBounds?.rotation_deg ?? 0,
+    rotationCenter: startShape ? shapeCenter(startShape) : null,
+    rotationDeg: startShape?.rotation_deg ?? 0,
   };
 }
 
@@ -240,24 +273,17 @@ function updateGroupFromHandle(next: SpecDict, handle: EditHandle, lon: number, 
   const box = groupBbox(base, handle.target.id);
   if (!box) return next;
   const [clat, clon] = box.center;
-  const group = (next.transform?.groups ?? []).find((g: any) => g.id === (handle.target as any).id);
-  const members: string[] = group?.members ?? [];
+  // Every bounds in it - its subgroups' too - and the waypoints anchored to them.
+  const id = (handle.target as any).id as string;
+  const members = shapesInGroup(base, id);
+  const anchored = anchoredWaypoints(base, members, id);
   if (handle.role === "move-shape") {
     const dLat = lat - clat;
     const dLon = lon - clon;
+    carryAnchored(next, base, anchored, (a, b) => [a + dLat, b + dLon]);
     for (const m of members) {
-      if (m.startsWith("wp:")) {
-        const name = m.slice(3);
-        const startQ = base.queryables?.[name];
-        const q = next.queryables?.[name];
-        if (startQ && q && Number.isFinite(startQ.lat) && Number.isFinite(startQ.lon)) {
-          q.lat = startQ.lat + dLat;
-          q.lon = startQ.lon + dLon;
-        }
-        continue;
-      }
-      const startB = base.regions?.[m];
-      const b = next.regions?.[m];
+      const startB = base.shapes?.[m];
+      const b = next.shapes?.[m];
       if (!startB || !b) continue;
       b.footprint = structuredClone(startB.footprint);
       moveFootprint(b.footprint, dLat, dLon);
@@ -268,23 +294,13 @@ function updateGroupFromHandle(next: SpecDict, handle: EditHandle, lon: number, 
     const cosLat = Math.max(0.01, Math.cos((clat * Math.PI) / 180));
     const angleDeg = (Math.atan2(lat - clat, (lon - clon) * cosLat) * 180) / Math.PI;
     const delta = (((angleDeg - 90) % 360) + 360) % 360;
+    carryAnchored(next, base, anchored, (a, b) => rotateLatLon(a, b, box.center, delta));
     for (const m of members) {
-      if (m.startsWith("wp:")) {
-        const name = m.slice(3);
-        const startQ = base.queryables?.[name];
-        const q = next.queryables?.[name];
-        if (startQ && q && Number.isFinite(startQ.lat) && Number.isFinite(startQ.lon)) {
-          const [nlat, nlon] = rotateLatLon(startQ.lat, startQ.lon, box.center, delta);
-          q.lat = nlat;
-          q.lon = nlon;
-        }
-        continue;
-      }
-      const startB = base.regions?.[m];
-      const b = next.regions?.[m];
+      const startB = base.shapes?.[m];
+      const b = next.shapes?.[m];
       if (!startB || !b) continue;
       b.footprint = structuredClone(startB.footprint);
-      const mc = boundsCenter(b); // member center, from the start snapshot
+      const mc = shapeCenter(b); // member center, from the start snapshot
       if (mc) {
         const [nlat, nlon] = rotateLatLon(mc[0], mc[1], box.center, delta);
         moveFootprint(b.footprint, nlat - mc[0], nlon - mc[1]);
@@ -312,15 +328,22 @@ export function updateSpecFromHandle(
   if (handle.target.scope === "queryable") {
     const q = next.queryables?.[handle.target.name];
     if ((handle.role === "waypoint" || handle.role === "move-shape") && q?.type === "waypoint") {
+      // Moved: its point - off any navdb fix it was at.
+      const point = waypointPoint(next, q);
+      if (point) {
+        point.footprint.center = latLonObj(lat, lon);
+        delete point.footprint.fix;
+        return next;
+      }
       const { waypoint, ...rest } = q;
       next.queryables[handle.target.name] = { ...rest, lat, lon };
       return next;
     }
   }
-  const bounds = boundsForTarget(next, handle.target);
+  const bounds = shapeForTarget(next, handle.target);
   const fp = bounds?.footprint;
   if (!fp) return next;
-  const center = boundsCenter(bounds);
+  const center = shapeCenter(bounds);
   const spatialHandle = handle.role === "box-corner" || handle.role === "polygon-vertex" || handle.role === "center";
   const rotationCenter = drag?.rotationCenter ?? center;
   const rotationDeg = drag?.rotationDeg ?? bounds.rotation_deg ?? 0;
@@ -329,10 +352,18 @@ export function updateSpecFromHandle(
   if (spatialHandle && rotationCenter && rotationDeg) {
     [editLat, editLon] = inverseRotateLatLon(lat, lon, rotationCenter, rotationDeg);
   }
+  // Waypoints anchored to this bounds move with it.
+  const shapeName = shapeNameOf(next, handle.target);
+  const anchored = shapeName && drag ? anchoredWaypoints(drag.startSpec, [shapeName]) : [];
   if (handle.role === "move-shape" && drag) {
-    const startBounds = boundsForTarget(drag.startSpec, handle.target);
-    const startCenter = startBounds ? boundsCenter(startBounds) : null;
-    if (startCenter) moveFootprint(fp, lat - startCenter[0], lon - startCenter[1]);
+    const startShape = shapeForTarget(drag.startSpec, handle.target);
+    const startCenter = startShape ? shapeCenter(startShape) : null;
+    if (startCenter) {
+      const dLat = lat - startCenter[0];
+      const dLon = lon - startCenter[1];
+      moveFootprint(fp, dLat, dLon);
+      carryAnchored(next, drag.startSpec, anchored, (a, b) => [a + dLat, b + dLon]);
+    }
     return next;
   }
   if (handle.role === "rotate") {
@@ -340,12 +371,15 @@ export function updateSpecFromHandle(
       const cosLat = Math.max(0.01, Math.cos((center[0] * Math.PI) / 180));
       const angleDeg = (Math.atan2(lat - center[0], (lon - center[1]) * cosLat) * 180) / Math.PI;
       bounds.rotation_deg = (((angleDeg - 90) % 360) + 360) % 360;
+      const startShape = drag ? shapeForTarget(drag.startSpec, handle.target) : null;
+      const turn = (bounds.rotation_deg ?? 0) - (startShape?.rotation_deg ?? 0);
+      if (drag) carryAnchored(next, drag.startSpec, anchored, (a, b) => rotateLatLon(a, b, center, turn));
     }
     return next;
   }
   if (handle.role === "box-corner") {
-    const startBounds = drag ? boundsForTarget(drag.startSpec, handle.target) : null;
-    const startFp = startBounds?.footprint;
+    const startShape = drag ? shapeForTarget(drag.startSpec, handle.target) : null;
+    const startFp = startShape?.footprint;
     if (rotationDeg && rotationCenter && startFp?.type === "box" && handle.index != null) {
       updateRotatedBoxCorner(fp, startFp, handle.index, lat, lon, rotationDeg, rotationCenter);
       return next;
@@ -361,9 +395,9 @@ export function updateSpecFromHandle(
     fp.lon_min_deg = Math.min(lons[0], lons[1]);
     fp.lon_max_deg = Math.max(lons[0], lons[1]);
   } else if (handle.role === "polygon-vertex" && handle.index != null && fp.coords?.[handle.index]) {
-    const startBounds = drag ? boundsForTarget(drag.startSpec, handle.target) : null;
-    const startFp = startBounds?.footprint;
-    const startCenter = startBounds ? boundsCenter(startBounds) : null;
+    const startShape = drag ? shapeForTarget(drag.startSpec, handle.target) : null;
+    const startFp = startShape?.footprint;
+    const startCenter = startShape ? shapeCenter(startShape) : null;
     if (rotationDeg && startFp?.type === "polygon" && startCenter) {
       const displayPoints = (startFp.coords ?? []).map(([rawLat, rawLon]: [number, number]) =>
         rotateLatLon(rawLat, rawLon, startCenter, rotationDeg),

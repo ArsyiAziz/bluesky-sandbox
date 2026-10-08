@@ -881,6 +881,12 @@ button:disabled {
   color: var(--danger);
 }
 
+/* Builds, with something worth knowing. */
+.badge.warn {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+}
+
 .badge.pending {
   background: var(--raised);
   color: var(--muted);
@@ -3212,6 +3218,11 @@ button:disabled {
   background: var(--danger-strong-bg);
 }
 
+.statusbar.warned {
+  background: color-mix(in srgb, var(--warning) 70%, #000);
+  color: #fff;
+}
+
 .invalid-reason {
   white-space: nowrap;
   overflow: hidden;
@@ -3405,7 +3416,7 @@ button:disabled {
   }
 }
 
-/* Observation/action sample (Sampling tab) */
+/* Observation/action sample (Spaces › Sample) */
 /* The episode's aircraft, in spawn order; the picked one is highlighted. */
 .sampling-head {
   display: flex;
@@ -4305,4 +4316,576 @@ button:disabled {
 }
 .generate-run input.generate-folder {
   width: 120px;
+}
+
+/* The map's motion control: play, and the time moving regions are shown at. */
+.motion-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.motion-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+.motion-time {
+  min-width: 52px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Dependencies: a bounds' users and what it depends on, an element's bounds. */
+.deps-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 2px 0 8px;
+  font-size: 12px;
+}
+.deps-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 10px;
+}
+.deps-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.deps-label {
+  flex: none;
+  width: 78px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.chip.dep {
+  cursor: pointer;
+}
+.deps-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning-border);
+  border-radius: 6px;
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: 12px;
+}
+.deps-warning strong {
+  color: var(--warning-text);
+}
+.deps-actions {
+  display: flex;
+  gap: 6px;
+}
+.geo-row-flag {
+  flex: none;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning-text);
+  font-size: 10px;
+  font-weight: 600;
+}
+.geo-flag-note {
+  font-size: 11px;
+  color: var(--warning-text);
+  margin-bottom: 4px;
+}
+
+/* ---- Element kinds: each its color, wherever it shows ------------------- */
+[data-kind="airspace"] { --kind: var(--kind-airspace); }
+[data-kind="region"] { --kind: var(--kind-region); }
+[data-kind="waypoint"] { --kind: var(--kind-waypoint); }
+[data-kind="spawn"] { --kind: var(--kind-spawn); }
+[data-kind="bounds"] { --kind: var(--kind-bounds); }
+[data-kind="point"] { --kind: var(--kind-bounds); }
+[data-kind="area"] { --kind: var(--kind-bounds); }
+[data-kind="group"] { --kind: var(--kind-group); }
+[data-kind="routes"] { --kind: var(--kind-waypoint); }
+
+/* The inspector header: a bar in the element's color, its badge, its name. */
+.geo-inspector-head[data-kind] {
+  padding: 8px 8px 8px 10px;
+  margin: 0 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--kind);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--kind) 14%, transparent), transparent 70%);
+}
+.kind-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--kind);
+  background: color-mix(in srgb, var(--kind) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--kind) 45%, transparent);
+}
+.geo-row-kind[data-kind] {
+  color: var(--kind);
+  border-color: color-mix(in srgb, var(--kind) 40%, transparent);
+  background: color-mix(in srgb, var(--kind) 10%, transparent);
+}
+.chip.dep[data-kind] {
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--kind) 50%, transparent);
+  background: color-mix(in srgb, var(--kind) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--kind);
+  padding-left: 9px;
+}
+.chip.dep[data-kind]:hover {
+  background: color-mix(in srgb, var(--kind) 22%, transparent);
+}
+
+/* Back: to the list, or along the way a dependency was followed. */
+.geo-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-bottom: 10px;
+}
+.geo-crumbs .geo-back {
+  margin-bottom: 0;
+}
+
+/* Dependencies: one labeled row per relation. */
+.deps-panel.compact {
+  margin: -2px 0 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface-low);
+  border: 1px solid var(--border-subtle);
+}
+.deps-row .chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---- The bounds editor: titled sections, one grid of label | control ----- */
+.be-section {
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+.be-section:first-of-type {
+  border-top: none;
+  padding-top: 4px;
+}
+.be-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.be-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.shape-editor {
+  --label-col: 84px;
+}
+.shape-editor .numfield.inline > span,
+.shape-editor .param-optional > label {
+  min-width: var(--label-col);
+  width: var(--label-col);
+  flex: none;
+}
+/* A bare number field: its label beside it, as the rest. */
+.shape-editor .numfield:not(.inline) {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.shape-editor .numfield:not(.inline) > span {
+  width: var(--label-col);
+  flex: none;
+}
+.shape-editor .latlon {
+  grid-template-columns: var(--label-col) 1fr 1fr auto;
+}
+/* Lat and lon side by side: each its small label, then its input. */
+.shape-editor .latlon .numfield {
+  margin-top: 0;
+  min-width: 0;
+}
+.shape-editor .latlon .numfield > span {
+  width: auto;
+  flex: none;
+}
+.shape-editor .latlon .numfield input {
+  flex: 1;
+  min-width: 0;
+}
+.shape-editor .fp-params .value-field {
+  grid-template-columns: var(--label-col) 100px minmax(0, 1fr);
+}
+.shape-editor .field-doc,
+.shape-editor .generated-fp > .muted.small,
+.shape-editor .placement-editor > .muted.small,
+.shape-editor .motion-editor > .muted.small {
+  margin: 6px 0 2px;
+  line-height: 1.45;
+}
+.shape-editor details > summary {
+  margin-top: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+}
+.shape-editor .param-optional {
+  margin-top: 6px;
+}
+.shape-editor .param-regions {
+  display: grid;
+  grid-template-columns: var(--label-col) 1fr;
+  align-items: start;
+  gap: 6px;
+  margin-top: 6px;
+}
+.shape-editor .param-regions .sub-label {
+  margin: 4px 0 0;
+}
+.motion-item {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-low);
+}
+
+/* ---- The outline's view, and the bounds as a tree ------------------------ */
+.seg.geo-view {
+  margin-bottom: 12px;
+  font-size: 11px;
+}
+.geo-tree {
+  display: flex;
+  flex-direction: column;
+}
+/* Nested rows step in, with a guide line to their group. */
+.geo-row.nested {
+  margin-left: calc(var(--depth) * 14px);
+  position: relative;
+}
+.geo-row.nested::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: -5px;
+  bottom: 50%;
+  width: 6px;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: 3px;
+}
+.geo-row[draggable="true"] {
+  cursor: grab;
+}
+.geo-tree.dragging .geo-row {
+  cursor: grabbing;
+}
+.geo-row.dropping {
+  border-color: var(--kind-group);
+  background: color-mix(in srgb, var(--kind-group) 16%, transparent);
+  box-shadow: 0 0 0 1px var(--kind-group);
+}
+.geo-row-note {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.geo-caret {
+  flex: none;
+  width: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+}
+.geo-caret:hover {
+  color: var(--text);
+}
+.geo-drop-top {
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+.geo-drop-top.takes {
+  border-color: var(--kind-group);
+  color: var(--text);
+}
+.geo-drop-top.dropping {
+  background: color-mix(in srgb, var(--kind-group) 16%, transparent);
+}
+.geo-tree-sub {
+  margin: 8px 0 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+/* A chip that goes somewhere and can be removed: two buttons in one. */
+.chip.dep.with-x {
+  padding-right: 2px;
+}
+.chip-go {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.chip-go:hover {
+  text-decoration: underline;
+}
+.geo-inspector-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+/* Which episode every view shows: ‹ n ›, and back to 0. */
+.episode-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.episode-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.episode-controls {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.episode-controls button {
+  border: none;
+  border-radius: 0;
+  background: var(--surface);
+  padding: 2px 9px;
+  font-size: 14px;
+  line-height: 1;
+}
+.episode-controls button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.episode-controls input {
+  border: none;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface-low);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 4px;
+  min-width: 3ch;
+}
+.episode-zero {
+  font-size: 11px;
+}
+.motion-control .motion-row {
+  margin-top: 6px;
+}
+.episode-pick {
+  margin-top: 4px;
+}
+.mdp-sample {
+  margin: 10px 0 4px;
+}
+
+/* A point's navdb fix: type, pick from the matches nearest first. */
+.fix-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.fix-search input {
+  flex: 1;
+  min-width: 0;
+}
+.fix-hits {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  min-width: 240px;
+  margin: 2px 0 0;
+  padding: 3px 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  max-height: 240px;
+  overflow: auto;
+}
+.fix-hits li {
+  display: flex;
+  white-space: nowrap;
+  align-items: baseline;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fix-hits li.on {
+  background: var(--accent-soft);
+}
+
+/* ---- The outline by dependency: a light tree --------------------------- */
+.dep-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* Children hang off one guide: each draws its stretch of it and its tick,
+   the last only down to its tick. */
+.dep-children:not(.top) {
+  margin-left: 9px;
+  padding-left: 12px;
+}
+.dep-children:not(.top) > .dep-node {
+  position: relative;
+}
+.dep-children:not(.top) > .dep-node::before,
+.dep-children:not(.top) > .dep-node::after {
+  content: "";
+  position: absolute;
+  left: -12px;
+  border-color: var(--border-strong);
+  border-style: solid;
+  border-width: 0;
+}
+.dep-children:not(.top) > .dep-node::before {
+  top: 0;
+  bottom: 0;
+  border-left-width: 1px;
+}
+.dep-children:not(.top) > .dep-node:last-child::before {
+  bottom: auto;
+  height: 15px;
+}
+.dep-children:not(.top) > .dep-node::after {
+  top: 14px;
+  width: 9px;
+  border-top-width: 1px;
+}
+.dep-children.top > .dep-node + .dep-node {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+.dep-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-height: 28px;
+  padding: 2px 4px;
+  border-radius: 5px;
+}
+.dep-row:hover {
+  background: var(--surface-hover);
+}
+.dep-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 4px 1px 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+.dep-name:hover,
+.dep-name.on {
+  color: var(--accent-text);
+}
+.dep-kind {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--kind);
+  border: 1px solid color-mix(in srgb, var(--kind) 40%, transparent);
+  background: color-mix(in srgb, var(--kind) 10%, transparent);
+}
+.dep-how {
+  font-size: 10px;
+  color: var(--muted);
+  font-style: italic;
+}
+.dep-note {
+  font-size: 10px;
+  color: var(--muted);
+}
+.dep-tree .chip.dep {
+  font-size: 10.5px;
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+.dep-tree .chip.dep.on {
+  outline: 1px solid var(--accent);
+}
+/* An element using a shape: a leaf under it, the whole row a button. */
+.dep-use {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.dep-use.on {
+  background: var(--accent-soft);
+}
+.dep-use.code {
+  cursor: default;
+  color: var(--muted);
+}
+[data-kind="code"] { --kind: var(--muted); }
+
+/* The Shapes section's airspace picker: which area is the sector. */
+.geo-airspace {
+  margin: 2px 0 8px;
 }

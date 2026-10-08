@@ -1,23 +1,17 @@
-// The sampled episode's aircraft, in spawn order; picking one shows what it
-// observes below. The seed is the map's reseed/reset, so both show one episode.
+// The episode's aircraft, in spawn order; picking one (here or on the map)
+// shows what it observes below. The episode is the one every view shows - the
+// map's - stepped here or there.
 import { useEffect, useState } from "react";
 import { api, type PreviewResult, type SpecDict } from "../../api";
 import { useRefresh } from "../../refresh";
 import { useEpisode, useEpisodeSpawns } from "../../episode";
+import { EpisodeStepper } from "../EpisodeStepper";
 
-export function SamplingReadout({
-  spec,
-  seed,
-  onSeedChange,
-}: {
-  spec: SpecDict;
-  seed: number;
-  onSeedChange: (seed: number) => void;
-}) {
+export function SamplingReadout({ spec }: { spec: SpecDict }) {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const { pick, setPick } = useEpisode();
+  const { seed, pick, setPick } = useEpisode();
   const { spawns: flowing, loading: running, error: spawnError } = useEpisodeSpawns(spec);
   // The list names aircraft once the run has them all; until then, the preview.
   const spawns = flowing?.done ? flowing : null;
@@ -66,12 +60,13 @@ export function SamplingReadout({
     : rows.some((r) => r.key === pick.key)
       ? pick.key
       : rows.find((r) => r.actype === pick.actype && r.at_s >= pick.at_s - 1)?.key;
-  // Once the carried-over row names its aircraft, sample that very aircraft.
-  const carried = pick && picked !== pick.key ? pickedRow(picked) : undefined;
+  // Once the carried-over row names its aircraft - or, with none picked, the
+  // first row does - sample that very aircraft, so the row lit is the one shown.
+  const carried = pick && picked !== pick.key ? pickedRow(picked) : !pick ? rows[0] : undefined;
   useEffect(() => {
     if (carried?.acid) setPick({ key: carried.key, at_s: carried.at_s, acid: carried.acid, actype: carried.actype });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [carried?.key]);
+  }, [carried?.key, carried?.acid]);
 
   if (error) return <div className="error-text">{error}</div>;
   if (!preview) return <p className="muted">…</p>;
@@ -82,15 +77,7 @@ export function SamplingReadout({
         <span>
           {rows.length} aircraft <span className="muted">· max {preview.max_aircraft} at once</span>
         </span>
-        <span className="sampling-seed">
-          <span className="muted">seed {seed}</span>
-          <button disabled={loading} onClick={() => onSeedChange(seed + 1)} title="draw another episode">
-            reseed
-          </button>
-          <button disabled={loading || seed === 0} onClick={() => onSeedChange(0)} title="back to seed 0">
-            reset
-          </button>
-        </span>
+        <EpisodeStepper busy={loading} />
       </div>
       {!spawns && (
         <div className="muted small sampling-note">

@@ -8,6 +8,8 @@ export type SpecDict = Record<string, any>;
 export interface ValidateResult {
   ok: boolean;
   error?: string;
+  // What builds but is worth knowing: content outside the airspace.
+  warnings?: string[];
   summary?: {
     obs_fields: string[];
     intruder_obs_fields: string[] | null;
@@ -23,7 +25,7 @@ export interface ValidateResult {
   };
 }
 
-export interface BoundsGeometry {
+export interface ShapeGeometry {
   vertices: [number, number][];
   bounding_box: { lat_min: number; lat_max: number; lon_min: number; lon_max: number };
   alt_min_ft?: number | null;
@@ -32,9 +34,9 @@ export interface BoundsGeometry {
 }
 
 export interface PreviewResult {
-  airspace: BoundsGeometry | null;
+  airspace: ShapeGeometry | null;
   queryables: any[];
-  spawn_regions: (BoundsGeometry & {
+  spawn_regions: (ShapeGeometry & {
     name: string;
     max_aircraft: number;
     render_shape?: boolean;
@@ -43,7 +45,14 @@ export interface PreviewResult {
   })[];
   // Named regions in the sampled episode's frame (shape draw + rotation), so
   // the map can render per-episode-randomized bounds; keyed by region name.
-  regions?: Record<string, BoundsGeometry & { name: string }>;
+  // Named regions in this episode. A generated one carries `generated` (the
+  // region it belongs to - itself, or for a partition's shape its partition)
+  // and, on the region itself, `envelope`: where every draw lies.
+  // A moving one carries `trail`: where it is over the next hour, a quarter apart.
+  shapes?: Record<
+    string,
+    ShapeGeometry & { name: string; generated?: string; envelope?: ShapeGeometry; trail?: ShapeGeometry[] }
+  >;
   sampled_aircraft: {
     lat: number;
     lon: number;
@@ -266,8 +275,16 @@ export const api = {
       }),
     }).then((r) => jsonOrThrow<NavFeatures>(r)),
 
-  search: (q: string, limit = 20) =>
-    fetch(`/api/nav/search?q=${encodeURIComponent(q)}&limit=${limit}`).then((r) =>
+  // A navdb fix by name: where it is (404, not found).
+  navWaypoint: (ident: string) =>
+    fetch(`/api/nav/waypoint/${encodeURIComponent(ident)}`).then((r) => jsonOrThrow<NavWaypoint>(r)),
+
+  // ``near``: [lat, lon] - each kind of match nearest it first.
+  search: (q: string, limit = 20, near?: [number, number]) =>
+    fetch(
+      `/api/nav/search?q=${encodeURIComponent(q)}&limit=${limit}` +
+        (near ? `&lat=${near[0]}&lon=${near[1]}` : ""),
+    ).then((r) =>
       jsonOrThrow<SearchResult>(r),
     ),
 

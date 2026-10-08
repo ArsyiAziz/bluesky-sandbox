@@ -1,5 +1,6 @@
 // Constructors + small immutable helpers for spec fragments the panel edits.
 import type { SpecDict } from "./api";
+import { shapeGraph, isUnused } from "./shapeGraph";
 
 // ---- sampled footprint params ------------------------------------------- //
 // Footprint scalar params (radius_nm, half_angle_deg, ...) may be sampled per
@@ -79,7 +80,14 @@ export const defaultPolygon = (lat = 52.0, lon = 4.75): SpecDict => ({
   ],
 });
 
-export const FOOTPRINT_TYPES = ["box", "disk", "sector", "annular_sector", "polygon", "boolean"];
+export const FOOTPRINT_TYPES = ["box", "disk", "sector", "annular_sector", "polygon", "boolean", "generated", "point"];
+
+// A shape drawn anew each episode by a generator (sim/bounds/generators.py).
+export const defaultGenerated = (lat = 52.0, lon = 4.75): SpecDict => ({
+  type: "generated",
+  generator: "Blob",
+  params: { center: { lat_deg: lat, lon_deg: lon }, radius_nm: 15 },
+});
 
 export const makeFootprint = (type: string, lat = 52.0, lon = 4.75): SpecDict => {
   switch (type) {
@@ -95,6 +103,10 @@ export const makeFootprint = (type: string, lat = 52.0, lon = 4.75): SpecDict =>
       return defaultPolygon(lat, lon);
     case "boolean":
       return { type: "boolean", op: "union", left: defaultBox(lat, lon), right: defaultDisk(lat, lon) };
+    case "generated":
+      return defaultGenerated(lat, lon);
+    case "point":
+      return { type: "point", center: { lat_deg: lat, lon_deg: lon } };
     default:
       return defaultBox();
   }
@@ -227,16 +239,17 @@ export const defaultRegion = (lat = 52.0, lon = 4.75, altitude?: SpecDict | null
 
 export const defaultQueryRegion = (lat = 52.0, lon = 4.75, altitude?: SpecDict | null): SpecDict => ({
   type: "query_region",
-  bounds: defaultRegion(lat, lon, altitude),
+  shape: defaultRegion(lat, lon, altitude),
   color: "orange",
   render_shape: true,
   render_label: true,
   track_temporal_state: false,
 });
 
-export const defaultWaypoint = (lat = 52.0, lon = 4.75, ident?: string, altFt = 3000): SpecDict => ({
+// A waypoint's own settings; where it is, is its point bounds (see
+// waypointPoints.addWaypointAt).
+export const defaultWaypoint = (altFt = 3000): SpecDict => ({
   type: "waypoint",
-  ...(ident ? { waypoint: ident } : { lat, lon }),
   ...(Number.isFinite(altFt) ? { alt_ft: altFt } : {}),
   reach_radius_nm: 1,
   color: "cyan",
@@ -252,7 +265,7 @@ export const defaultSpawnRegion = (lat = 52.0, lon = 4.75, altLo = 5000, altHi =
     type: "spawn_region",
     // The bounds' altitude band IS the spawn altitude range — the backend samples
     // spawn altitude from it, so `params` no longer carries a duplicate alt_ft.
-    bounds: { type: "region", footprint: defaultBox(lat, lon), altitude: { type: "constant", min_ft: lo, max_ft: hi } },
+    shape: { type: "region", footprint: defaultBox(lat, lon), altitude: { type: "constant", min_ft: lo, max_ft: hi } },
     n_aircraft: { type: "scipy", name: "randint", args: [2, 6], kwds: {} },
     params: {
       spd_kts: { type: "range", low: 200, high: 280 },
@@ -312,7 +325,7 @@ export const makeRotation = (lo: number, hi: number): SpecDict => ({
 
 // A rotation group's members are **bounds** (named regions): rotating a bounds
 // rotates every element (airspace / queryable / spawn region) that references it.
-export const designBounds = (spec: SpecDict): string[] => Object.keys(spec?.regions ?? {});
+export const designShapes = (spec: SpecDict): string[] => Object.keys(spec?.shapes ?? {});
 
 export const angleRange = (angleDeg: any): [number, number] => {
   if (typeof angleDeg === "number") return [angleDeg, angleDeg];
@@ -328,25 +341,25 @@ export const newGroupId = (): string => `g${Date.now().toString(36)}${(_gid++).t
 
 // The bounds (named region) an element id resolves to, for upgrading older
 // groups whose members were stored as element ids ("airspace"/"q:…"/"s:…").
-const elementToBounds = (spec: SpecDict, eid: string): string | null => {
+const elementToShape = (spec: SpecDict, eid: string): string | null => {
   if (eid === "airspace") return spec?.airspace?.ref ?? null;
   if (eid.startsWith("q:")) {
     const q = spec?.queryables?.[eid.slice(2)];
-    return q?.bounds?.ref ?? q?.sample?.ref ?? null;
+    return q?.shape?.ref ?? q?.sample?.ref ?? null;
   }
   if (eid.startsWith("s:")) {
     const name = eid.slice(2);
     const regions = spec?.spawn?.regions ?? [];
     const r = regions.find((x: SpecDict, i: number) => (x.name || `spawn_${i + 1}`) === name);
-    return r?.bounds?.ref ?? null;
+    return r?.shape?.ref ?? null;
   }
   return null;
 };
 
 // Normalize a group's members: keep bounds (region) names and ``wp:<name>``
 // waypoint members as-is, and translate any leftover element ids from older specs.
-const toBoundsMembers = (spec: SpecDict, members: any[]): string[] => {
-  const regions = spec?.regions ?? {};
+const toShapeMembers = (spec: SpecDict, members: any[]): string[] => {
+  const regions = spec?.shapes ?? {};
   const queryables = spec?.queryables ?? {};
   const out: string[] = [];
   for (const m of members ?? []) {
@@ -354,7 +367,7 @@ const toBoundsMembers = (spec: SpecDict, members: any[]): string[] => {
       if (queryables[m.slice(3)] && !out.includes(m)) out.push(m);
       continue;
     }
-    const name = m in regions ? m : elementToBounds(spec, m);
+    const name = m in regions ? m : elementToShape(spec, m);
     if (name && !out.includes(name)) out.push(name);
   }
   return out;
@@ -370,7 +383,7 @@ export const migrateRotationGroups = (spec: SpecDict): SpecDict => {
     const next = structuredClone(spec);
     next.transform.groups = t.groups.map((g: SpecDict) => ({
       ...g,
-      members: toBoundsMembers(spec, g.members ?? []),
+      members: toShapeMembers(spec, g.members ?? []),
     }));
     return next;
   }
@@ -383,7 +396,7 @@ export const migrateRotationGroups = (spec: SpecDict): SpecDict => {
         name: "all",
         angle_deg: t.rotation.angle_deg,
         pivot: t.rotation.pivot ?? null,
-        members: designBounds(spec),
+        members: designShapes(spec),
         parent: null,
       },
     ],
@@ -463,52 +476,122 @@ export const migrateRewardHooks = (spec: SpecDict): SpecDict => {
   return next;
 };
 
+// Whether a ref names bounds `name` - itself, or one of its shapes when it is a
+// generated partition (`name.0`, `name.1`, ...).
+const refersTo = (ref: unknown, name: string): boolean =>
+  typeof ref === "string" &&
+  (ref === name || (ref.startsWith(`${name}.`) && /^\d+$/.test(ref.slice(name.length + 1))));
+
 // The element labels that reference a named bounds (airspace / query bounds +
-// sample / spawn). Used to show which elements share a bounds.
-export const boundsRefLabels = (spec: SpecDict, name: string): string[] => {
+// sample / spawn / a generated region's params). Used to show which elements
+// share a bounds.
+export const shapeRefLabels = (spec: SpecDict, name: string): string[] => {
   const labels: string[] = [];
-  if (spec?.airspace?.ref === name) labels.push("airspace");
+  if (refersTo(spec?.airspace?.ref, name)) labels.push("airspace");
   for (const [qname, q] of Object.entries(spec?.queryables ?? {}) as [string, SpecDict][]) {
-    if (q.bounds?.ref === name) labels.push(qname);
-    if (q.sample?.ref === name) labels.push(`${qname} (sample)`);
+    if (refersTo(q.shape?.ref, name)) labels.push(q.shape.ref === name ? qname : `${qname} (${q.shape.ref})`);
+    if (refersTo(q.sample?.ref, name)) labels.push(`${qname} (sample)`);
   }
   (spec?.spawn?.regions ?? []).forEach((r: SpecDict, i: number) => {
-    if (r.bounds?.ref === name) labels.push(r.name || `spawn_${i + 1}`);
+    if (refersTo(r.shape?.ref, name)) labels.push(r.name || `spawn_${i + 1}`);
   });
+  // A region drawn or placed by reference to this one: a generator's parent,
+  // a placement's region to stay within or clear of.
+  for (const [rname, r] of Object.entries(spec?.shapes ?? {}) as [string, SpecDict][]) {
+    if (rname === name) continue;
+    const params: [string, any][] = [
+      ...(r?.footprint?.type === "generated" ? Object.entries(r.footprint.params ?? {}) : []),
+      ...[r?.placement, ...(r?.motion ?? [])].flatMap((layer: any) =>
+        Object.entries(layer ?? {}).filter(([key]) => key !== "type"),
+      ),
+    ];
+    for (const [key, value] of params) {
+      const refs = Array.isArray(value) ? value : [value];
+      if (refs.some((v: any) => refersTo(v?.ref, name))) labels.push(`${rname} (${key})`);
+    }
+  }
   return labels;
+};
+
+// The names of a generated partition's shapes - `name.0`, `name.1`, ... - read
+// from what the catalog says its generator's partition param is.
+export const partitionNames = (
+  name: string,
+  region: SpecDict | undefined,
+  generators: { name: string; partition?: string | null; params: { name: string; default: any }[] }[],
+): string[] => {
+  const fp = region?.footprint;
+  if (fp?.type !== "generated") return [];
+  const gen = generators.find((g) => g.name === fp.generator);
+  const param = gen?.partition;
+  if (!param) return [];
+  const count = Number(fp.params?.[param] ?? gen.params.find((p) => p.name === param)?.default ?? 0);
+  return Array.from({ length: Math.max(0, Math.floor(count)) }, (_, i) => `${name}.${i}`);
 };
 
 // Count how many elements (airspace / query bounds + sample / spawn) reference a
 // named bounds — used to warn about shared edits and to garbage-collect orphans.
-export const countBoundsRefs = (spec: SpecDict, name: string): number =>
-  boundsRefLabels(spec, name).length;
+export const countShapeRefs = (spec: SpecDict, name: string): number =>
+  shapeRefLabels(spec, name).length;
 
-// Drop every named bounds that nothing references (orphan GC). Bounds are only
-// created through an element, so any unreferenced one is leftover after a delete
-// or reassignment and is swept. Mutates spec.
-export const gcOrphanBounds = (spec: SpecDict): void => {
-  const regions = spec.regions;
+// Drop every named bounds an edit left unreferenced (orphan GC): referenced in
+// `before`, by nothing now - leftover after a delete or a reassignment. Bounds
+// nothing referenced before either - added on their own, to be referred to
+// later - stay. Mutates spec.
+export const gcOrphanShapes = (spec: SpecDict, before: SpecDict): void => {
+  const regions = spec.shapes;
   if (!regions) return;
+  // Uses of every kind - elements, other bounds, groups, code (shapeGraph):
+  // a bounds code still reads stays, and so does one put in a group.
+  const now = shapeGraph(spec);
+  const then = shapeGraph(before);
   for (const name of Object.keys(regions)) {
-    if (countBoundsRefs(spec, name) === 0) delete regions[name];
+    if (isUnused(now[name]) && !now[name].group && then[name] && !isUnused(then[name])) delete regions[name];
   }
 };
 
 // Geometry lives only in named regions. Promote any inline bounds (airspace,
-// query-region, spawn-region, waypoint sample) into spec.regions and replace it
+// query-region, spawn-region, waypoint sample) into spec.shapes and replace it
 // with a {ref: name}. Idempotent — already-ref'd bounds are left untouched.
+// Older designs called the design's shapes "regions", and an element's shape
+// its "bounds": the current keys, in place of those (order kept). The same
+// spec back when there was nothing to migrate.
+export const migrateShapeKeys = (spec: SpecDict | null): SpecDict | null => {
+  if (!spec || typeof spec !== "object") return spec;
+  const element = (e: any) => {
+    if (!e || typeof e !== "object" || !("bounds" in e)) return e;
+    const out: SpecDict = {};
+    for (const [k, v] of Object.entries(e)) if (k !== "shape") out[k === "bounds" ? "shape" : k] = v;
+    return out;
+  };
+  const queryables = Object.values(spec.queryables ?? {}).some((q: any) => q && "bounds" in q);
+  const spawnRegions = (spec.spawn?.regions ?? []).some((r: any) => r && "bounds" in r);
+  if (!("regions" in spec) && !queryables && !spawnRegions) return spec;
+  const next: SpecDict = {};
+  for (const [k, v] of Object.entries(spec)) {
+    if (k === "regions") {
+      if (!("shapes" in spec)) next.shapes = v;
+    } else next[k] = v;
+  }
+  if (queryables) {
+    next.queryables = Object.fromEntries(Object.entries(spec.queryables).map(([n, q]) => [n, element(q)]));
+  }
+  if (spawnRegions) next.spawn = { ...spec.spawn, regions: spec.spawn.regions.map(element) };
+  return next;
+};
+
 export const normalizeToRegions = (spec: SpecDict): SpecDict => {
   if (!spec) return spec;
   const next = structuredClone(spec);
-  next.regions = next.regions ?? {};
-  const used = new Set(Object.keys(next.regions));
+  next.shapes = next.shapes ?? {};
+  const used = new Set(Object.keys(next.shapes));
   const addRegion = (base: string, bounds: SpecDict): string => {
     const slug = (base || "region").replace(/[^0-9a-zA-Z_]+/g, "_") || "region";
     let name = slug;
     let i = 1;
     while (used.has(name)) name = `${slug}_${i++}`;
     used.add(name);
-    next.regions[name] = bounds;
+    next.shapes[name] = bounds;
     return name;
   };
   const toRef = (bounds: any, base: string): any =>
@@ -516,11 +599,11 @@ export const normalizeToRegions = (spec: SpecDict): SpecDict => {
 
   if (next.airspace && !isRef(next.airspace)) next.airspace = toRef(next.airspace, "airspace");
   for (const [name, q] of Object.entries(next.queryables ?? {}) as [string, any][]) {
-    if (q.type === "query_region" && q.bounds) q.bounds = toRef(q.bounds, name);
+    if (q.type === "query_region" && q.shape) q.shape = toRef(q.shape, name);
     if (q.type === "waypoint" && q.sample) q.sample = toRef(q.sample, `${name}_sample`);
   }
   (next.spawn?.regions ?? []).forEach((r: any, i: number) => {
-    if (r.bounds) r.bounds = toRef(r.bounds, r.name || `spawn_${i + 1}`);
+    if (r.shape) r.shape = toRef(r.shape, r.name || `spawn_${i + 1}`);
   });
   return next;
 };

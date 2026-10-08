@@ -4,7 +4,7 @@
 // eye toggle hides it from the map (view-only).
 import { useState } from "react";
 import type { SpecDict } from "../../api";
-import { NumField } from "../BoundsEditor";
+import { NumField } from "../ShapeEditor";
 import { CollapsibleCard, EyeToggle } from "./Section";
 import { Picker } from "./Picker";
 

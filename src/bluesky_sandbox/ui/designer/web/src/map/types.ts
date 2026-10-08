@@ -16,6 +16,8 @@ export type EditTarget =
 export type Selectable = { target?: EditTarget; name?: string };
 export type Edge = { src: number[]; tgt: number[]; color: RGBA } & Selectable;
 export type Face = { polygon: number[][]; color: RGBA } & Selectable;
+// A shape with no area - a point bounds - drawn as a marker, hollow when dashed.
+export type Mark = { position: number[]; color: RGBA; dashed?: boolean } & Selectable;
 
 export type WaypointShape = {
   name?: string;
@@ -66,6 +68,8 @@ export type CategoryVisibility = {
   waypoints: boolean;
   routes: boolean;
   spawnRegions: boolean;
+  // Every shape, not only those an element draws or a selection brings in.
+  shapes: boolean;
   aircraft: boolean;
   nav: boolean;
   airways: boolean;

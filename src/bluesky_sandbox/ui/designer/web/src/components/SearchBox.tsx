@@ -6,9 +6,12 @@ import { api, type SearchResult } from "../api";
 export default function SearchBox({
   onFlyTo,
   onAddWaypoint,
+  near,
 }: {
+  // [lat, lon] the view is at: matches nearest it first.
+  near?: [number, number];
   onFlyTo: (lon: number, lat: number) => void;
-  onAddWaypoint: (ident: string) => void;
+  onAddWaypoint: (ident: string, lat: number, lon: number) => void;
 }) {
   const [q, setQ] = useState("");
   const [res, setRes] = useState<SearchResult | null>(null);
@@ -23,7 +26,7 @@ export default function SearchBox({
     }
     timer.current = window.setTimeout(() => {
       api
-        .search(q, 12)
+        .search(q, 12, near)
         .then((r) => {
           setRes(r);
           setOpen(true);
@@ -58,7 +61,7 @@ export default function SearchBox({
               <button className="result" onClick={() => onFlyTo(w.lon_deg, w.lat_deg)}>
                 <span className="tag wpt">FIX</span> {w.ident}
               </button>
-              <button className="add" title="add as waypoint queryable" onClick={() => onAddWaypoint(w.ident)}>
+              <button className="add" title="add as waypoint queryable" onClick={() => onAddWaypoint(w.ident, w.lat_deg, w.lon_deg)}>
                 +
               </button>
             </li>

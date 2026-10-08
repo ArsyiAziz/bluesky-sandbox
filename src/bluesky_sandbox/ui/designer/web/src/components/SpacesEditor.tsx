@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type SpecDict } from "../api";
-import { clone, gcOrphanBounds, scaffoldClass, stripClass } from "../specHelpers";
+import { clone, gcOrphanShapes, scaffoldClass, stripClass } from "../specHelpers";
 import { Section } from "./panel/Section";
 import { FieldList, namedActions } from "./panel/FieldList";
 import { Picker } from "./panel/Picker";
@@ -41,7 +41,7 @@ export default function SpacesEditor({
   const edit = (mut: (s: SpecDict) => void) => {
     const next = clone(latest.current);
     mut(next);
-    gcOrphanBounds(next);
+    gcOrphanShapes(next, latest.current);
     latest.current = next;
     onChange(next);
   };

@@ -6,22 +6,37 @@
 // The spec object is the source of truth; every edit yields a new spec via
 // onChange (which App also re-serializes into the code editor).
 import { Hint } from "./Hint";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type SpecDict } from "../../api";
-import BoundsEditor from "../BoundsEditor";
+import { type ShapeInfo, shapeGraph, isUnused, renameShapeRefs } from "../../shapeGraph";
+import ShapeEditor, { MotionEditor } from "../ShapeEditor";
+import { ShapesTree, DependencyTree } from "./ShapesTree";
+import { Row } from "./OutlineRow";
+import { PointShapesProvider, pointShapesOf } from "../../pointShapes";
+import { addWaypointAt, pointRegion } from "../../waypointPoints";
 import {
-  boundsRefLabels,
+  anchoredWaypoints,
+  shapesInGroup,
+  childGroups,
+  dissolveGroup,
+  type Group,
+  groupOfShape,
+  groupTogether,
+  isWithin,
+  moveShape,
+  moveGroup,
+} from "../../groupTree";
+import {
+  shapeRefLabels,
   clippedSpawnAltitudeRange,
   clone,
-  countBoundsRefs,
+  countShapeRefs,
   defaultConstantBand,
   defaultQueryRegion,
   defaultRegion,
   defaultSpawnRegion,
-  defaultWaypoint,
-  designBounds,
-  gcOrphanBounds,
-  newGroupId,
+  gcOrphanShapes,
+  partitionNames,
   placementAltitudeRange,
   placementCenter,
 } from "../../specHelpers";
@@ -58,7 +73,7 @@ function parseTargetKey(key: string | null | undefined): EditTarget | null {
 export default function GeometryTab({
   spec,
   onChange,
-  onFocusBounds,
+  onFocusShape,
   viewCenter,
   hiddenElements,
   onToggleHidden,
@@ -70,7 +85,7 @@ export default function GeometryTab({
 }: {
   spec: SpecDict;
   onChange: (next: SpecDict) => void;
-  onFocusBounds: (bounds: SpecDict) => void;
+  onFocusShape: (bounds: SpecDict) => void;
   viewCenter?: [number, number];
   hiddenElements: Set<string>;
   onToggleHidden: (key: string) => void;
@@ -81,7 +96,9 @@ export default function GeometryTab({
   onSelect: (target: EditTarget | null) => void;
 }) {
   const [filter, setFilter] = useState("");
-  const [showAllBounds, setShowAllBounds] = useState(false);
+  const [showAllShapes, setShowAllShapes] = useState(false);
+  // The outline: elements by kind, or bounds by what depends on what.
+  const [view, setView] = useState<"kind" | "dependency">("kind");
   // Panel-only "routes" selection; a map selection (selectedKey) supersedes it.
   const [routesView, setRoutesView] = useState(false);
   useEffect(() => {
@@ -94,6 +111,8 @@ export default function GeometryTab({
   const [sep, setSep] = useState<Record<string, number>>({});
   // SpawnConfig's own retry defaults, shown when a field is left empty.
   const [spawnDefaults, setSpawnDefaults] = useState<Record<string, number>>({});
+  // The shape generators, for naming a generated partition's shapes.
+  const [generators, setGenerators] = useState<any[]>([]);
   const refreshKey = useRefresh();
   useEffect(() => {
     api
@@ -101,6 +120,7 @@ export default function GeometryTab({
       .then((c) => {
         setSep(c?.separation ?? {});
         setSpawnDefaults(c?.spawn_defaults ?? {});
+        setGenerators(c?.generators ?? []);
       })
       .catch(() => setSep({}));
   }, [refreshKey]);
@@ -114,17 +134,48 @@ export default function GeometryTab({
   const edit = (mut: (s: SpecDict) => void) => {
     const next = clone(spec);
     mut(next);
-    // Bounds are only created via elements; sweep any left unreferenced after a
-    // delete or reassignment so orphans never accumulate.
-    gcOrphanBounds(next);
+    // Sweep bounds a delete or reassignment left unreferenced, so orphans
+    // never accumulate; bounds added on their own stay.
+    gcOrphanShapes(next, spec);
+    onChange(next);
+  };
+
+  // Which area is the airspace: a role, so moving it keeps the area it leaves
+  // (no orphan sweep - an area that was the airspace is still a shape).
+  const setAirspaceRef = (ref: string | null) => {
+    const next = clone(spec);
+    next.airspace = ref ? { ref } : null;
     onChange(next);
   };
 
   // ---- selection ----------------------------------------------------------
-  const sel: Sel = routesView ? { scope: "routes" } : parseTargetKey(selectedKey);
+  // The airspace is a role a shape plays: picking it opens that shape.
+  const picked = parseTargetKey(selectedKey);
+  const airspaceRef: string | undefined = spec.airspace?.ref;
+  const sel: Sel = routesView
+    ? { scope: "routes" }
+    : picked?.scope === "airspace" && airspaceRef
+      ? { scope: "region", name: airspaceRef }
+      : picked;
+  // Elements picked from the list start afresh; ones reached through a
+  // dependency (hop) remember the way back.
+  const [trail, setTrail] = useState<EditTarget[]>([]);
   const selectTarget = (t: EditTarget) => {
     setRoutesView(false);
+    setTrail([]);
     onSelect(t);
+  };
+  const hop = (t: EditTarget) => {
+    const here = parseTargetKey(selectedKey);
+    if (here && targetKey(here) !== targetKey(t)) setTrail((prev) => [...prev, here]);
+    setRoutesView(false);
+    onSelect(t);
+  };
+  const hopBack = () => {
+    const prev = trail[trail.length - 1];
+    if (!prev) return;
+    setTrail(trail.slice(0, -1));
+    onSelect(prev);
   };
   const selectRoutes = () => {
     setRoutesView(true);
@@ -140,18 +191,29 @@ export default function GeometryTab({
   const [spawnAltLo, spawnAltHi] = clippedSpawnAltitudeRange(spec.airspace);
 
   // ---- named bounds (shared geometry library) -----------------------------
-  const regions: Record<string, SpecDict> = spec.regions ?? {};
+  const regions: Record<string, SpecDict> = spec.shapes ?? {};
   const namedRegionNames = Object.keys(regions);
+  // Who uses which bounds, and what each depends on.
+  const graph = useMemo(() => shapeGraph(spec), [spec]);
+  // Point bounds: left out wherever an area is needed.
+  const pointShapes = useMemo(() => pointShapesOf(spec), [spec]);
+  const unusedShapes = namedRegionNames.filter((n) => isUnused(graph[n]));
+  // What an element can refer to: every named bounds, and each shape of a
+  // generated partition (`sectors.0`, ...) - redrawn each episode.
+  const partitions: Record<string, string[]> = Object.fromEntries(
+    namedRegionNames.map((n) => [n, partitionNames(n, regions[n], generators)]),
+  );
+  const refRegionNames = namedRegionNames.flatMap((n) => [n, ...partitions[n]]);
   const resolveRef = (b: any): SpecDict | undefined => (b?.ref ? regions[b.ref] : b);
-  const resolveRegionBounds = (name: string): SpecDict | undefined => regions[name];
-  const boundsRefCount = (name: string): number => countBoundsRefs(spec, name);
-  const setRegion = (name: string, b: SpecDict) => edit((s) => (s.regions[name] = b));
+  const resolveShapeByName = (name: string): SpecDict | undefined => regions[name];
+  const shapeRefCount = (name: string): number => countShapeRefs(spec, name);
+  const setRegion = (name: string, b: SpecDict) => edit((s) => (s.shapes[name] = b));
   const renameRegion = (oldName: string, newNameRaw: string) => {
     const newName = newNameRaw.trim();
-    if (!newName || newName === oldName || spec.regions?.[newName]) return;
+    if (!newName || newName === oldName || spec.shapes?.[newName]) return;
     edit((s) => {
-      s.regions[newName] = s.regions[oldName];
-      delete s.regions[oldName];
+      s.shapes[newName] = s.shapes[oldName];
+      delete s.shapes[oldName];
       rewriteRegionRefs(s, oldName, newName);
     });
     // Keep the renamed bounds selected (its key changed).
@@ -163,12 +225,6 @@ export default function GeometryTab({
   const regionEntries = queryableEntries.filter(([, q]) => q.type !== "waypoint");
   const waypointEntries = queryableEntries.filter(([, q]) => q.type === "waypoint");
   const waypointNames = waypointEntries.map(([name]) => name);
-  // Fixed lat/lon waypoints can join a group directly (navdb fixes and
-  // sampled-from-bounds waypoints are excluded: the former are anchored to a fix,
-  // the latter already group via their sample bounds).
-  const groupableWaypoints = waypointEntries
-    .filter(([, q]) => q.waypoint == null && q.sample == null)
-    .map(([name]) => name);
   // Query-region names (for the waypoint TSAS-bound picker).
   const regionNames = regionEntries.filter(([, q]) => q.type === "query_region").map(([name]) => name);
 
@@ -178,8 +234,8 @@ export default function GeometryTab({
     edit((s) => {
       s.queryables[newName] = s.queryables[name];
       delete s.queryables[name];
-      syncBoundsName(s, s.queryables[newName].bounds?.ref, newName);
-      syncBoundsName(s, s.queryables[newName].sample?.ref, `${newName}_sample`);
+      syncShapeName(s, s.queryables[newName].shape?.ref, newName);
+      syncShapeName(s, s.queryables[newName].sample?.ref, `${newName}_sample`);
     });
     // Keep the renamed queryable selected (its key changed).
     onSelect({ scope: "queryable", name: newName });
@@ -188,41 +244,17 @@ export default function GeometryTab({
   const spawnRegions: SpecDict[] = spec.spawn?.regions ?? [];
   const routeNames = Object.keys(spec.spawn?.routes ?? {});
 
-  // ---- transform groups ---------------------------------------------------
-  // A group is a named set of bounds moved/rotated together (and randomized per
-  // episode). Members are bounds names; a bounds belongs to at most one group.
-  const groups: SpecDict[] = spec.transform?.groups ?? [];
-  const boundsList = designBounds(spec);
-  const groupOwnerOf = (name: string) => groups.find((g) => (g.members ?? []).includes(name));
-  const setGroups = (next: SpecDict[]) =>
+  // ---- groups ---------------------------------------------------------------
+  // A group holds bounds and other groups (see groupTree): moved, rotated,
+  // randomized per episode and moved during one together.
+  const groups = (spec.transform?.groups ?? []) as Group[];
+  const updateGroup = (id: string, patch: SpecDict) =>
     edit((s) => {
-      const t = { ...(s.transform ?? {}) };
-      if (next.length) t.groups = next;
-      else delete t.groups;
-      s.transform = Object.keys(t).length ? t : null;
+      s.transform.groups = s.transform.groups.map((g: SpecDict) => (g.id === id ? { ...g, ...patch } : g));
     });
-  const addGroup = () => {
-    const id = newGroupId();
-    // A plain organizational group (move/rotate members together while editing);
-    // per-episode randomization is opt-in from the inspector.
-    setGroups([...groups, { id, name: `group ${groups.length + 1}`, members: [], parent: null, pivot: null }]);
-    selectTarget({ scope: "group", id });
-  };
-  const updateGroup = (id: string, patch: SpecDict) => setGroups(groups.map((g) => (g.id === id ? { ...g, ...patch } : g)));
-  const removeGroup = (id: string) => {
+  const ungroup = (id: string) => {
     onSelect(null);
-    setGroups(groups.filter((g) => g.id !== id).map((g) => (g.parent === id ? { ...g, parent: null } : g)));
-  };
-  // Membership is exclusive: assigning a bounds removes it from any other group.
-  const toggleMember = (id: string, name: string) => {
-    const had = (groups.find((g) => g.id === id)?.members ?? []).includes(name);
-    setGroups(
-      groups.map((g) => {
-        const members = (g.members ?? []).filter((m: string) => m !== name);
-        if (g.id === id && !had) members.push(name);
-        return { ...g, members };
-      }),
-    );
+    edit((s) => dissolveGroup(s, id));
   };
 
   // ---- adders (each selects the new element so the inspector opens) --------
@@ -230,16 +262,16 @@ export default function GeometryTab({
     let qname = "";
     edit((s) => {
       const qr = defaultQueryRegion(addLat, addLon, addRegionAltitude);
-      const inline = qr.bounds;
+      const inline = qr.shape;
       qname = addQueryable(s, qr, "region");
-      s.queryables[qname].bounds = { ref: addRegionTo(s, inline, qname) };
+      s.queryables[qname].shape = { ref: addRegionTo(s, inline, qname) };
     });
     if (qname) selectTarget({ scope: "queryable", name: qname });
   };
   const addWaypoint = () => {
     let qname = "";
     edit((s) => {
-      qname = addQueryable(s, defaultWaypoint(addLat, addLon, undefined, addWaypointAlt), "waypoint");
+      qname = addWaypointAt(s, "waypoint", addLat, addLon, undefined, addWaypointAlt);
     });
     if (qname) selectTarget({ scope: "queryable", name: qname });
   };
@@ -249,22 +281,55 @@ export default function GeometryTab({
       s.spawn = s.spawn ?? emptySpawn();
       s.spawn.regions = s.spawn.regions ?? [];
       const sr = defaultSpawnRegion(addLat, addLon, spawnAltLo, spawnAltHi);
-      sr.bounds = { ref: addRegionTo(s, sr.bounds, sr.name || "spawn") };
+      sr.shape = { ref: addRegionTo(s, sr.shape, sr.name || "spawn") };
       s.spawn.regions.push(sr);
     });
     selectTarget({ scope: "spawn", index });
   };
-  const setAirspace = () => {
+  const addShape = () => {
+    let name = "";
     edit((s) => {
-      const r = addRegionTo(s, defaultRegion(addLat, addLon, addRegionAltitude ?? null), "airspace");
-      s.airspace = { ref: r };
+      name = addRegionTo(s, defaultRegion(addLat, addLon, addRegionAltitude ?? null), "shape");
     });
-    selectTarget({ scope: "airspace" });
+    if (name) selectTarget({ scope: "region", name });
   };
-
+  // A queryable region for each shape of a generated partition, so each can
+  // be asked "is this aircraft inside?" on its own.
+  const addPartitionQueryables = (name: string) =>
+    edit((s) => {
+      for (const part of partitionNames(name, s.shapes?.[name], generators)) {
+        const taken = Object.values(s.queryables ?? {}).some((q: any) => q?.shape?.ref === part);
+        if (taken) continue;
+        const q = { ...defaultQueryRegion(addLat, addLon, addRegionAltitude), shape: { ref: part } };
+        addQueryable(s, q, part.replace(".", "_"));
+      }
+    });
+  // Delete a bounds - but not out from under what uses it.
+  const deleteShape = (name: string) => {
+    const info = graph[name];
+    const users = info?.usedBy ?? [];
+    if (users.length) {
+      window.alert(
+        `“${name}” is used by ${users.map((u) => u.label).join(", ")}. ` +
+          "Point them at another shape, or delete them, first.",
+      );
+      return;
+    }
+    if (info?.inCode.length && !window.confirm(`Code reads “${name}” (${info.inCode.join(", ")}). Delete it anyway?`)) return;
+    onSelect(null);
+    edit((s) => {
+      delete s.shapes[name];
+      moveShape(s, name, null);
+    });
+  };
   // Shared bounds shown in the outline: those referenced by >1 element (or all,
   // when the user opts in). Single-use bounds are edited inline on their element.
-  const boundsRows = namedRegionNames.filter((n) => showAllBounds || boundsRefCount(n) > 1);
+  // Bounds shared by several elements, or by none - added on their own - list
+  // here; one used by a single element is edited through it.
+  const shapeRows = namedRegionNames
+    .filter((n) => showAllShapes || n === airspaceRef || isUnused(graph[n]) || (graph[n]?.usedBy.length ?? 0) !== 1)
+    // The airspace first: the sector everything else is in.
+    .sort((a, b) => Number(b === airspaceRef) - Number(a === airspaceRef));
 
   // Open a picked element's editor at its top, not wherever the list was.
   const tabRef = useRef<HTMLDivElement | null>(null);
@@ -275,6 +340,7 @@ export default function GeometryTab({
 
   return (
     // With an element picked, its editor takes the panel; back returns to the list.
+    <PointShapesProvider value={pointShapes}>
     <div className={sel ? "geo-tab drilled" : "geo-tab"} ref={tabRef}>
       <div className="geo-outline">
         <input
@@ -283,23 +349,30 @@ export default function GeometryTab({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
+        <div className="seg geo-view" role="radiogroup" aria-label="Outline view">
+          {(["kind", "dependency"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              role="radio"
+              aria-checked={view === v}
+              className={view === v ? "on" : ""}
+              onClick={() => setView(v)}
+            >
+              by {v}
+            </button>
+          ))}
+        </div>
 
-        <GeoGroup title="Airspace" hint="The outer boundary of the simulated sector. Aircraft leaving it end their episode; every other shape here is expected to sit inside it." onAdd={spec.airspace ? undefined : setAirspace} addLabel="set">
-          {spec.airspace ? (
-            <Row
-              name="airspace"
-              kind="airspace"
-              selected={selKey(sel) === "airspace"}
-              onClick={() => selectTarget({ scope: "airspace" })}
-              hidden={hiddenElements.has("airspace")}
-              onToggleHidden={() => onToggleHidden("airspace")}
-              locked={lockedElements.has("airspace")}
-              onToggleLocked={() => onToggleLocked("airspace")}
-            />
-          ) : (
-            <div className="muted small">no airspace</div>
-          )}
-        </GeoGroup>
+        {view === "dependency" ? (
+          <GeoGroup
+            title="Dependencies"
+            hint="Each shape under the shape it is drawn, placed or moved by, with the elements that use it beneath. A shape that depends on several shows in full once, then as ↑ shown above."
+          >
+            <DependencyTree spec={spec} graph={graph} has={has} selectedKey={selKey(sel)} onSelect={selectTarget} />
+          </GeoGroup>
+        ) : (
+        <>
 
         <GeoGroup title="Regions" hint="Named volumes the task can query - 'is this aircraft inside?' - and that spawns can draw positions from. A region's footprint may carry sampled parameters, redrawn each episode." onAdd={addRegion} addLabel="region">
           {regionEntries.filter(([n]) => has(n)).map(([name]) => (
@@ -344,7 +417,7 @@ export default function GeometryTab({
           />
         </GeoGroup>
 
-        <GeoGroup title="Spawn" hint="Where aircraft appear and how many. Each spawn region draws a count per episode and samples positions, types, and entry states inside its bounds." onAdd={addSpawn} addLabel="spawn">
+        <GeoGroup title="Spawn" hint="Where aircraft appear and how many. Each spawn region draws a count per episode and samples positions, types, and entry states inside its shape." onAdd={addSpawn} addLabel="spawn">
           {/* Settings for every spawn region at once, folded away so the
               regions themselves stay in view. */}
           <details className="geo-settings">
@@ -583,59 +656,88 @@ export default function GeometryTab({
           {spawnRegions.length === 0 && <div className="muted small">no spawn regions</div>}
         </GeoGroup>
 
-        <GeoGroup title="Groups" hint="Per-episode randomization. Add the bounds a group covers, then set how far it may rotate, shift or scale each episode - the whole group moves together, preserving the geometry between its members." onAdd={addGroup} addLabel="group">
-          {groups.filter((g) => has(g.name || g.id)).map((g) => (
-            <Row
-              key={g.id}
-              name={`${g.name || g.id}${(g.members?.length ?? 0) ? ` · ${g.members.length}` : ""}`}
-              kind="group"
-              selected={selKey(sel) === `group:${g.id}`}
-              onClick={() => selectTarget({ scope: "group", id: g.id })}
-            />
-          ))}
-          {groups.length === 0 && <div className="muted small">no groups</div>}
-        </GeoGroup>
-
         <GeoGroup
-          title="Bounds"
+          title="Shapes"
+          hint="Named areas and points elements are on, and the groups that hold them. Drag a shape onto another to group the two, onto a group to join it, a group onto a group to nest it - or to the top to take it out. A group moves, rotates and randomizes all it holds together."
+          onAdd={addShape}
+          addLabel="shape"
           action={
             namedRegionNames.length > 0 ? (
-              <button className="link" onClick={() => setShowAllBounds((v) => !v)}>
-                {showAllBounds ? "shared only" : "show all"}
+              <button className="link" onClick={() => setShowAllShapes((v) => !v)}>
+                {showAllShapes ? "shared only" : "show all"}
               </button>
             ) : undefined
           }
         >
-          {boundsRows.filter((n) => has(n)).map((name) => (
-            <Row
-              key={name}
-              name={name}
-              kind={boundsRefCount(name) > 1 ? `bounds ·${boundsRefCount(name)}` : "bounds"}
-              selected={selKey(sel) === `region:${name}`}
-              onClick={() => selectTarget({ scope: "region", name })}
-              locked={lockedElements.has(`region:${name}`)}
-              onToggleLocked={() => onToggleLocked(`region:${name}`)}
+          {/* The airspace: which area is the sector - a role, set here or on the area. */}
+          <label className="numfield inline geo-airspace">
+            <span>airspace</span>
+            <Picker
+              placeholder="— none"
+              value={airspaceRef ?? ""}
+              onChange={(v) => setAirspaceRef(v || null)}
+              options={[
+                { value: "", label: "— none", description: "every aircraft counts as inside" },
+                ...namedRegionNames
+                  .filter((n) => !pointShapes.has(n))
+                  .map((n) => ({ value: n, description: n === airspaceRef ? "the sector" : undefined })),
+              ]}
             />
-          ))}
-          {boundsRows.length === 0 && (
-            <div className="muted small">
-              {namedRegionNames.length ? "no shared bounds" : "created with the elements above"}
+            {airspaceRef && (
+              <button type="button" className="link" onClick={() => selectTarget({ scope: "region", name: airspaceRef })}>
+                open
+              </button>
+            )}
+          </label>
+          {!airspaceRef && namedRegionNames.length > 0 && (
+            <div className="geo-flag-note" role="note">
+              <span aria-hidden="true">⚠</span> no airspace: pick the area that is the sector
             </div>
           )}
+          {unusedShapes.length > 0 && (
+            <div className="geo-flag-note" role="note">
+              <span aria-hidden="true">⚠</span> {unusedShapes.length} not used by anything
+            </div>
+          )}
+          <ShapesTree
+            spec={spec}
+            graph={graph}
+            topShapes={shapeRows}
+            has={has}
+            selectedKey={selKey(sel)}
+            onSelect={selectTarget}
+            lockedElements={lockedElements}
+            onToggleLocked={onToggleLocked}
+            refCount={shapeRefCount}
+            edit={edit}
+          />
+          {namedRegionNames.length === 0 && (
+            <div className="muted small">made with the elements above, or + shape</div>
+          )}
         </GeoGroup>
+        </>
+        )}
       </div>
 
       <div className="geo-inspector">
         {sel != null && (
-          <button
-            className="geo-back"
-            onClick={() => {
-              setRoutesView(false);
-              onSelect(null);
-            }}
-          >
-            ← all elements
-          </button>
+          <nav className="geo-crumbs" aria-label="Back">
+            <button
+              className="geo-back"
+              onClick={() => {
+                setRoutesView(false);
+                setTrail([]);
+                onSelect(null);
+              }}
+            >
+              ← all elements
+            </button>
+            {trail.length > 0 && (
+              <button className="geo-back" onClick={hopBack}>
+                ← back to <strong>{targetLabel(spec, trail[trail.length - 1])}</strong>
+              </button>
+            )}
+          </nav>
         )}
 
         {sel?.scope === "routes" && (
@@ -649,45 +751,16 @@ export default function GeometryTab({
           />
         )}
 
-        {sel?.scope === "airspace" && spec.airspace && (
-          <>
-            <InspectorHead
-              kind="airspace"
-              onDelete={() => {
-                onSelect(null);
-                edit((s) => (s.airspace = null));
-              }}
-              hidden={hiddenElements.has("airspace")}
-              onToggleHidden={() => onToggleHidden("airspace")}
-              locked={lockedElements.has("airspace")}
-              onToggleLocked={() => onToggleLocked("airspace")}
-            />
-            <LockableBody locked={lockedElements.has("airspace")}>
-              <BoundsEditor
-                bounds={spec.airspace}
-                onChange={(b) => edit((s) => (s.airspace = b))}
-                onFocus={() => {
-                  const b = resolveRef(spec.airspace);
-                  if (b) onFocusBounds(b);
-                }}
-                regionNames={namedRegionNames}
-                requireRef
-                resolveRegion={resolveRegionBounds}
-                onEditRegion={setRegion}
-                refCount={spec.airspace?.ref ? boundsRefCount(spec.airspace.ref) : undefined}
-                onNewRegion={() =>
-                  edit((s) => {
-                    const r = addRegionTo(s, defaultRegion(addLat, addLon, addRegionAltitude ?? null), "airspace");
-                    s.airspace = { ref: r };
-                  })
-                }
-              />
-            </LockableBody>
-          </>
-        )}
-
         {sel?.scope === "queryable" && spec.queryables?.[sel.name] && (
           <QueryableInspector
+            shapeLink={
+              <ShapeLink
+                refName={spec.queryables[sel.name].shape?.ref ?? spec.queryables[sel.name].sample?.ref}
+                graph={graph}
+                onSelect={hop}
+                self={{ scope: "queryable", name: sel.name }}
+              />
+            }
             key={sel.name}
             name={sel.name}
             q={spec.queryables[sel.name]}
@@ -703,28 +776,24 @@ export default function GeometryTab({
             }}
             regionNames={regionNames}
             namedRegions={regions}
-            namedRegionNames={namedRegionNames}
-            resolveRegion={resolveRegionBounds}
+            namedRegionNames={refRegionNames}
+            resolveRegion={resolveShapeByName}
             onEditRegion={setRegion}
-            boundsRefCount={boundsRefCount}
-            onNewBoundsRegion={() =>
+            shapeRefCount={shapeRefCount}
+            onNewShape={() =>
               edit((s) => {
-                s.queryables[sel.name].bounds = {
-                  ref: addRegionTo(s, defaultRegion(addLat, addLon, addRegionAltitude ?? null), sel.name),
-                };
-              })
-            }
-            onNewSampleRegion={() =>
-              edit((s) => {
-                s.queryables[sel.name].sample = {
-                  ref: addRegionTo(s, defaultRegion(addLat, addLon, addRegionAltitude ?? null), `${sel.name}_sample`),
-                };
+                // A waypoint's is a point; a region's, an area.
+                const fresh =
+                  s.queryables[sel.name].type === "waypoint"
+                    ? pointRegion(addLat, addLon)
+                    : defaultRegion(addLat, addLon, addRegionAltitude ?? null);
+                s.queryables[sel.name].shape = { ref: addRegionTo(s, fresh, sel.name) };
               })
             }
             onChange={(nq) => edit((s) => (s.queryables[sel.name] = nq))}
             onFocus={() => {
-              const b = resolveRef(spec.queryables[sel.name].bounds);
-              if (b) onFocusBounds(b);
+              const b = resolveRef(spec.queryables[sel.name].shape);
+              if (b) onFocusShape(b);
             }}
           />
         )}
@@ -738,7 +807,7 @@ export default function GeometryTab({
                 edit((s) => {
                   const old = s.spawn.regions[sel.index];
                   s.spawn.regions[sel.index] = { ...old, name: n };
-                  if (n && n !== old?.name) syncBoundsName(s, old.bounds?.ref, n);
+                  if (n && n !== old?.name) syncShapeName(s, old.shape?.ref, n);
                 })
               }
               hidden={hiddenElements.has(`spawn:${sel.index}`)}
@@ -750,6 +819,12 @@ export default function GeometryTab({
                 edit((s) => s.spawn.regions.splice(sel.index, 1));
               }}
             />
+            <ShapeLink
+              refName={spawnRegions[sel.index]?.shape?.ref}
+              graph={graph}
+              onSelect={hop}
+              self={{ scope: "spawn", index: sel.index }}
+            />
             <LockableBody locked={lockedElements.has(`spawn:${sel.index}`)}>
               <SpawnBody
                 region={spawnRegions[sel.index]}
@@ -759,17 +834,17 @@ export default function GeometryTab({
                 }
                 routeNames={routeNames}
                 waypointNames={waypointNames}
-                regionNames={namedRegionNames}
-                resolveRegion={resolveRegionBounds}
+                regionNames={refRegionNames}
+                resolveRegion={resolveShapeByName}
                 onEditRegion={setRegion}
-                boundsRefCount={boundsRefCount}
+                shapeRefCount={shapeRefCount}
                 onNewRegion={() =>
                   edit((s) => {
                     const r = s.spawn.regions[sel.index];
-                    r.bounds = {
+                    r.shape = {
                       ref: addRegionTo(
                         s,
-                        defaultSpawnRegion(addLat, addLon, spawnAltLo, spawnAltHi).bounds,
+                        defaultSpawnRegion(addLat, addLon, spawnAltLo, spawnAltHi).shape,
                         r.name || `spawn_${sel.index + 1}`,
                       ),
                     };
@@ -779,12 +854,12 @@ export default function GeometryTab({
                   edit((s) => {
                     const old = s.spawn.regions[sel.index];
                     s.spawn.regions[sel.index] = nr;
-                    if (nr.name && nr.name !== old?.name) syncBoundsName(s, nr.bounds?.ref, nr.name);
+                    if (nr.name && nr.name !== old?.name) syncShapeName(s, nr.shape?.ref, nr.name);
                   })
                 }
                 onFocus={() => {
-                  const b = resolveRef(spawnRegions[sel.index].bounds);
-                  if (b) onFocusBounds(b);
+                  const b = resolveRef(spawnRegions[sel.index].shape);
+                  if (b) onFocusShape(b);
                 }}
               />
             </LockableBody>
@@ -794,127 +869,188 @@ export default function GeometryTab({
         {sel?.scope === "region" && regions[sel.name] && (
           <>
             <InspectorHead
-              kind={boundsRefCount(sel.name) > 1 ? `bounds ·${boundsRefCount(sel.name)}` : "bounds"}
+              kind={`${sel.name === airspaceRef ? "airspace" : pointShapes.has(sel.name) ? "point" : "area"}${shapeRefCount(sel.name) > 1 ? ` ·${shapeRefCount(sel.name)}` : ""}`}
               name={sel.name}
               onRename={(n) => renameRegion(sel.name, n)}
+              onDelete={() => deleteShape(sel.name)}
+              hidden={sel.name === airspaceRef ? hiddenElements.has("airspace") : undefined}
+              onToggleHidden={sel.name === airspaceRef ? () => onToggleHidden("airspace") : undefined}
               locked={lockedElements.has(`region:${sel.name}`)}
               onToggleLocked={() => onToggleLocked(`region:${sel.name}`)}
             />
-            {boundsRefCount(sel.name) > 1 && (
-              <div className="muted small">
-                shared by {boundsRefCount(sel.name)}: {boundsRefLabels(spec, sel.name).join(", ")} — edits affect all.
-              </div>
-            )}
-            <LockableBody locked={lockedElements.has(`region:${sel.name}`)}>
-              <BoundsEditor
-                bounds={regions[sel.name]}
-                onChange={(b) => setRegion(sel.name, b)}
-                onFocus={() => onFocusBounds(regions[sel.name])}
+            {!pointShapes.has(sel.name) && (
+              <AirspaceRole
+                isAirspace={sel.name === airspaceRef}
+                other={airspaceRef && airspaceRef !== sel.name ? airspaceRef : undefined}
+                onChange={(on) => setAirspaceRef(on ? sel.name : null)}
               />
+            )}
+            <ShapeDependencies
+              info={graph[sel.name]}
+              onSelect={hop}
+              onAddQueryable={() => {
+                let qname = "";
+                edit((s) => {
+                  const q = { ...defaultQueryRegion(addLat, addLon, addRegionAltitude), shape: { ref: sel.name } };
+                  qname = addQueryable(s, q, sel.name);
+                });
+                if (qname) selectTarget({ scope: "queryable", name: qname });
+              }}
+            />
+            <GroupPicker
+              spec={spec}
+              name={sel.name}
+              onGroupWith={(other) => edit((s) => groupTogether(s, sel.name, other))}
+              onJoin={(id) => edit((s) => moveShape(s, sel.name, id))}
+              onOpen={(id) => hop({ scope: "group", id })}
+            />
+            <LockableBody locked={lockedElements.has(`region:${sel.name}`)}>
+              <ShapeEditor
+                shape={regions[sel.name]}
+                onChange={(b) => setRegion(sel.name, b)}
+                onFocus={() => onFocusShape(regions[sel.name])}
+                generatorRegionNames={namedRegionNames.filter((n) => n !== sel.name)}
+              />
+              {partitions[sel.name]?.length > 0 && (
+                <div className="partition-actions">
+                  <div className="muted small">
+                    Shapes {partitions[sel.name].join(", ")} - each a region elements can refer to.
+                  </div>
+                  <button type="button" onClick={() => addPartitionQueryables(sel.name)}>
+                    Add a queryable per shape
+                  </button>
+                </div>
+              )}
             </LockableBody>
           </>
         )}
 
         {sel?.scope === "group" && groups.find((g) => g.id === sel.id) && (
           <GroupInspector
+            spec={spec}
             group={groups.find((g) => g.id === sel.id)!}
-            groups={groups}
-            boundsList={boundsList}
-            waypointList={groupableWaypoints}
-            ownerOf={groupOwnerOf}
+            center={[addLat, addLon]}
+            regionNames={refRegionNames}
             onRename={(n) => updateGroup(sel.id, { name: n })}
             onUpdate={(patch) => updateGroup(sel.id, patch)}
-            onToggleMember={(name) => toggleMember(sel.id, name)}
-            onRemove={() => removeGroup(sel.id)}
+            onTakeOut={(name) => edit((s) => moveShape(s, name, groups.find((g) => g.id === sel.id)?.parent ?? null))}
+            onNest={(parent) => edit((s) => moveGroup(s, sel.id, parent))}
+            onUngroup={() => ungroup(sel.id)}
+            onSelect={hop}
           />
         )}
       </div>
     </div>
+    </PointShapesProvider>
   );
 }
 
-// Inspector for a transform group: members (bounds chips), nesting parent, and
-// the per-episode rotation / translation / scale ranges. Selecting it on the map
-// shows move + rotate handles that statically transform the members.
+// Inspector for a group: what it holds (and takes out), the group it is in,
+// its per-episode randomization and its moves during an episode. Selecting it
+// on the map shows move + rotate handles that move everything it holds.
 function GroupInspector({
+  spec,
   group,
-  groups,
-  boundsList,
-  waypointList,
-  ownerOf,
+  center,
+  regionNames,
   onRename,
   onUpdate,
-  onToggleMember,
-  onRemove,
+  onTakeOut,
+  onNest,
+  onUngroup,
+  onSelect,
 }: {
-  group: SpecDict;
-  groups: SpecDict[];
-  boundsList: string[];
-  waypointList: string[];
-  ownerOf: (id: string) => SpecDict | undefined;
+  spec: SpecDict;
+  group: Group;
+  center: [number, number];
+  regionNames: string[];
   onRename: (n: string) => void;
   onUpdate: (patch: SpecDict) => void;
-  onToggleMember: (id: string) => void;
-  onRemove: () => void;
+  onTakeOut: (bound: string) => void;
+  onNest: (parent: string | null) => void;
+  onUngroup: () => void;
+  onSelect: (t: EditTarget) => void;
 }) {
   const trans = group.translation ?? {};
-  const members: string[] = group.members ?? [];
-  // A member id is a bounds name or ``wp:<name>`` for a waypoint.
-  const memberLabel = (id: string) => (id.startsWith("wp:") ? id.slice(3) : id);
-  const isWp = (id: string) => id.startsWith("wp:");
-  // Valid parents: any other group that isn't a descendant of this one (no cycles).
-  const descendants = (id: string): Set<string> => {
-    const out = new Set<string>();
-    const walk = (pid: string) => {
-      for (const g of groups) if (g.parent === pid && !out.has(g.id)) { out.add(g.id); walk(g.id); }
-    };
-    walk(id);
-    return out;
-  };
-  const banned = descendants(group.id);
+  const subs = childGroups(spec, group.id);
+  const members = (group.members ?? []).filter((m) => !m.startsWith("wp:"));
+  // The waypoints on its points (and, from older designs, anchored to its bounds).
+  const held = shapesInGroup(spec, group.id);
+  const waypoints = [
+    ...Object.entries(spec.queryables ?? {})
+      .filter(([, q]: [string, any]) => q?.type === "waypoint" && held.includes(q.shape?.ref))
+      .map(([n]) => n),
+    ...anchoredWaypoints(spec, held, group.id),
+  ];
+  // Where it may go: the top, or any group not inside it (no cycles).
+  const parents = ((spec.transform?.groups ?? []) as Group[]).filter((o) => !isWithin(spec, o.id, group.id));
   const setTranslation = (patch: SpecDict) => {
     const next = { ...trans, ...patch };
     const empty = next.east_nm == null && next.north_nm == null;
     onUpdate({ translation: empty ? undefined : next });
   };
-  // Randomization is opt-in: a group with no transform fields is purely
-  // organizational (its members still drag/rotate together on the map).
+  // Randomization is opt-in: without it a group only moves what it holds
+  // together, while editing (and during an episode, if it has moves).
   const hasRandomization = group.angle_deg != null || group.translation != null || group.scale != null;
   const enableRandomization = () => onUpdate({ angle_deg: { type: "range", low: -30, high: 30 } });
-  const disableRandomization = () => onUpdate({ angle_deg: undefined, translation: undefined, scale: undefined, parent: null });
-  // Candidates for the "add member" picker: every bounds + groupable waypoint not
-  // already in this group; ones held by another group note their owner (picking
-  // moves them, since membership is exclusive).
-  const candidates = [
-    ...boundsList.map((n) => ({ value: n, label: n, category: "bounds" })),
-    ...waypointList.map((n) => ({ value: `wp:${n}`, label: n, category: "waypoints" })),
-  ]
-    .filter((c) => !members.includes(c.value))
-    .map((c) => {
-      const owner = ownerOf(c.value);
-      return owner && owner.id !== group.id ? { ...c, description: `in "${owner.name || owner.id}"` } : c;
-    });
+  const disableRandomization = () => onUpdate({ angle_deg: undefined, translation: undefined, scale: undefined });
+  const moves: SpecDict[] = group.motion ?? [];
   return (
     <>
-      <InspectorHead kind="group" name={group.name} onRename={onRename} onDelete={onRemove} />
-      <FieldGroup title="Members" defaultOpen hint={`${members.length}`}>
-        <div className="muted small">Bounds and waypoints moved/rotated together. Each joins at most one group.</div>
-        <div className="chips">
-          {members.length === 0 && <span className="muted small">no members</span>}
-          {members.map((id) => (
-            <span key={id} className="chip member on" title={id}>
-              {memberLabel(id)}
-              {isWp(id) ? <span className="muted"> ·wp</span> : null}
-              <button className="chip-x" title="remove" onClick={() => onToggleMember(id)}>✕</button>
-            </span>
-          ))}
+      <InspectorHead kind="group" name={group.name} onRename={onRename} onDelete={onUngroup} />
+      <div className="deps-panel">
+        <div className="deps-row">
+          <span className="deps-label">holds</span>
+          <span className="chips">
+            {subs.map((g) => (
+              <DepChip key={g.id} label={g.name || g.id} target={{ scope: "group", id: g.id }} onSelect={onSelect} />
+            ))}
+            {members.map((m) => (
+              <span key={m} className="chip dep with-x" data-kind="bounds">
+                <button type="button" className="chip-go" onClick={() => onSelect({ scope: "region", name: m })}>
+                  {m}
+                </button>
+                <button
+                  type="button"
+                  className="chip-x"
+                  title={group.parent ? "take out, into the group around this one" : "take out of the group"}
+                  aria-label={`take ${m} out`}
+                  onClick={() => onTakeOut(m)}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            {subs.length + members.length === 0 && <span className="muted small">nothing</span>}
+          </span>
         </div>
-        <Picker
-          placeholder="+ add member…"
-          onChange={(v) => v && onToggleMember(v)}
-          options={candidates}
-        />
-      </FieldGroup>
+        {waypoints.length > 0 && (
+          <div className="deps-row">
+            <span className="deps-label">carries</span>
+            <span className="chips">
+              {waypoints.map((w) => (
+                <DepChip key={w} label={w} target={{ scope: "queryable", name: w }} kind="waypoint" onSelect={onSelect} />
+              ))}
+            </span>
+          </div>
+        )}
+        <div className="deps-row">
+          <span className="deps-label">inside</span>
+          <Picker
+            searchable={false}
+            placeholder="— no group (top level)"
+            value={group.parent ?? ""}
+            onChange={(v) => onNest(v || null)}
+            options={[
+              { value: "", label: "— no group (top level)" },
+              ...parents.map((o) => ({ value: o.id, label: o.name || o.id })),
+            ]}
+          />
+        </div>
+        <div className="muted small">
+          Drag bounds onto it in the list to add them. Waypoints on its points move with it.
+        </div>
+      </div>
       <FieldGroup title="Randomize per episode" defaultOpen={hasRandomization}>
         <label className="radio">
           <input
@@ -926,33 +1062,114 @@ function GroupInspector({
         </label>
         {hasRandomization ? (
           <>
-            <div className="muted small">Sampled each episode about the group center. Reseed on the map to preview.</div>
+            <div className="muted small">Sampled each episode about the group center. Step the map's episode to see another draw.</div>
             <ValueField label="rotate °" step={5} value={group.angle_deg ?? 0} onChange={(v) => onUpdate({ angle_deg: v })} />
             <ValueField label="east nm" step={1} value={trans.east_nm ?? 0} onChange={(v) => setTranslation({ east_nm: v })} />
             <ValueField label="north nm" step={1} value={trans.north_nm ?? 0} onChange={(v) => setTranslation({ north_nm: v })} />
             <ValueField label="scale ×" step={0.1} value={group.scale ?? 1} onChange={(v) => onUpdate({ scale: v })} />
-            <label className="numfield inline">
-              <span>inside</span>
-              <Picker
-                searchable={false}
-                placeholder="— none (top level)"
-                value={group.parent ?? ""}
-                onChange={(v) => onUpdate({ parent: v || null })}
-                options={[
-                  { value: "", label: "— none (top level)" },
-                  ...groups
-                    .filter((o) => o.id !== group.id && !banned.has(o.id))
-                    .map((o) => ({ value: o.id, label: o.name || o.id })),
-                ]}
-              />
-            </label>
-            <div className="muted small">A nested group spins locally first, then is carried by its parent.</div>
+            {group.parent && <div className="muted small">Inside a group, it is randomized first, then carried by that group.</div>}
           </>
         ) : (
-          <div className="muted small">Off — this group only moves/rotates its members together while editing.</div>
+          <div className="muted small">Off - each episode starts with it where it is drawn.</div>
         )}
       </FieldGroup>
+      <FieldGroup title="Moves during the episode" defaultOpen={moves.length > 0} hint={moves.length ? `${moves.length}` : undefined}>
+        <div className="muted small">
+          The group moves as one, rigidly about its center: the shapes it holds keep their distances. Waypoints on its
+          points hold still - a fix doesn't move.
+        </div>
+        <MotionEditor
+          motion={moves}
+          onChange={(m) => onUpdate({ motion: m ?? undefined, ...(m ? {} : { motion_update: undefined }) })}
+          cadence={group.motion_update}
+          onCadence={(u) => onUpdate({ motion_update: u ?? undefined })}
+          center={center}
+          regionNames={regionNames}
+        />
+      </FieldGroup>
+      <div className="geo-inspector-foot">
+        <button type="button" onClick={onUngroup} title="Remove the group; what it holds goes to where it was">
+          Ungroup
+        </button>
+      </div>
     </>
+  );
+}
+
+// The airspace: a role one area plays - the sector. Code reads it as
+// `ctx.airspace` and `info["in_airspace"]`; drivers draw it in red; new
+// elements are seeded inside it. Content beyond it is a warning, not an error.
+function AirspaceRole({
+  isAirspace,
+  other,
+  onChange,
+}: {
+  isAirspace: boolean;
+  other?: string;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <div className="deps-panel compact">
+      <label className="radio" title='the sector: ctx.airspace and info["in_airspace"] ask about it; drivers draw it in red'>
+        <input type="checkbox" checked={isAirspace} onChange={(e) => onChange(e.target.checked)} />
+        the airspace
+        {!isAirspace && other && <span className="muted small"> - instead of “{other}”</span>}
+      </label>
+    </div>
+  );
+}
+
+// A bounds' group: the one it is in, to join, or a bounds to group it with -
+// the keyboard's way to do what dragging in the list does.
+function GroupPicker({
+  spec,
+  name,
+  onGroupWith,
+  onJoin,
+  onOpen,
+}: {
+  spec: SpecDict;
+  name: string;
+  onGroupWith: (other: string) => void;
+  onJoin: (id: string | null) => void;
+  onOpen: (id: string) => void;
+}) {
+  const current = groupOfShape(spec, name);
+  const groups = (spec.transform?.groups ?? []) as Group[];
+  const others = Object.keys(spec.shapes ?? {}).filter((n) => n !== name);
+  return (
+    <div className="deps-panel compact">
+      <div className="deps-row">
+        <span className="deps-label">group</span>
+        <Picker
+          placeholder="— in no group"
+          value={current ? `g:${current.id}` : ""}
+          onChange={(v) => {
+            if (!v) onJoin(null);
+            else if (v.startsWith("g:")) onJoin(v.slice(2));
+            else if (v.startsWith("b:")) onGroupWith(v.slice(2));
+          }}
+          options={[
+            { value: "", label: "— in no group" },
+            ...groups.map((g) => ({ value: `g:${g.id}`, label: g.name || g.id, category: "join a group" })),
+            ...others.map((n) => {
+              const in_ = groupOfShape(spec, n);
+              return {
+                value: `b:${n}`,
+                label: n,
+                category: "group with a shape",
+                description: in_ ? `a new group, inside ${in_.name || in_.id}` : "a new group of the two",
+              };
+            }),
+          ]}
+        />
+        {current && (
+          <button type="button" className="link" onClick={() => onOpen(current.id)}>
+            open
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -993,38 +1210,184 @@ function GeoGroup({
   );
 }
 
-// One compact outline row: kind tag + name, selection highlight, optional eye.
-function Row({
-  name,
-  kind,
-  selected,
-  onClick,
-  hidden,
-  onToggleHidden,
-  locked,
-  onToggleLocked,
+// Under an element's header: the bounds it uses (open it), who else uses it,
+// and what that bounds depends on - so a change's reach is in view first.
+function ShapeLink({
+  refName,
+  graph,
+  onSelect,
+  self,
 }: {
-  name: string;
-  kind: string;
-  selected: boolean;
-  onClick: () => void;
-  hidden?: boolean;
-  onToggleHidden?: () => void;
-  locked?: boolean;
-  onToggleLocked?: () => void;
+  refName: string | undefined;
+  graph: Record<string, ShapeInfo>;
+  onSelect: (t: EditTarget) => void;
+  self: EditTarget;
 }) {
+  if (!refName) return null;
+  const name = graph[refName] ? refName : refName.replace(/\.\d+$/, "");
+  const info = graph[name];
+  if (!info) return null;
+  const same = (t: EditTarget | null) => !!t && targetKey(t) === targetKey(self);
+  const others = info.usedBy.filter((u) => !same(u.target));
   return (
-    <div className={selected ? "geo-row selected" : "geo-row"} onClick={onClick}>
-      <span className="geo-row-kind">{kind}</span>
-      <span className="geo-row-name" title={name}>{name}</span>
-      <span className="spacer" />
-      {onToggleLocked && <LockToggle locked={locked ?? false} onToggle={onToggleLocked} />}
-      {onToggleHidden && <EyeToggle hidden={hidden ?? false} onToggle={onToggleHidden} />}
+    <div className="deps-panel compact">
+      <div className="deps-row">
+        <span className="deps-label">shape</span>
+        <span className="chips">
+          <DepChip label={refName} target={{ scope: "region", name }} onSelect={onSelect} />
+          {refName !== name && <span className="muted small">a shape of {name}, drawn each episode</span>}
+        </span>
+      </div>
+      {others.length > 0 && (
+        <div className="deps-row">
+          <span className="deps-label">shared with</span>
+          <span className="chips">
+            {others.map((u, i) => (
+              <DepChip key={i} label={u.label} target={u.target} kind={u.kind} onSelect={onSelect} />
+            ))}
+          </span>
+        </div>
+      )}
+      <DependsOn info={info} onSelect={onSelect} />
     </div>
   );
 }
 
-// The inspector header: editable name (when applicable), kind tag, eye, delete.
+// A chip that goes to an element, colored as its kind is.
+function DepChip({
+  label,
+  target,
+  kind: as,
+  onSelect,
+}: {
+  label: string;
+  target: EditTarget | null;
+  kind?: string;
+  onSelect: (t: EditTarget) => void;
+}) {
+  const kind = as ?? (target ? kindOfTarget(target) : "bounds");
+  return target ? (
+    <button type="button" className="chip dep" data-kind={kind} onClick={() => onSelect(target)}>
+      {label}
+    </button>
+  ) : (
+    <span className="chip dep" data-kind={kind}>
+      {label}
+    </span>
+  );
+}
+
+// What a bounds depends on: each bounds once, with every param it is used through.
+function DependsOn({ info, onSelect }: { info: ShapeInfo; onSelect: (t: EditTarget) => void }) {
+  const merged = new Map<string, string[]>();
+  for (const d of info.dependsOn) merged.set(d.name, [...(merged.get(d.name) ?? []), d.via]);
+  if (!merged.size) return null;
+  return (
+    <div className="deps-row">
+      <span className="deps-label">depends on</span>
+      <span className="chips">
+        {[...merged].map(([name, vias]) => (
+          <button
+            key={name}
+            type="button"
+            className="chip dep"
+            data-kind="bounds"
+            title={`through its ${vias.join(", ")}`}
+            onClick={() => onSelect({ scope: "region", name: name.replace(/\.\d+$/, "") })}
+          >
+            {name} <span className="muted">· {vias.join(", ")}</span>
+          </button>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+// The kind an edit target is - for its color and icon.
+function kindOfTarget(t: EditTarget): string {
+  if (t.scope === "queryable") return "region";
+  if (t.scope === "region") return "bounds";
+  return t.scope;
+}
+
+// How to name a target for a person: "storm", "spawn_1", "airspace".
+function targetLabel(spec: SpecDict, t: EditTarget): string {
+  if (t.scope === "airspace") return "airspace";
+  if (t.scope === "spawn") return spec.spawn?.regions?.[t.index]?.name || `spawn ${t.index + 1}`;
+  if (t.scope === "group") return (spec.transform?.groups ?? []).find((g: SpecDict) => g.id === t.id)?.name ?? "group";
+  return "name" in t ? t.name : "element";
+}
+
+// A bounds' dependencies: what uses it, what it uses, the code that reads it -
+// each a way there - and, unused, what it could be.
+function ShapeDependencies({
+  info,
+  onSelect,
+  onAddQueryable,
+}: {
+  info: ShapeInfo | undefined;
+  onSelect: (t: EditTarget) => void;
+  onAddQueryable: () => void;
+}) {
+  if (!info) return null;
+  const unused = isUnused(info);
+  return (
+    <div className="deps-panel">
+      {unused ? (
+        <div className="deps-warning" role="note">
+          <strong>
+            <span aria-hidden="true">⚠</span> Not used by anything
+          </strong>
+          <span>
+            No element, other shape, group or code refers to it. Pick it as an element's shape, as a generator's parent
+            or a placement's region - or read it in code with <code>ctx.shape("{info.name}")</code>.
+          </span>
+          <span className="deps-actions">
+
+            <button type="button" onClick={onAddQueryable}>
+              Add a queryable on it
+            </button>
+          </span>
+        </div>
+      ) : (
+        <>
+          {info.usedBy.length > 0 && (
+            <div className="deps-row">
+              <span className="deps-label">used by</span>
+              <span className="chips">
+                {info.usedBy.map((u, i) => (
+                  <DepChip key={i} label={u.label} target={u.target} kind={u.kind} onSelect={onSelect} />
+                ))}
+              </span>
+            </div>
+          )}
+          {info.inCode.length > 0 && (
+            <div className="deps-row">
+              <span className="deps-label">read in</span>
+              <span className="muted small">{info.inCode.join(", ")}</span>
+            </div>
+          )}
+          {info.usedBy.length > 1 && <div className="muted small">Edits here change it for every one of them.</div>}
+        </>
+      )}
+      <DependsOn info={info} onSelect={onSelect} />
+    </div>
+  );
+}
+
+// Each kind of element's icon (24px paths), as its badge shows it.
+const KIND_ICONS: Record<string, string> = {
+  airspace: "M3 5h18v14H3V5Zm2 2v10h14V7H5Z",
+  region: "M12 2 4 6v6c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V6l-8-4Zm0 2.2 6 3V12c0 3.9-2.5 6.9-6 8-3.5-1.1-6-4.1-6-8V7.2l6-3Z",
+  waypoint: "M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7Zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5Z",
+  spawn: "M11 2h2v5h-2V2Zm0 15h2v5h-2v-5ZM2 11h5v2H2v-2Zm15 0h5v2h-5v-2Zm-5-2a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z",
+  bounds: "M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z",
+  area: "M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z",
+  point: "M11 2h2v5h-2V2Zm0 15h2v5h-2v-5ZM2 11h5v2H2v-2Zm15 0h5v2h-5v-2Zm-5-2.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z",
+  group: "M3 3h8v8H3V3Zm10 0h8v8h-8V3ZM3 13h8v8H3v-8Zm10 0h8v8h-8v-8Z",
+};
+
+// The inspector header: the kind (badge, color), editable name, eye, delete.
 function InspectorHead({
   kind,
   name,
@@ -1044,14 +1407,20 @@ function InspectorHead({
   onToggleLocked?: () => void;
   onDelete?: () => void;
 }) {
+  const base = kind.split(/[\s·]/)[0];
   return (
-    <div className="geo-inspector-head">
+    <div className="geo-inspector-head" data-kind={base}>
+      <span className="kind-badge" data-kind={base}>
+        <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+          <path fill="currentColor" d={KIND_ICONS[base] ?? KIND_ICONS.bounds} />
+        </svg>
+        {kind}
+      </span>
       {onRename ? (
         <input className="name-input" defaultValue={name} key={name} onBlur={(e) => onRename(e.target.value)} />
       ) : (
         <span className="geo-inspector-name">{name ?? kind}</span>
       )}
-      <span className="kind-tag">{kind}</span>
       <span className="spacer" />
       {onToggleLocked && <LockToggle locked={locked ?? false} onToggle={onToggleLocked} />}
       {onToggleHidden && <EyeToggle hidden={hidden ?? false} onToggle={onToggleHidden} />}
@@ -1086,8 +1455,10 @@ function QueryableInspector({
   onToggleLocked,
   onRename,
   onDelete,
+  shapeLink,
   ...body
 }: Parameters<typeof QueryableBody>[0] & {
+  shapeLink?: React.ReactNode;
   kind: string;
   hidden: boolean;
   onToggleHidden: () => void;
@@ -1108,6 +1479,7 @@ function QueryableInspector({
         onToggleLocked={onToggleLocked}
         onDelete={onDelete}
       />
+      {shapeLink}
       <LockableBody locked={locked}>
         <QueryableBody {...body} />
       </LockableBody>
@@ -1119,40 +1491,34 @@ function QueryableInspector({
 
 // Add a named bounds (unique name, derived from its role) and return its name.
 function addRegionTo(s: SpecDict, bounds: SpecDict, base = "bounds"): string {
-  s.regions = s.regions ?? {};
+  s.shapes = s.shapes ?? {};
   const slug = (base || "bounds").replace(/[^0-9a-zA-Z_]+/g, "_") || "bounds";
   let name = slug;
   let i = 1;
-  while (s.regions[name]) name = `${slug}_${i++}`;
-  s.regions[name] = bounds;
+  while (s.shapes[name]) name = `${slug}_${i++}`;
+  s.shapes[name] = bounds;
   return name;
 }
 
 // When a bounds is referenced by exactly one element, keep its name following
 // that element's name. Renames the bounds (deduped) and rewrites the ref.
-function syncBoundsName(s: SpecDict, name: string | undefined, desired: string) {
-  if (!name || !s.regions?.[name] || countBoundsRefs(s, name) !== 1) return;
+function syncShapeName(s: SpecDict, name: string | undefined, desired: string) {
+  if (!name || !s.shapes?.[name] || countShapeRefs(s, name) !== 1) return;
   const slug = (desired || "bounds").replace(/[^0-9a-zA-Z_]+/g, "_") || "bounds";
   if (name === slug) return;
   let target = slug;
   let i = 1;
-  while (s.regions[target]) target = `${slug}_${i++}`;
-  s.regions[target] = s.regions[name];
-  delete s.regions[name];
+  while (s.shapes[target]) target = `${slug}_${i++}`;
+  s.shapes[target] = s.shapes[name];
+  delete s.shapes[name];
   rewriteRegionRefs(s, name, target);
 }
 
 // Rewrite every {"ref": oldName} bounds reference after a region is renamed.
+// Every ref to a renamed bounds follows it - elements, other bounds' layers,
+// groups, its shapes' refs (see shapeGraph).
 function rewriteRegionRefs(s: SpecDict, oldName: string, newName: string) {
-  const fix = (b: any) => (b && b.ref === oldName ? { ref: newName } : b);
-  if (s.airspace) s.airspace = fix(s.airspace);
-  for (const q of Object.values(s.queryables ?? {}) as SpecDict[]) {
-    if (q.bounds) q.bounds = fix(q.bounds);
-    if (q.sample) q.sample = fix(q.sample);
-  }
-  for (const r of (s.spawn?.regions ?? []) as SpecDict[]) {
-    if (r.bounds) r.bounds = fix(r.bounds);
-  }
+  renameShapeRefs(s, oldName, newName);
 }
 
 function addQueryable(s: SpecDict, q: SpecDict, prefix: string): string {

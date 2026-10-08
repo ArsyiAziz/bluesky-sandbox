@@ -7,6 +7,9 @@ import { api, type SampleResult, type SpecDict } from "../api";
 import { normalizerColor } from "../normColors";
 import { useEpisodeSample } from "../episode";
 import { useRefresh } from "../refresh";
+import { ObsSample } from "./panel/ObsSample";
+import { SamplingReadout } from "./panel/SamplingReadout";
+import { Section } from "./panel/Section";
 
 // ``discrete``: an action's choices - x each choice, y what it gives; with
 // ``labels``, each choice's value named (a switch's off / on).
@@ -147,6 +150,18 @@ export default function MdpTab({ spec }: { spec: SpecDict | null }) {
             {name ? shortName(name) : "raw"}
           </span>
         ))}
+      </div>
+      {/* Runs the environment, so it is opened on asking. */}
+      <div className="mdp-sample">
+        <Section
+          title="Sample"
+          subtitle="what an aircraft observes"
+          defaultOpen={false}
+          hint="One episode - the map's - and its aircraft in spawn order. Pick one, here or on the map, to run the environment to its spawn: each field's raw value and the columns the policy sees. Step the episode to see how much the design varies."
+        >
+          <SamplingReadout spec={spec} />
+          <ObsSample spec={spec} />
+        </Section>
       </div>
       <h3>observation</h3>
       {summary.observation.map((p) => (

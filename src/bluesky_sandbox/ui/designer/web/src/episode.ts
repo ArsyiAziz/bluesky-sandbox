@@ -1,6 +1,7 @@
-// The sampled episode every view shares: the seed the map's reseed draws it
-// with, and the aircraft picked in it. The map, the Sampling panel and the
-// Spaces tab all read one episode, so what one shows the others agree with.
+// The sampled episode every view shares: its number (the seed it is drawn
+// with, stepped by the episode stepper), and the aircraft picked in it. The
+// map and the Spaces tab (its sample, its per-aircraft ranges) all read one
+// episode, so what one shows the others agree with.
 import { createContext, useContext, useEffect, useState } from "react";
 import { api, type EpisodeRunDone, type SampleResult, type SpawnedAircraft, type SpecDict } from "./api";
 import { useRefresh } from "./refresh";

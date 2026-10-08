@@ -2,11 +2,13 @@
 // wireframe construction, footprint math, and route resolution. No React, no
 // deck.gl - just data in, data out, so the same primitives drive rendering and
 // the drag-edit handles.
+import { waypointSampleRef } from "../waypointPoints";
 import type { PreviewResult, SpecDict } from "../api";
 import { altRange, repValue } from "../specHelpers";
 import type {
   Edge,
   Face,
+  Mark,
   RGBA,
   RoutePath,
   Selectable,
@@ -86,9 +88,25 @@ export function centroid(vertices: [number, number][]): [number, number] {
 export function regionGeometry(
   g: { vertices: [number, number][]; alt_min_ft?: number | null; alt_max_ft?: number | null; per_vertex_alt_ft?: [number, number][] },
   color: RGBA,
-  out: { edges: Edge[]; faces: Face[] },
+  out: { edges: Edge[]; faces: Face[]; marks?: Mark[] },
   meta: Selectable = {},
+  // "dashed": outline only, in dashes - a shape that is not the one you edit
+  // (this episode's draw of a sampled one, say).
+  style: "solid" | "dashed" = "solid",
 ) {
+  // A point: a marker, on a stem up to its band where it has one.
+  if (g.vertices.length === 1) {
+    const [lat, lon] = g.vertices[0];
+    const lo = Number.isFinite(g.alt_min_ft) ? (g.alt_min_ft as number) * FT_TO_M : 0;
+    const hi = Number.isFinite(g.alt_max_ft) ? (g.alt_max_ft as number) * FT_TO_M : lo;
+    out.marks?.push({ ...meta, position: [lon, lat, lo], color, dashed: style === "dashed" });
+    if (hi - lo > 1) out.edges.push({ ...meta, src: [lon, lat, lo], tgt: [lon, lat, hi], color: [color[0], color[1], color[2], 255] });
+    return;
+  }
+  if (style === "dashed") {
+    dashedOutline(g.vertices, (g.alt_min_ft ?? 0) * FT_TO_M, color, out.edges, meta);
+    return;
+  }
   const verts = g.vertices;
   const n = verts.length;
   if (n < 2) return;
@@ -117,6 +135,61 @@ export function regionGeometry(
       out.edges.push({ ...meta, src: P(i, floor(i)), tgt: P(i, ceil(i)), color: edge }); // vertical side
     }
   }
+}
+
+// A closed ring as dashes: each edge split into short on/off runs (the line
+// layer has no dash of its own), about every 0.006 deg.
+function dashedOutline(verts: [number, number][], z: number, color: RGBA, edges: Edge[], meta: Selectable) {
+  const n = verts.length;
+  const c: RGBA = [color[0], color[1], color[2], 255];
+  for (let i = 0; i < n; i++) {
+    const [lat0, lon0] = verts[i];
+    const [lat1, lon1] = verts[(i + 1) % n];
+    dashes([lon0, lat0, z], [lon1, lat1, z], c, edges, meta);
+  }
+}
+
+function dashes(a: number[], b: number[], color: RGBA, edges: Edge[], meta: Selectable) {
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const pieces = Math.min(400, Math.max(2, Math.ceil(len / 0.006)));
+  for (let k = 0; k < pieces; k += 2) {
+    const t0 = k / pieces;
+    const t1 = Math.min(1, (k + 1) / pieces);
+    const at = (t: number) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    edges.push({ ...meta, src: at(t0), tgt: at(t1), color });
+  }
+}
+
+// A moving shape at time `t_s` (s into the episode): its nearest frame, from
+// the preview's minute-apart frames. Not moving: as it is.
+export function atTime<G extends { vertices: [number, number][]; frames?: { t_s: number; vertices: [number, number][] }[] }>(
+  g: G,
+  t_s: number,
+): G {
+  const frames = g.frames;
+  if (!frames?.length) return g;
+  let best = frames[0];
+  for (const f of frames) if (Math.abs(f.t_s - t_s) < Math.abs(best.t_s - t_s)) best = f;
+  return { ...g, vertices: best.vertices };
+}
+
+// Where a moving shape goes: its center through its frames, as a dashed line.
+export function motionTrack(
+  g: { frames?: { vertices: [number, number][] }[]; alt_min_ft?: number | null },
+  color: RGBA,
+  edges: Edge[],
+  meta: Selectable = {},
+) {
+  const frames = g.frames;
+  if (!frames || frames.length < 2) return;
+  const z = (g.alt_min_ft ?? 0) * FT_TO_M;
+  const centers = frames.map((f) => {
+    const lats = f.vertices.map(([lat]) => lat);
+    const lons = f.vertices.map(([, lon]) => lon);
+    return [(Math.min(...lons) + Math.max(...lons)) / 2, (Math.min(...lats) + Math.max(...lats)) / 2, z];
+  });
+  const c: RGBA = [color[0], color[1], color[2], 200];
+  for (let i = 0; i + 1 < centers.length; i++) dashes(centers[i], centers[i + 1], c, edges, meta);
 }
 
 export function zMeters(altFt: number): number {
@@ -263,11 +336,19 @@ export function footprintCoords(fp: SpecDict): [number, number][] {
     return [...inner, ...outer];
   }
   if (fp.type === "boolean") return [...footprintCoords(fp.left), ...footprintCoords(fp.right)];
+  // A generated shape: about where it is drawn - its center and radius, where
+  // it has them. Each episode's draw comes from the preview.
+  if (fp.type === "generated") {
+    const c = fp.params?.center;
+    if (!c) return [];
+    const r = repValue(fp.params?.radius_nm ?? 10);
+    return Number.isFinite(r) ? radialVertices(c, r, 48) : [[c.lat_deg, c.lon_deg]];
+  }
   if (fp.center) return [[fp.center.lat_deg, fp.center.lon_deg]];
   return [];
 }
 
-export function boundsCenter(bounds: SpecDict): [number, number] | null {
+export function shapeCenter(bounds: SpecDict): [number, number] | null {
   const fp = bounds?.footprint;
   if (!fp) return null;
   const coords = footprintCoords(fp);
@@ -280,8 +361,8 @@ export function boundsCenter(bounds: SpecDict): [number, number] | null {
   ];
 }
 
-export function boundsRadiusDeg(bounds: SpecDict): number {
-  const center = boundsCenter(bounds);
+export function shapeRadiusDeg(bounds: SpecDict): number {
+  const center = shapeCenter(bounds);
   if (!center) return 0.1;
   const coords = footprintCoords(bounds?.footprint);
   const radius = Math.max(
@@ -291,7 +372,7 @@ export function boundsRadiusDeg(bounds: SpecDict): number {
   return Number.isFinite(radius) ? radius : 0.1;
 }
 
-export function frontendBoundsGeometry(bounds: SpecDict): {
+export function frontendShapeGeometry(bounds: SpecDict): {
   vertices: [number, number][];
   alt_min_ft?: number;
   alt_max_ft?: number;
@@ -302,7 +383,7 @@ export function frontendBoundsGeometry(bounds: SpecDict): {
   // Compute the altitude profile on the unrotated footprint vertices; rotation
   // only moves lat/lon, so the per-vertex bands stay index-aligned afterwards.
   const rawVertices = footprintCoords(fp);
-  const center = boundsCenter(bounds);
+  const center = shapeCenter(bounds);
   const vertices =
     center && bounds.rotation_deg
       ? rawVertices.map(([lat, lon]) => rotateLatLon(lat, lon, center, bounds.rotation_deg))
@@ -414,8 +495,18 @@ export function moveFootprint(fp: SpecDict, dLat: number, dLon: number) {
   } else if (fp.type === "boolean") {
     moveFootprint(fp.left, dLat, dLon);
     moveFootprint(fp.right, dLat, dLon);
+  } else if (fp.type === "generated") {
+    // Where it is drawn: its center, and any points it must contain. A parent
+    // or a region to stay within moves with that region, not this one.
+    const params = (fp.params = { ...(fp.params ?? {}) });
+    if (params.center) params.center = latLonObj(params.center.lat_deg + dLat, params.center.lon_deg + dLon);
+    if (Array.isArray(params.contains)) {
+      params.contains = params.contains.map((p: any) => latLonObj(p.lat_deg + dLat, p.lon_deg + dLon));
+    }
   } else if (fp.center) {
     fp.center = latLonObj(fp.center.lat_deg + dLat, fp.center.lon_deg + dLon);
+    // A point moved off its navdb fix is a lat/lon.
+    if (fp.type === "point") delete fp.fix;
   }
 }
 
@@ -511,14 +602,14 @@ export function waypointPositions(spec: SpecDict | null, preview: PreviewResult 
     }
   }
   for (const [name, q] of Object.entries(spec?.queryables ?? {}) as [string, any][]) {
-    if (q?.type !== "waypoint" || !q.sample || positions.has(name)) continue;
+    const ref = q?.type === "waypoint" ? waypointSampleRef(spec, q) : null;
+    if (!ref || positions.has(name)) continue;
     // Fallback anchor (per-aircraft waypoints, or a preview without this
-    // waypoint): the sample region's centroid, preferring the sampled-episode
-    // region geometry from the preview over the canonical spec shape.
-    const ref = q.sample.ref;
-    const sampledRegion = ref ? preview.regions?.[ref] : undefined;
-    const region = ref ? spec?.regions?.[ref] : q.sample;
-    const g = sampledRegion ?? (region?.footprint ? frontendBoundsGeometry(region) : null);
+    // waypoint): the region it is drawn in - its centroid, preferring the
+    // sampled-episode region geometry from the preview over the canonical shape.
+    const sampledRegion = ref ? preview.shapes?.[ref] : undefined;
+    const region = spec?.shapes?.[ref];
+    const g = sampledRegion ?? (region?.footprint ? frontendShapeGeometry(region) : null);
     if (!g?.vertices?.length) continue;
     const [clon, clat] = centroid(g.vertices);
     const z = zMeters(Number.isFinite(repValue(q.alt_ft)) ? repValue(q.alt_ft) : 0) + WAYPOINT_LIFT_M;
