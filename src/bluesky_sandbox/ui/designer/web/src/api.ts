@@ -57,9 +57,12 @@ export interface PreviewResult {
     lat: number;
     lon: number;
     alt_ft: number;
-    spd_kts: number;
+    // null: drawn from its flight envelope as it spawns.
+    spd_kts: number | null;
     actype: string;
     spawn_time: number;
+    // The source that planned it; absent or null for a spawn region's.
+    source?: string | null;
     target?: { lat: number; lon: number; alt_ft: number | null } | null;
   }[];
   max_aircraft: number;

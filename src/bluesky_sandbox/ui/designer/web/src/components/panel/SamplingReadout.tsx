@@ -49,7 +49,7 @@ export function SamplingReadout({ spec }: { spec: SpecDict }) {
           acid: null,
           actype: a.actype,
           alt_ft: a.alt_ft,
-          speed: `${Math.round(a.spd_kts)} kt`,
+          speed: a.spd_kts == null ? "envelope" : `${Math.round(a.spd_kts)} kt`,
         }))
         .sort((x, y) => x.at_s - y.at_s);
   // A pick made from the preview's rows carries over to the flown aircraft of

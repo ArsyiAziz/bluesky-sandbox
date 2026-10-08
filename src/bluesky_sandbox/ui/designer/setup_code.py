@@ -256,7 +256,9 @@ SCENARIO_API: dict[str, tuple[str, ...]] = {
     ),
     "bluesky_sandbox.sim.sampling.distributions": ("Bounded", "Categorical"),
     "bluesky_sandbox.sim.queryables": ("QueryRegion", "Waypoint"),
-    "bluesky_sandbox.sim.spawn": ("SpawnConfig", "SpawnRegion"),
+    "bluesky_sandbox.sim.spawn": (
+        "PlanContext", "PlannedSource", "SpawnConfig", "SpawnRegion", "SpawnRequest", "nearest_entry",
+    ),
 }
 
 

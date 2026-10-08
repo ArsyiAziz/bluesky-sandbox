@@ -22,7 +22,7 @@ from bluesky_sandbox.sim.scenario.geometry_json import (
 )
 from bluesky_sandbox.sim.sampling.distributions import Categorical
 from bluesky_sandbox.sim.scenario import transforms as _t
-from bluesky_sandbox.sim.spawn import SpawnConfig
+from bluesky_sandbox.sim.spawn import PlanContext, SpawnConfig
 
 from .builder import build_scenario, lower_waypoints
 from .spec import DesignSpec
@@ -55,7 +55,7 @@ def _resolve_spawn_types(spawn: SpawnConfig, allowed_aircraft: list[str]) -> Non
 def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
     """Return renderable geometry for a spec: airspace, queryables, spawn + samples.
 
-    A single seeded ``iter_spawns`` draw gives a representative set of aircraft
+    A single seeded plan of the episode gives a representative set of aircraft
     so the map can show where traffic appears, without stepping the simulator.
     """
     # Waypoints on points, in the form the scenario (and this) reads.
@@ -143,23 +143,35 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
             "speed_tolerance_kts": getattr(wp, "speed_tolerance_kts", None),
         }
 
+    # The episode's plan, as the environment makes it at reset: the regions'
+    # aircraft - maintain regions' too, as a snapshot - and each source's.
+    ctx = PlanContext(
+        shapes=getattr(episode, "shapes", None) or {},
+        queryables=episode.queryables,
+        airspace=episode.airspace_bounds,
+        spawn=episode.spawn,
+    )
+    sources = episode.spawn.sources
     sampled_aircraft = []
-    for i, (_region_index, spawn_time, actype, pos, prefix, route) in enumerate(
-        episode.spawn.iter_spawns(
-            rng, limit=episode.max_aircraft, include_maintain=True
-        )
+    for i, planned in enumerate(
+        episode.spawn.plan_episode(rng, ctx, limit=episode.max_aircraft, include_maintain=True)
     ):
+        request = planned.request
+        route = request.route
+        source = sources[planned.source_index] if planned.source_index >= 0 else None
         sampled_aircraft.append(
             {
-                "lat": float(pos["lat_deg"]),
-                "lon": float(pos["lon_deg"]),
-                "alt_ft": float(pos.get("alt_ft", float("nan"))),
-                "spd_kts": float(pos.get("spd_kts", float("nan"))),
-                "actype": actype,
-                "spawn_time": float(spawn_time),
-                "callsign_prefix": prefix,
+                "lat": float(request.at.lat_deg),
+                "lon": float(request.at.lon_deg),
+                "alt_ft": float(request.alt_ft),
+                # None: drawn from its flight envelope as it spawns.
+                "spd_kts": None if request.spd_kts is None else float(request.spd_kts),
+                "actype": request.actype,
+                "spawn_time": float(request.time_s),
+                "callsign_prefix": request.callsign_prefix,
                 "route": list(route) if route else None,
                 "target": _target(route, f"_pv{i}"),
+                "source": None if source is None else (getattr(source, "name", "") or f"source {planned.source_index}"),
             }
         )
 

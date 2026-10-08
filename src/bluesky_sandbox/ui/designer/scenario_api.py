@@ -16,7 +16,7 @@ import numpy as np
 from bluesky_sandbox.interface.task import DesignKeys
 from bluesky_sandbox.sim.bounds import Bounds, RegionBounds
 from bluesky_sandbox.sim.queryables import Queryable
-from bluesky_sandbox.sim.spawn import SpawnConfig
+from bluesky_sandbox.sim.spawn import PlanContext, SpawnConfig, SpawnRequest
 
 
 class EpisodeGeometry(TypedDict, total=False):
@@ -44,3 +44,14 @@ def episode_geometry(geometry: EpisodeGeometry, rng: np.random.Generator) -> Epi
 #: Each scenario hook's typed signature, by name (see ``spec.SCENARIO_HOOKS``).
 SIGNATURES = {"episode_geometry": episode_geometry}
 
+
+def plan(rng: np.random.Generator, ctx: PlanContext) -> list[SpawnRequest]:
+    """A spawn source's aircraft this episode, each a ``SpawnRequest`` with its
+    ``time_s`` - from any data your code reads, any distribution it draws.
+    ``ctx`` is the episode's geometry: its shapes, queryables, airspace and
+    spawn config (routes, aircraft types)."""
+    return []
+
+
+#: A spawn source's ``plan``: its typed signature.
+SPAWN_SOURCE_SIGNATURE = plan

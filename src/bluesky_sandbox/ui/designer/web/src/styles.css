@@ -2410,6 +2410,18 @@ button:disabled {
   font-weight: 400;
 }
 
+.source-policies {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 6px;
+}
+
+.source-policies .numfield input {
+  width: 9em;
+}
+
 .hook-hint h3 {
   margin: 12px 0 4px;
 }

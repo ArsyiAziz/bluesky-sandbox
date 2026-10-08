@@ -97,6 +97,11 @@ def _blocks(spec: DesignSpec) -> Iterator[Block]:
         if name in SCENARIO_HOOKS and body.strip():
             params = tuple(SCENARIO_HOOKS[name][0])
             yield Block(f"scenario:{name}", body, scenario_names, params)
+    spawn = spec.spawn if isinstance(spec.spawn, dict) else {}
+    for source in spawn.get("sources") or []:
+        body = (source or {}).get("plan") or ""
+        if body.strip():
+            yield Block(f"spawn_source:{source.get('name')}", body, scenario_names, ("rng", "ctx"))
     for filename, source in (spec.code or {}).items():
         if filename.endswith(".py"):
             yield Block(f"code:{filename}", source, frozenset())

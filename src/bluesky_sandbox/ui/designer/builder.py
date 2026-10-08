@@ -6,7 +6,7 @@ the env consumes:
 * :func:`build_scenario` - a :class:`~bluesky_sandbox.sim.sampling.Scenario` over the
   airspace / spawn / queryables. Because the spawn config carries its own
   distributions (counts, params), per-episode randomization happens inside
-  ``SpawnConfig.iter_spawns`` at reset time, so ``sample()`` and ``support()``
+  ``SpawnConfig.plan_episode`` at reset time, so ``sample()`` and ``support()``
   return the same schema-stable :class:`EpisodeSpec`.
 * :func:`build_design_config` - a static :class:`~bluesky_sandbox.config.EnvConfig`,
   resolving field references against the field modules.
@@ -24,7 +24,7 @@ import math
 import sys
 import textwrap
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import ModuleType
 from typing import Any
 
@@ -46,7 +46,7 @@ from bluesky_sandbox.sim.bounds.base import Footprint
 from bluesky_sandbox.sim.queryables import Queryable
 from bluesky_sandbox.sim.scenario import GeometryDict, RandomizedScenario
 from bluesky_sandbox.sim.scenario import transforms as _t
-from bluesky_sandbox.sim.spawn import SpawnConfig
+from bluesky_sandbox.sim.spawn import PlannedSource, SpawnConfig, SpawnSource, nearest_entry
 
 from . import setup_code
 from . import spec as _spec
@@ -562,6 +562,7 @@ def _move_waypoint_sampling_to_routes(
 
 def _materialize(
     spec: DesignSpec,
+    sources: Sequence[Any] = (),
 ) -> tuple[Bounds | None, dict[str, Queryable], SpawnConfig]:
     airspace_d, queryables_d, spawn_d = _resolved_geometry(spec)
     airspace = _spec.load(airspace_d) if airspace_d is not None else None
@@ -572,6 +573,9 @@ def _materialize(
     if not isinstance(spawn, SpawnConfig):
         raise BuildError("DesignSpec.spawn did not resolve to a SpawnConfig.")
     _load_route_step_sample_bounds(spawn)
+    # The design's spawn sources (compile_scenario_code): its aircraft beyond
+    # the regions'.
+    spawn.sources = list(sources)
     return airspace, queryables, spawn
 
 
@@ -799,6 +803,7 @@ def _make_episode_geometry_fn(
     spec: DesignSpec,
     dists: dict[str, dict[str, Any]],
     region_sink: dict[str, Bounds],
+    sources: Sequence[Any] = (),
 ) -> Callable[[Any], dict[str, Any]]:
     """Per-episode geometry rebuild for sampled region params and generated
     regions.
@@ -820,7 +825,7 @@ def _make_episode_geometry_fn(
                 _spec.set_footprint_param(fp, path, _t.sample_scalar(value, rng))
         # Generated regions: drawn, and written back so refs resolve to them.
         drawn = _draw_generated(sub, rng)
-        airspace, queryables, spawn = _materialize(sub)
+        airspace, queryables, spawn = _materialize(sub, sources)
         region_sink.clear()
         region_sink.update(drawn)
         return {
@@ -834,8 +839,12 @@ def _make_episode_geometry_fn(
     return rebuild
 
 
-def compile_scenario_hooks(spec: DesignSpec) -> dict[str, Callable[..., Any]]:
-    """Compile ``scenario_setup`` + ``scenario_hooks`` into callables.
+def compile_scenario_code(
+    spec: DesignSpec,
+) -> tuple[dict[str, Callable[..., Any]], list[SpawnSource]]:
+    """Compile ``scenario_setup``, ``scenario_hooks`` and the spawn sources'
+    ``plan`` code into callables - the hooks by name, and each source as a
+    :class:`PlannedSource` with its policies.
 
     The designer's live preview builds a scenario straight from the spec rather
     than from generated code, so without this the hooks would run in the
@@ -850,8 +859,9 @@ def compile_scenario_hooks(spec: DesignSpec) -> dict[str, Callable[..., Any]]:
     picking up a name this module happens to have.
     """
     hooks = {k: v for k, v in (spec.scenario_hooks or {}).items() if v.strip()}
-    if not hooks:
-        return {}
+    sources = spawn_sources_of(spec)
+    if not hooks and not sources:
+        return {}, []
     # The library names the generated scenario.py imports, so a hook runs here
     # with what it has there (setup_code.SCENARIO_API).
     namespace: dict[str, Any] = dict(setup_code.scenario_api_names())
@@ -870,6 +880,64 @@ def compile_scenario_hooks(spec: DesignSpec) -> dict[str, Callable[..., Any]]:
         except Exception as e:
             raise _scenario_code_error(e, filename, f"scenario hook {name}", shift=1) from e
         out[name] = _reporting(namespace.pop("_hook"), filename, f"scenario hook {name}")
+    planned: list[SpawnSource] = []
+    for d in sources:
+        name = d["name"]
+        filename = f"<spawn_source:{name}>"
+        body = d.get("plan") or "return []"
+        source = f"def _plan({', '.join(SPAWN_SOURCE_ARGS)}):\n" + textwrap.indent(body, "    ")
+        try:
+            exec(compile(source, filename, "exec"), namespace)
+        except Exception as e:
+            raise _scenario_code_error(e, filename, f"spawn source {name}", shift=1) from e
+        plan = _reporting(namespace.pop("_plan"), filename, f"spawn source {name}")
+        try:
+            planned.append(PlannedSource(plan, **spawn_source_policies(d)))
+        except (TypeError, ValueError) as e:
+            raise BuildError(f"spawn source {name!r}: {e}") from e
+    return out, planned
+
+
+def compile_scenario_hooks(spec: DesignSpec) -> dict[str, Callable[..., Any]]:
+    """The design's scenario hooks, compiled (see :func:`compile_scenario_code`)."""
+    return compile_scenario_code(spec)[0]
+
+
+#: A spawn source's ``plan`` parameters, in the design and the generated package.
+SPAWN_SOURCE_ARGS = ("rng", "ctx")
+
+
+def spawn_sources_of(spec: DesignSpec) -> list[dict[str, Any]]:
+    """The design's spawn sources (``spawn["sources"]``), each named."""
+    spawn = spec.spawn if isinstance(spec.spawn, dict) else {}
+    out = []
+    for i, d in enumerate(spawn.get("sources") or []):
+        if not isinstance(d, dict):
+            raise BuildError(f"spawn source {i} must be a dict, got {type(d).__name__}.")
+        name = str(d.get("name") or f"source{i + 1}")
+        if not name.isidentifier():
+            raise BuildError(f"spawn source name {name!r} must be a Python identifier.")
+        if any(o["name"] == name for o in out):
+            raise BuildError(f"two spawn sources are named {name!r}.")
+        out.append({**d, "name": name})
+    return out
+
+
+def spawn_source_policies(d: dict[str, Any]) -> dict[str, Any]:
+    """A design spawn source's policies, as :class:`SpawnSource` takes them."""
+    out: dict[str, Any] = {"name": d["name"]}
+    if d.get("conflict_free"):
+        out["conflict_free"] = True
+    if d.get("when_blocked"):
+        out["when_blocked"] = d["when_blocked"]
+    if d.get("route"):
+        out["route"] = d["route"]
+    if d.get("assign_route") == "nearest_entry":
+        out["assign_route"] = nearest_entry
+    elif d.get("assign_route"):
+        raise BuildError(f"spawn source {d['name']!r}: assign_route must be 'nearest_entry' or empty.")
+    if d.get("max_aircraft") is not None:
+        out["max_aircraft"] = int(d["max_aircraft"])
     return out
 
 
@@ -1165,21 +1233,21 @@ def build_scenario(spec: DesignSpec) -> DesignScenario:
     # (representative shapes); the episode hook refreshes it with each sample's
     # drawn shapes. Exposed on the scenario as ``design_regions``.
     region_sink = _load_named_regions(spec)
-    scenario_hooks = compile_scenario_hooks(spec)
+    scenario_hooks, sources = compile_scenario_code(spec)
     if region_dists or scenario_hooks or generated:
         # Static geometry = endpoint-union support of the sampled shapes, so
         # support() covers every episode; the hook rebuilds per episode.
         support_spec = (
             _support_substituted_spec(spec, region_dists) if region_dists else spec
         )
-        airspace, queryables, spawn = _materialize(support_spec)
+        airspace, queryables, spawn = _materialize(support_spec, sources)
         sampled_waypoints = _sampled_waypoint_regions(support_spec)
         named_bounds = _load_named_regions(support_spec)
         episode_geometry_fn = _make_episode_geometry_fn(
-            spec, region_dists, region_sink
+            spec, region_dists, region_sink, sources
         )
     else:
-        airspace, queryables, spawn = _materialize(spec)
+        airspace, queryables, spawn = _materialize(spec, sources)
         sampled_waypoints = _sampled_waypoint_regions(spec)
         named_bounds = _load_named_regions(spec)
         episode_geometry_fn = None

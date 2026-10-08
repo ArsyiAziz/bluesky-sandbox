@@ -239,6 +239,38 @@ export default function CodeTab({
     setSelected(`scenariohook:${name}`);
   };
 
+  // Spawn sources: each plans an episode's aircraft in code (spawn.sources).
+  const spawnSources: SpecDict[] = spec?.spawn?.sources ?? [];
+  const selectedSource = selected.startsWith("spawnsource:")
+    ? spawnSources.find((s) => s.name === selected.slice("spawnsource:".length)) ?? null
+    : null;
+  const setSources = (next: SpecDict[]) => {
+    if (!spec) return;
+    const spawn = { ...(spec.spawn ?? {}) };
+    if (next.length) spawn.sources = next;
+    else delete spawn.sources;
+    onSpecChange({ ...spec, spawn });
+  };
+  const updateSource = (name: string, patch: SpecDict) =>
+    setSources(spawnSources.map((s) => (s.name === name ? { ...s, ...patch } : s)));
+  const addSource = () => {
+    let n = spawnSources.length + 1;
+    while (spawnSources.some((s) => s.name === `source${n}`)) n += 1;
+    const name = `source${n}`;
+    setSources([...spawnSources, { name, plan: SOURCE_SCAFFOLD, when_blocked: "defer" }]);
+    setSelected(`spawnsource:${name}`);
+  };
+  const removeSource = (name: string) => {
+    setSources(spawnSources.filter((s) => s.name !== name));
+    if (selected === `spawnsource:${name}`) setSelected(SPEC_FILE);
+  };
+  const renameSource = (name: string, next: string) => {
+    if (!/^[A-Za-z_]\w*$/.test(next) || spawnSources.some((s) => s.name === next)) return;
+    updateSource(name, { name: next });
+    setSelected(`spawnsource:${next}`);
+  };
+  const routeKeys: string[] = Object.keys(spec?.spawn?.routes ?? {});
+
   const setTaskInfoSetup = (body: string) => {
     if (!spec) return;
     onSpecChange({ ...spec, env: { ...spec.env, task_info_setup: body } });
@@ -340,6 +372,8 @@ export default function CodeTab({
       ? scenarioSetup
     : selectedScenarioHook
       ? (scenarioHooks[selectedScenarioHook] ?? "")
+    : selectedSource
+      ? (selectedSource.plan ?? "")
     : isSpec
       ? specText
       : isCode
@@ -357,6 +391,8 @@ export default function CodeTab({
         ? "scenario_setup.py"
       : selectedScenarioHook
         ? `scenario_${selectedScenarioHook}.py`
+      : selectedSource
+        ? `spawn_source_${selectedSource.name}.py`
       : selected;
   const editorLanguage =
     selectedHook
@@ -365,6 +401,7 @@ export default function CodeTab({
     || selectedTaskInfoSetup
     || selectedScenarioSetup
     || selectedScenarioHook
+    || selectedSource
       ? "python"
       : langOf(selected);
   const editorReadOnly =
@@ -375,6 +412,7 @@ export default function CodeTab({
     && !selectedTaskInfoSetup
     && !selectedScenarioSetup
     && !selectedScenarioHook
+    && !selectedSource
     && (selectedTaskInfoEntry == null || selectedTaskInfoProviderReference);
 
   return (
@@ -508,6 +546,25 @@ export default function CodeTab({
           />
         )}
 
+        <div className="tree-group">spawn sources</div>
+        {spawnSources.map((s) => (
+          <FileItem
+            key={s.name}
+            path={s.name}
+            active={selectedSource?.name === s.name}
+            editable
+            onClick={() => setSelected(`spawnsource:${s.name}`)}
+            onDelete={() => removeSource(s.name)}
+          />
+        ))}
+        <button
+          className="link hook-add"
+          title="aircraft planned at reset by your code: replayed data, a fitted distribution, a mixture"
+          onClick={addSource}
+        >
+          + spawn source
+        </button>
+
         <div className="tree-group">generated{pkg ? ` · ${pkg}/` : ""}</div>
         {structuralFiles.map((p) => {
           const base = pkg && p.startsWith(`${pkg}/`) ? p.slice(pkg.length + 1) : p;
@@ -594,6 +651,14 @@ export default function CodeTab({
             )}
           </div>
         )}
+        {selectedSource && (
+          <SourceHeader
+            source={selectedSource}
+            routes={routeKeys}
+            onChange={(patch) => updateSource(selectedSource.name, patch)}
+            onRename={(next) => renameSource(selectedSource.name, next)}
+          />
+        )}
         <Editor
           key={editorPath}
           height="100%"
@@ -607,6 +672,7 @@ export default function CodeTab({
             else if (selectedHookSetup) setHookSetup(v ?? "");
             else if (selectedScenarioSetup) setScenarioSetup(v ?? "");
             else if (selectedScenarioHook) setScenarioHook(selectedScenarioHook, v ?? "");
+            else if (selectedSource) updateSource(selectedSource.name, { plan: v ?? "" });
             else if (selectedTaskInfoSetup) setTaskInfoSetup(v ?? "");
             else if (selectedTaskInfoEntry != null && selectedTaskInfo != null) setTaskInfoBody(selectedTaskInfo, v ?? "");
             else if (isSpec) onSpecTextChange(v ?? "");
@@ -712,6 +778,106 @@ export default function CodeTab({
         )}
         {!isSpec && !isCode && !selectedHook && !selectedHookSetup && selectedTaskInfoEntry == null && !selectedTaskInfoSetup && <p className="muted small">generated · read-only</p>}
       </aside>
+    </div>
+  );
+}
+
+// A new spawn source's plan: one aircraft, to start from.
+const SOURCE_SCAFFOLD = `# This episode's aircraft, each a SpawnRequest with its time: read any data
+# (scenario setup can load a file once), draw from any distribution.
+# ctx: the episode's shapes, queryables, airspace and spawn config.
+return [
+    SpawnRequest(at=LatLon(52.0, 4.5), alt_ft=20_000, time_s=0.0),
+]
+`;
+
+// A spawn source's signature and policies: what applies to its aircraft
+// whatever their origin.
+function SourceHeader({
+  source,
+  routes,
+  onChange,
+  onRename,
+}: {
+  source: SpecDict;
+  routes: string[];
+  onChange: (patch: SpecDict) => void;
+  onRename: (name: string) => void;
+}) {
+  const [name, setName] = useState(source.name);
+  useEffect(() => setName(source.name), [source.name]);
+  return (
+    <div className="hook-sig small source-header">
+      <code className="hook-sig-def">
+        def <span className="hook-sig-name">plan</span>(rng, ctx) -&gt; list[SpawnRequest]:
+      </code>
+      <span className="hook-sig-doc"> — this episode's aircraft, planned at reset</span>
+      <div className="source-policies">
+        <label className="numfield inline">
+          <span>name</span>
+          <input
+            value={name}
+            aria-invalid={name !== source.name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => onRename(name)}
+            onKeyDown={(e) => e.key === "Enter" && onRename(name)}
+          />
+        </label>
+        <label className="radio modal-check" title="only spawn an aircraft clear of live traffic over CD's lookahead">
+          <input type="checkbox" checked={!!source.conflict_free} onChange={(e) => onChange({ conflict_free: e.target.checked })} />
+          conflict-free
+        </label>
+        <label className="numfield inline">
+          <span>when blocked</span>
+          <Picker
+            searchable={false}
+            placeholder="wait"
+            value={source.when_blocked ?? "defer"}
+            onChange={(v) => onChange({ when_blocked: v || "defer" })}
+            options={[
+              { value: "defer", label: "wait", description: "spawn it once it is clear" },
+              { value: "resample", label: "draw again", description: "plan another in its place, where the plan can" },
+              { value: "skip", label: "drop it", description: "leave it out of the episode" },
+              { value: "allow", label: "spawn anyway", description: "a faithful replay of data that had conflicts" },
+            ]}
+          />
+        </label>
+        <label className="numfield inline">
+          <span>route</span>
+          <Picker
+            searchable={false}
+            placeholder="its own"
+            value={source.route ?? ""}
+            onChange={(v) => onChange({ route: v || null })}
+            options={[
+              { value: "", label: "its own", description: "the route each request names, if any" },
+              ...routes.map((r) => ({ value: r, description: "for a request that names none" })),
+            ]}
+          />
+        </label>
+        <label className="numfield inline">
+          <span>else</span>
+          <Picker
+            searchable={false}
+            placeholder="none"
+            value={source.assign_route ?? ""}
+            onChange={(v) => onChange({ assign_route: v || null })}
+            options={[
+              { value: "", label: "none", description: "no route for a request that names none" },
+              { value: "nearest_entry", label: "nearest entry", description: "the route whose first fix is nearest, ahead of it" },
+            ]}
+          />
+        </label>
+        <label className="numfield inline" title="counted into the episode's max aircraft; blank: not counted (set the aircraft cap)">
+          <span>most aircraft</span>
+          <input
+            type="number"
+            min={0}
+            value={source.max_aircraft ?? ""}
+            onChange={(e) => onChange({ max_aircraft: e.target.value === "" ? null : Math.max(0, Math.round(Number(e.target.value))) })}
+          />
+        </label>
+      </div>
     </div>
   );
 }

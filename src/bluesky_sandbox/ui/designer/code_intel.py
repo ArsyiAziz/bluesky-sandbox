@@ -424,6 +424,12 @@ def _scopes(
         signature = scenario_api.SIGNATURES.get(name)
         params = _params(signature, table) if signature else [_member(arg, "parameter") for arg in args]
         scopes[f"scenario:{name}"] = {"params": params, "names": scenario_names}
+    # A spawn source's plan: its (rng, ctx) typed, as each source has them.
+    plan_params = _params(scenario_api.SPAWN_SOURCE_SIGNATURE, table)
+    spawn = spec.spawn if isinstance(spec.spawn, dict) else {}
+    for source in spawn.get("sources") or []:
+        if isinstance(source, dict) and source.get("name"):
+            scopes[f"spawn_source:{source['name']}"] = {"params": plan_params, "names": scenario_names}
     for filename, source in (spec.code or {}).items():
         stem = filename.removesuffix(".py")
         code_module = sys.modules.get(stem)

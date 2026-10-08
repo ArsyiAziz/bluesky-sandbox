@@ -17,7 +17,7 @@ from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from . import setup_code
 from . import spec as _spec
-from .builder import expand_region_members
+from .builder import SPAWN_SOURCE_ARGS, expand_region_members, spawn_sources_of
 from .spec import (
     DesignSpec,
     EnvSpec,
@@ -37,7 +37,7 @@ _FOOTPRINT_TYPES = {"box", "disk", "point", "polygon", "sector", "annular_sector
 _SPAWN_CONFIG_DEFAULTS = {
     f.name: f.default
     for f in dataclasses.fields(SpawnConfig)
-    if f.name in ("spawn_max_tries", "spawn_warn_after")
+    if f.name in ("spawn_max_tries", "spawn_warn_after", "aircraft_cap")
 }
 
 
@@ -438,6 +438,8 @@ class _Emitter:
         extra = ""
         if d.get("route") is not None:
             extra += f", route={self.value(d['route'])}"
+        if d.get("sources"):
+            extra += ", sources=SPAWN_SOURCES"
         if d.get("routes"):
             # Per-route ``self.value(...)`` - not ``repr()`` - so each step's
             # ``"sample": {"ref": name}`` pointer resolves to the actual
@@ -458,7 +460,7 @@ class _Emitter:
             extra += f", spawn_sep_ft={float(d['spawn_sep_ft'])!r}"
         if d.get("spawn_lookahead_s"):
             extra += f", spawn_lookahead_s={float(d['spawn_lookahead_s'])!r}"
-        for name in ("spawn_max_tries", "spawn_warn_after"):
+        for name in ("spawn_max_tries", "spawn_warn_after", "aircraft_cap"):
             value = d.get(name)
             if value is not None and int(value) != _SPAWN_CONFIG_DEFAULTS[name]:
                 extra += f", {name}={int(value)!r}"
@@ -816,6 +818,43 @@ def _emit_transform(em: _Emitter, spec: DesignSpec) -> str:
     return "None"
 
 
+def _emit_spawn_sources(spec: DesignSpec) -> str:
+    """The design's spawn sources at module scope: each one's ``plan`` as a
+    function, and ``SPAWN_SOURCES`` - each a ``PlannedSource`` with its
+    policies - which the spawn config takes. Empty with none."""
+    sources = spawn_sources_of(spec)
+    if not sources:
+        return ""
+    blocks, entries = [], []
+    for d in sources:
+        name = d["name"]
+        body = (d.get("plan") or "").rstrip() or "return []"
+        indented = "\n".join(("    " + ln) if ln.strip() else "" for ln in body.splitlines())
+        blocks.append(
+            f"def _plan_{name}({', '.join(SPAWN_SOURCE_ARGS)}):\n"
+            f'    """Spawn source {name!r}: this episode\'s aircraft."""\n{indented}\n'
+        )
+        policies = [f"name={name!r}"]
+        if d.get("conflict_free"):
+            policies.append("conflict_free=True")
+        if d.get("when_blocked"):
+            policies.append(f"when_blocked={d['when_blocked']!r}")
+        if d.get("route"):
+            policies.append(f"route={d['route']!r}")
+        if d.get("assign_route") == "nearest_entry":
+            policies.append("assign_route=nearest_entry")
+        if d.get("max_aircraft") is not None:
+            policies.append(f"max_aircraft={int(d['max_aircraft'])!r}")
+        entries.append(f"    PlannedSource(_plan_{name}, {', '.join(policies)}),")
+    return (
+        "\n\n# Spawn sources: each plans its aircraft at reset.\n"
+        + "\n\n".join(blocks)
+        + "\n\nSPAWN_SOURCES = [\n"
+        + "\n".join(entries)
+        + "\n]\n"
+    )
+
+
 def emit_scenario_sources(spec: DesignSpec) -> dict[str, str]:
     """Return imports and scenario expressions for a generated scenario.py."""
     em = _Emitter(regions=spec.shapes)
@@ -829,6 +868,7 @@ def emit_scenario_sources(spec: DesignSpec) -> dict[str, str]:
     sampled_waypoints = _emit_sampled_waypoints(em, spec)
     waypoint_fields = _emit_waypoint_fields(em, spec)
     spawn = em.spawn(_spawn_with_route_sampling(spec))
+    spawn_sources = _emit_spawn_sources(spec)
 
     transform = _emit_transform(em, spec)
     region_param_dists = ",\n        ".join(
@@ -857,6 +897,7 @@ def emit_scenario_sources(spec: DesignSpec) -> dict[str, str]:
         "sampled_waypoints": "{\n            " + sampled_waypoints + "\n        }",
         "waypoint_fields": "{\n            " + waypoint_fields + "\n        }",
         "spawn": spawn,
+        "spawn_sources": spawn_sources,
         "transform": transform,
         # Non-empty iff any named region has sampled footprint params; the
         # scenario template switches to the parametric-regions form then.

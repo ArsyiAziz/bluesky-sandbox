@@ -267,7 +267,7 @@ def test_empty_spawn_config():
     spawn = SpawnConfig(regions=[])
     reloaded = _roundtrip(spawn)
     assert reloaded.max_aircraft() == 0
-    assert list(reloaded.iter_spawns(np.random.default_rng(0))) == []
+    assert list(reloaded.iter_requests(np.random.default_rng(0))) == []
     assert reloaded.resolved_bounds["lat_deg"] == (0.0, 0.0)
 
     spec = _example_design_spec()
@@ -533,7 +533,7 @@ def test_transform_field_preservation():
     # dropping conflict_free_spawn from every rotated or grouped episode.
     spec = _example_design_spec()
     spec.spawn["conflict_free_spawn"] = True
-    # iter_spawns samples types; the env normally normalizes this at build.
+    # iter_requests samples types; the env normally normalizes this at build.
     spec.spawn["aircraft_type"] = "A320"
 
     for transform in (
@@ -548,7 +548,7 @@ def test_transform_field_preservation():
         for _ in range(300):
             ep = scenario.sample(rng)
             assert ep.spawn.conflict_free_spawn is True  # survived the transform
-            n = sum(1 for _ in ep.spawn.iter_spawns(np.random.default_rng(int(rng.integers(1 << 31)))))
+            n = sum(1 for _ in ep.spawn.iter_requests(np.random.default_rng(int(rng.integers(1 << 31)))))
             totals.append(n)
         assert min(totals) >= 1  # empty-episode floor
     print("  transform field preservation: OK")

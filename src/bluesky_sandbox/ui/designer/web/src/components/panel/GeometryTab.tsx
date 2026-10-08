@@ -635,6 +635,35 @@ export default function GeometryTab({
                   </div>
                 </>
               )}
+              <div className="value-field">
+                <div className="vf-head">
+                  <span className="vf-label">aircraft cap</span>
+                  <span className="vf-spacer" />
+                  <NumInput
+                    className="vf-input"
+                    int
+                    step={1}
+                    placeholder="none - from the regions"
+                    value={(spec.spawn?.aircraft_cap as number | undefined) ?? Number.NaN}
+                    onChange={(n) =>
+                      edit((s) => {
+                        s.spawn = s.spawn ?? emptySpawn();
+                        s.spawn.aircraft_cap = Math.max(1, Math.round(n));
+                      })
+                    }
+                    onClear={() =>
+                      edit((s) => {
+                        s.spawn = s.spawn ?? emptySpawn();
+                        delete s.spawn.aircraft_cap;
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <div className="muted small">
+                at most this many aircraft at once, from the regions or code (<code>env.spawn</code>). None: the most
+                the regions can produce, code uncapped. Fixed-size padding sizes from it.
+              </div>
             </div>
           </details>
           {spawnRegions

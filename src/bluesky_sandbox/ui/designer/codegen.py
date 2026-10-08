@@ -339,7 +339,7 @@ from __future__ import annotations
 
 from bluesky_sandbox.sim.scenario import RandomizedScenario
 
-{scenario_sources["imports"]}{setup_block}
+{scenario_sources["imports"]}{setup_block}{scenario_sources.get("spawn_sources", "")}
 
 
 class {class_stem}Scenario(RandomizedScenario):
@@ -422,7 +422,7 @@ from __future__ import annotations
 
 from bluesky_sandbox.sim.scenario import GeometryDict, RandomizedScenario, RegionParamSampler
 
-{scenario_sources["imports"]}{setup_block}
+{scenario_sources["imports"]}{setup_block}{scenario_sources.get("spawn_sources", "")}
 
 
 class {class_stem}Scenario(RandomizedScenario):
