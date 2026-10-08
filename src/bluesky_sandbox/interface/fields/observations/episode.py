@@ -60,7 +60,7 @@ class TimeInEnvS(_BroadcastObs, _TimeInEnvBacked, ObsField):
     def _values(self, indices: Any) -> Any:
         return np.asarray(_TIME_IN_ENV.read(indices), dtype=np.float64)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(_TIME_IN_ENV.read_one(idx))  # published by the env
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -151,7 +151,7 @@ class PrevActionNorm(_BroadcastObs, _LastActionBacked, ObsField):
                 out[row, : src.shape[0]] = src
         return out
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         values = np.zeros(self.dim, dtype=np.float32)
         stored = _LAST_NORM_ACTION.read_one(idx)
         if stored is not None:
@@ -188,7 +188,7 @@ class PrevActionMasked(_BroadcastObs, _ActionMaskBacked, ObsField):
     def _values(self, indices: Any) -> Any:
         return action_masks(self.target, _indices_array(indices)).astype(np.float64)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         masks = _state._ACTION_MASKS.read_one(idx)
         return 1.0 if masks.get(self.target, False) else 0.0
 
@@ -226,7 +226,7 @@ class ActionLocked(_BroadcastObs, _ActionMaskBacked, ObsField):
             dtype=np.float64,
         )
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return 1.0 if lock_holds(idx, self.target) else 0.0
 
 
@@ -269,5 +269,5 @@ class ClearanceTimeLeftS(_BroadcastObs, _ActionMaskBacked, ObsField):
             [self._left(int(i)) for i in _indices_array(indices)], dtype=np.float64
         )
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return self._left(idx)

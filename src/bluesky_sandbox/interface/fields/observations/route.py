@@ -105,7 +105,7 @@ class ActiveRouteWaypointDistanceNm(_ActiveRouteWaypointField):
         _qdr, dist = kwikqdrdist(lat, lon, wp_lat, wp_lon)
         return np.where(found, dist, 0.0)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         wp = self._active_wp(idx)
         if wp is None:
             return 0.0
@@ -132,7 +132,7 @@ class ActiveRouteWaypointBearingDeg(_ActiveRouteWaypointField):
         qdr, _dist = kwikqdrdist(lat, lon, wp_lat, wp_lon)
         return np.where(found, np.asarray(qdr, dtype=np.float64) % 360.0, 0.0)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         wp = self._active_wp(idx)
         if wp is None:
             return 0.0
@@ -162,7 +162,7 @@ class ActiveRouteWaypointTrackErrorDeg(_ActiveRouteWaypointField):
         )
         return np.where(found, error, 0.0)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         wp = self._active_wp(idx)
         if wp is None:
             return 0.0
@@ -193,7 +193,7 @@ class ActiveRouteWaypointValid(_ActiveRouteWaypointField):
         found, *_rest = self._waypoints(indices)
         return found.astype(np.float64)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(self._active_wp(idx) is not None)
 
 
@@ -221,7 +221,7 @@ class ActiveRouteWaypointHasAltConstraint(_ActiveRouteWaypointField):
         _found, _lat, _lon, alt_m, _spd = self._waypoints(indices)
         return (~np.isnan(alt_m)).astype(np.float64)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         wp = self._active_wp(idx)
         return float(wp is not None and wp[2] is not None)
 
@@ -247,7 +247,7 @@ class ActiveRouteWaypointHasSpdConstraint(_ActiveRouteWaypointField):
         _found, _lat, _lon, _alt, spd_ms = self._waypoints(indices)
         return (~np.isnan(spd_ms)).astype(np.float64)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         wp = self._active_wp(idx)
         return float(wp is not None and wp[3] is not None)
 
@@ -275,7 +275,7 @@ class ActiveRouteWaypointAltDiffFt(_ActiveRouteWaypointField):
         diff_ft = _traf_array("alt")[indices] * _M_TO_FT - alt_m * _M_TO_FT
         return np.where(np.isnan(alt_m), 0.0, diff_ft)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         wp = self._active_wp(idx)
         if wp is None or wp[2] is None:
             return 0.0
@@ -324,7 +324,7 @@ class ActiveRouteWaypointSpdDiffKts(_ActiveRouteWaypointField):
         diff_kts = (_traf_array("cas")[indices] - spd_ms) * _MS_TO_KTS
         return np.where(np.isnan(spd_ms), 0.0, diff_kts)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         wp = self._active_wp(idx)
         if wp is None or wp[3] is None:
             return 0.0
@@ -374,7 +374,7 @@ class ActiveRouteWaypointSpdErrorCrossover(_ActiveRouteWaypointField):
             out[k] = float(state.normalized_error)
         return out
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         wp = self._active_wp(idx)
         if wp is None or wp[3] is None:
             return 0.0
@@ -431,7 +431,7 @@ class ActiveRouteWaypointEteS(_ActiveRouteWaypointField):
         gs = np.maximum(_traf_array("gs")[indices], _MIN_GS_MS)
         return np.where(np.isnan(dist_nm), 0.0, dist_nm * nm / gs)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         dist_nm = _route_along_distance_nm(idx, self.route_offset)
         if dist_nm is None:
             return 0.0
@@ -524,7 +524,7 @@ class ActiveRouteWaypointVerticalEteS(_ActiveRouteWaypointField):
         # No altitude constraint, or already at it.
         return np.where(np.isnan(error_m) | (error_m == 0.0), 0.0, ete)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         wp = self._active_wp(idx)
         if wp is None or wp[2] is None:
             return 0.0
@@ -577,7 +577,7 @@ class ActiveRouteWaypointHasArrivalTime(_ArrivalTimeField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return (~np.isnan(self._times_to_go(indices))).astype(np.float64)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return 0.0 if self._time_to_go(idx) is None else 1.0
 
 
@@ -596,7 +596,7 @@ class ActiveRouteWaypointTimeToGoS(_ArrivalTimeField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return np.nan_to_num(self._times_to_go(indices), nan=0.0)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         t = self._time_to_go(idx)
         return 0.0 if t is None else t
 
@@ -622,11 +622,11 @@ class ActiveRouteWaypointArrivalErrorS(_ArrivalTimeField):
         ete = ActiveRouteWaypointEteS(route_offset=self.route_offset)._values(indices)
         return np.nan_to_num(ete - self._times_to_go(indices), nan=0.0)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         t = self._time_to_go(idx)
         if t is None:
             return 0.0
-        ete = ActiveRouteWaypointEteS(route_offset=self.route_offset)._expected(idx)
+        ete = ActiveRouteWaypointEteS(route_offset=self.route_offset).expected(idx)
         return float(ete) - t
 
 
@@ -656,7 +656,7 @@ class _SpeedRangeArrivalField(_ArrivalTimeField):
     def _values(self, indices: np.ndarray) -> np.ndarray:
         return np.array([self._margin(int(i)) for i in indices], dtype=np.float64)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return self._margin(idx)
 
 

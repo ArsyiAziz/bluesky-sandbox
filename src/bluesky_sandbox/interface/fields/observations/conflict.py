@@ -45,7 +45,7 @@ class _ConflictGeomPairField(_BroadcastPairs, PairObsField):
         view = _GeomPairs(own, other)
         return np.asarray(getattr(view, self._geom_attr), dtype=np.float64)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         view = ConflictView(own_idx, others=np.array([other_idx]))
         return float(getattr(view, self._geom_attr)[0])
 
@@ -153,7 +153,7 @@ class ConflictVerticalSepAtCpaFt(_WindowedConflictPairField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         return windowed_min_vsep_ft(_GeomPairs(own, other), *self._window_zone())
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         view = ConflictView(own_idx, others=np.array([other_idx]))
         return float(windowed_min_vsep_ft(view, *self._window_zone())[0])
 
@@ -207,7 +207,7 @@ class ConflictHorizontalSepAtCpaNm(_WindowedConflictPairField):
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
         return windowed_min_hsep_nm(_GeomPairs(own, other), *self._window_zone())
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         view = ConflictView(own_idx, others=np.array([other_idx]))
         return float(windowed_min_hsep_nm(view, *self._window_zone())[0])
 
@@ -256,7 +256,7 @@ class ConflictSignedVerticalSepAtEntryFt(_WindowedConflictPairField):
         view = _GeomPairs(own, other)
         return windowed_signed_vsep_at_entry_ft(view, *self._window_zone())
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         view = ConflictView(own_idx, others=np.array([other_idx]))
         return float(windowed_signed_vsep_at_entry_ft(view, *self._window_zone())[0])
 
@@ -315,7 +315,7 @@ class ConflictTlosS(_WindowedConflictPairField):
         # +inf (no conflict) -> high bound (safe); <= 0 (already in LoS) -> 0.
         return np.clip(tinconf, 0.0, _per_own(own, lambda o: self.bounds(o)[1]))
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         view = ConflictView(own_idx, others=np.array([other_idx]))
         tinconf = float(predicted_tlos_s(view, *self._window_zone())[0])
         return min(max(tinconf, 0.0), self.bounds(own_idx)[1])
@@ -389,7 +389,7 @@ class InConf(_WindowedConflictPairField):
         tinconf = predicted_tlos_s(_GeomPairs(own, other), *self._window_zone())
         return (tinconf <= self._horizon_s()).astype(np.float32)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         view = ConflictView(own_idx, others=np.array([other_idx]))
         tinconf = float(predicted_tlos_s(view, *self._window_zone())[0])
         return float(tinconf <= self._horizon_s())
@@ -445,7 +445,7 @@ class InLosNow(_BroadcastPairs, PairObsField):
         )
         return in_los.astype(np.float32)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         view = ConflictView(own_idx, others=np.array([other_idx]))
         horizontal = float(view.horiz_dist_now_nm[0]) < _cd_rpz_m() / nm
         vertical = float(view.dalt_now_ft[0]) < _cd_hpz_m() / ft
@@ -480,7 +480,7 @@ class ConflictRisk(_BroadcastPairs, PairObsField):
         risk = 1.0 - np.maximum(tcpa, 0.0) / lookahead
         return np.clip(risk, 0.0, 1.0).astype(np.float32)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         lookahead = _cd_lookahead_s()
         tcpa = one_confpair_value("tcpa", own_idx, other_idx)
         if tcpa is None:

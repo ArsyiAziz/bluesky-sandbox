@@ -48,7 +48,7 @@ class PerfVminKts(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vmin[_indices_array(indices)] * _MS_TO_KTS
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.perf.vmin[idx]) / kts
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -71,7 +71,7 @@ class PerfVmaxKts(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vmax[_indices_array(indices)] * _MS_TO_KTS
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.perf.vmax[idx]) / kts
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -94,7 +94,7 @@ class PerfVsMaxFtMin(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vsmax[_indices_array(indices)] * _MS_TO_FTMIN
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.perf.vsmax[idx]) * 60.0 / ft
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -118,7 +118,7 @@ class PerfVsMinFtMin(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.vsmin[_indices_array(indices)] * _MS_TO_FTMIN
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.perf.vsmin[idx]) * 60.0 / ft
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -143,7 +143,7 @@ class PerfCeilingFt(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.hmax[_indices_array(indices)] * _M_TO_FT
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.perf.hmax[idx]) / ft
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -166,7 +166,7 @@ class PerfMassT(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.perf.mass[_indices_array(indices)] / 1000.0
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.perf.mass[idx]) / 1000.0
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -199,7 +199,7 @@ class TurnRadiusNm(_BroadcastObs, ObsField):
         phi = np.asarray(bs.traf.ap.bankdef)[indices]
         return (tas * tas) / (g0 * np.tan(phi)) / nm
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         # r = v^2 / (g tan(bank)), at the aircraft's bank limit.
         tas = max(float(bs.traf.tas[idx]), 1e-6)
         bank = float(bs.traf.ap.bankdef[idx])
@@ -253,7 +253,7 @@ class MtowT(_BroadcastObs, ObsField):
             dtype=np.float64,
         )
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return _mtow_kg(bs.traf.type[idx]) / 1000.0
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -335,7 +335,7 @@ class FlightPhaseOneHot(_BroadcastObs, ObsField):
                     values[row, self.unknown_index] = 1.0
         return values
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         values = np.zeros(len(self.phase_values), dtype=np.float32)
         phase = bs.traf.perf.phase[idx]
         matches = [

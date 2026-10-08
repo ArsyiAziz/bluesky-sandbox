@@ -1,7 +1,9 @@
-"""Checks for a design's fields: test cases set up by hand (:mod:`.cases`),
-in situations placed exactly (:mod:`.placement`)."""
+"""Checks for a design's fields: each field against itself on live traffic
+(:mod:`.fields`), and test cases set up by hand (:mod:`.cases`) in situations
+placed exactly (:mod:`.placement`)."""
 
 from .cases import Case, CaseResult, CasesReport, Tolerance, run_cases
+from .fields import FieldCheck, FieldsReport, check_fields, normalization_findings
 from .placement import Aircraft, Situation, place, without_traffic
 
 __all__ = [
@@ -9,8 +11,12 @@ __all__ = [
     "Case",
     "CaseResult",
     "CasesReport",
+    "FieldCheck",
+    "FieldsReport",
     "Situation",
     "Tolerance",
+    "check_fields",
+    "normalization_findings",
     "place",
     "run_cases",
     "without_traffic",

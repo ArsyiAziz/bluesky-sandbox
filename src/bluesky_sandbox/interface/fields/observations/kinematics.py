@@ -40,7 +40,7 @@ class LatDeg(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.lat[_indices_array(indices)]
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.lat[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -58,7 +58,7 @@ class LonDeg(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.lon[_indices_array(indices)]
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.lon[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -76,7 +76,7 @@ class HdgDeg(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.hdg[_indices_array(indices)]
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.hdg[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -94,7 +94,7 @@ class TrkDeg(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.trk[_indices_array(indices)]
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.trk[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -126,7 +126,7 @@ class _UnitField(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return self._convert(self._si_values(_indices_array(indices)))
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return self._convert(self._si_expected(idx))
 
 
@@ -349,7 +349,7 @@ class AxMs2(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return np.asarray(bs.traf.ax, dtype=np.float64)[_indices_array(indices)]
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.ax[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -375,7 +375,7 @@ class MachNumber(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return np.asarray(bs.traf.M, dtype=np.float64)[_indices_array(indices)]
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.M[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -414,7 +414,7 @@ class CrossoverAltMarginFt(_BroadcastObs, ObsField):
         margin = (alt - np.asarray(crossoveralt(cas, np.where(limited, mmo, 0.8)))) * _M_TO_FT
         return np.where(limited, margin, -abs(float(self.low)) if self.low is not None else -1e5)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         if self.crossover is not None:
             return (float(bs.traf.alt[idx]) - self.crossover.altitude_m) / ft
         cas, mmo = float(bs.traf.cas[idx]), float(mach_limit(idx)[0])
@@ -450,7 +450,7 @@ class AboveCrossover(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return above_crossover(_indices_array(indices), crossover=self.crossover).astype(np.float64)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(above_crossover(idx, crossover=self.crossover)[0])
 
     def bounds(self, idx: int) -> tuple[float, float]:

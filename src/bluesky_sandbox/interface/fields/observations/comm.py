@@ -78,7 +78,7 @@ class IntruderCommMessage(_CommBacked, PairObsField):
             np.clip(values, self.low, self.high, out=values)
         return values
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         # The message as sent; receiver noise (``noise_std``) is random on top.
         del own_idx
         return float(_state._COMM_MESSAGE.read_one(other_idx).get(self.channel, 0.0))

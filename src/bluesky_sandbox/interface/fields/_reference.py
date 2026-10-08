@@ -1,8 +1,8 @@
 """Plain one-aircraft and one-pair forms, for the fields' test references.
 
 Every built-in observation field computes in bulk (``_values`` / ``_pairs``)
-and states the same value for a single aircraft or pair in ``_expected`` /
-``_expected_pair``, which tests compare against the bulk result. The helpers
+and states the same value for a single aircraft or pair in ``expected`` /
+``expected_pair``, which the checks compare against the bulk result. The helpers
 here serve only those references.
 
 Deliberately NOT shared with the batched helpers in :mod:`._pairs`: a reference

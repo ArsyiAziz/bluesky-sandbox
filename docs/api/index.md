@@ -8,7 +8,7 @@ Task architecture
 - World: Defines airspace geometry, spawn regions, routes, and queryable entities (see [Scenario and spawning](scenario.md), [Geometry and bounds](geometry.md), and [Queryables](queryables.md).
 - Plumbing: Manages wrappers, normalizers, parallel-environment utilities, and render drivers (see [Wrappers](wrappers.md), [Integrations](integrations.md) and
   [Rendering and drivers](rendering.md)).
-- Verification: Test cases for fields, in situations placed by hand (see [Checks](checks.md)).
+- Verification: Each field checked against itself, and test cases for fields in situations placed by hand (see [Checks](checks.md)).
 
 
 ```{toctree}

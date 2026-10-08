@@ -114,7 +114,7 @@ class ApHdgDeg(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return bs.traf.ap.trk[_indices_array(indices)]
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bs.traf.ap.trk[idx])
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -161,7 +161,7 @@ class ApLnavOn(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return np.asarray(bs.traf.swlnav[_indices_array(indices)], dtype=bool)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bool(bs.traf.swlnav[idx]))
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -180,7 +180,7 @@ class ApVnavOn(_BroadcastObs, ObsField):
     def _values(self, indices: Any) -> Any:
         return np.asarray(bs.traf.swvnav[_indices_array(indices)], dtype=bool)
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bool(bs.traf.swvnav[idx]))
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -199,7 +199,7 @@ class ApLnavVnavOn(_BroadcastObs, ObsField):
         indices = _indices_array(indices)
         return np.logical_and(bs.traf.swlnav[indices], bs.traf.swvnav[indices])
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         return float(bool(bs.traf.swlnav[idx]) and bool(bs.traf.swvnav[idx]))
 
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -218,7 +218,7 @@ class ApHdgErrorDeg(_BroadcastObs, ObsField):
         indices = _indices_array(indices)
         return (bs.traf.ap.trk[indices] - bs.traf.trk[indices] + 540.0) % 360.0 - 180.0
 
-    def _expected(self, idx: int) -> Any:
+    def expected(self, idx: int) -> Any:
         error = float(bs.traf.ap.trk[idx]) - float(bs.traf.trk[idx])
         return (error + 180.0) % 360.0 - 180.0
 

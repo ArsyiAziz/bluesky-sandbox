@@ -235,9 +235,9 @@ class Difference(_BroadcastPairs, PairObsField):
         left, right = self._fields()
         return _per_aircraft(left, other) - _per_aircraft(right, own)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         left, right = self._fields()
-        return left._expected(other_idx) - right._expected(own_idx)
+        return left.expected(other_idx) - right.expected(own_idx)
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
         if self.bounds_overridden:
@@ -294,9 +294,9 @@ class AngleDifference(Difference):
         delta = _per_aircraft(left, other) - _per_aircraft(right, own)
         return (delta + 540.0) % 360.0 - 180.0
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         left, right = self._fields()
-        delta = left._expected(other_idx) - right._expected(own_idx)
+        delta = left.expected(other_idx) - right.expected(own_idx)
         return (delta + 180.0) % 360.0 - 180.0
 
     def bounds(self, own_idx: int) -> tuple[float, float]:

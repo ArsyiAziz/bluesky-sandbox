@@ -4,7 +4,7 @@ Observations read every aircraft's query result at once, as arrays
 (:class:`~bluesky_sandbox.core.services.QueryBatch`). Tasks and rewards read
 the same results one aircraft at a time, as objects, through
 ``agent_context(idx).query(name)``. Each field's batched value must be exactly
-what its ``_expected`` reads off that object - including
+what its ``expected`` reads off that object - including
 where the object raises, for temporal state a queryable does not track.
 
 Covers tracked and untracked waypoints and regions, route legs the monitor
@@ -140,7 +140,7 @@ def test_the_batch_matches_each_aircrafts_result(env, cls):
         expected, raised = [], None
         for idx in every:
             try:
-                expected.append(field._expected(idx))
+                expected.append(field.expected(idx))
             except Exception as exc:  # noqa: BLE001 - compared by type below
                 raised = type(exc)
                 break
@@ -161,8 +161,8 @@ def test_the_batch_matches_each_aircrafts_result(env, cls):
 
 @pytest.mark.parametrize("cls", _field_classes(), ids=lambda c: c.__name__)
 def test_every_queryable_field_states_its_value(cls):
-    assert cls._expected is not Q.QueryableObsField._expected, (
-        f"{cls.__name__} has no _expected reference"
+    assert cls.expected is not Q.QueryableObsField.expected, (
+        f"{cls.__name__} states no expected value"
     )
 
 

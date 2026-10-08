@@ -52,7 +52,7 @@ class DistToOwnNm(_BroadcastPairs, PairObsField):
         _qdr, dist = _pair_qdr_dist(own, other)
         return dist
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         own = (float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx]))
         other = (float(bs.traf.lat[other_idx]), float(bs.traf.lon[other_idx]))
         return float(qdrdist(*own, *other)[1])
@@ -92,7 +92,7 @@ class TcpaS(_BroadcastPairs, PairObsField):
         fill = _per_own(own, lambda o: self.bounds(o)[1])
         return _cd_pair_values("tcpa", own, other, fill)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         value = one_confpair_value("tcpa", own_idx, other_idx)
         return self.bounds(own_idx)[1] if value is None else value
 
@@ -135,7 +135,7 @@ class TlosS(_BroadcastPairs, PairObsField):
         fill = _per_own(own, lambda o: self.bounds(o)[1])
         return _cd_pair_values("tLOS", own, other, fill)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         value = one_confpair_value("tLOS", own_idx, other_idx)
         return self.bounds(own_idx)[1] if value is None else value
 
@@ -162,7 +162,7 @@ class ClosingRateKts(_BroadcastPairs, PairObsField):
         range_rate_ms = (rel_east_m * rel_east_ms + rel_north_m * rel_north_ms) / dist_m
         return -range_rate_ms * _MS_TO_KTS
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         east, north, v_east, v_north = one_pair_motion(own_idx, other_idx)
         range_m = max(math.hypot(east, north), 1e-6)
         return -(east * v_east + north * v_north) / range_m / kts
@@ -195,7 +195,7 @@ class BearingRateDegPerSec(_BroadcastPairs, PairObsField):
         rate_rad_s = (rel_north_m * rel_east_ms - rel_east_m * rel_north_ms) / dist2_m
         return np.degrees(rate_rad_s)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         east, north, v_east, v_north = one_pair_motion(own_idx, other_idx)
         range2 = max(east * east + north * north, 1e-6)
         return math.degrees((north * v_east - east * v_north) / range2)
@@ -223,7 +223,7 @@ class RelPosAlongTrackNm(_BroadcastPairs, PairObsField):
         along, _c, _va, _vc = _track_frame(own, other)
         return along / nm
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return one_pair_track_frame(own_idx, other_idx)[0] / nm
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
@@ -247,7 +247,7 @@ class RelPosCrossTrackNm(_BroadcastPairs, PairObsField):
         _a, cross, _va, _vc = _track_frame(own, other)
         return cross / nm
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return one_pair_track_frame(own_idx, other_idx)[1] / nm
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
@@ -272,7 +272,7 @@ class RelVelAlongTrackKts(_BroadcastPairs, PairObsField):
         _a, _c, v_along, _vc = _track_frame(own, other)
         return v_along * _MS_TO_KTS
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return one_pair_track_frame(own_idx, other_idx)[2] / kts
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
@@ -294,7 +294,7 @@ class RelVelCrossTrackKts(_BroadcastPairs, PairObsField):
         _a, _c, _va, v_cross = _track_frame(own, other)
         return v_cross * _MS_TO_KTS
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return one_pair_track_frame(own_idx, other_idx)[3] / kts
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
@@ -319,7 +319,7 @@ class RelPosAtCpaAlongTrackNm(_BroadcastPairs, PairObsField):
         along, _cross = _track_frame_at_cpa(own, other)
         return along / nm
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         along, cross, v_along, v_cross = one_pair_track_frame(own_idx, other_idx)
         v2 = max(v_along * v_along + v_cross * v_cross, 1e-9)
         tcpa = max(-(along * v_along + cross * v_cross) / v2, 0.0)  # future only
@@ -347,7 +347,7 @@ class RelPosAtCpaCrossTrackNm(_BroadcastPairs, PairObsField):
         _along, cross = _track_frame_at_cpa(own, other)
         return cross / nm
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         along, cross, v_along, v_cross = one_pair_track_frame(own_idx, other_idx)
         v2 = max(v_along * v_along + v_cross * v_cross, 1e-9)
         tcpa = max(-(along * v_along + cross * v_cross) / v2, 0.0)  # future only
@@ -374,7 +374,7 @@ class RelVsFtMin(_BroadcastPairs, PairObsField):
         vs = _traf_array("vs")
         return (vs[other] - vs[own]) * _MS_TO_FTMIN
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return (float(bs.traf.vs[other_idx]) - float(bs.traf.vs[own_idx])) * 60.0 / ft
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
@@ -417,7 +417,7 @@ class HorizontalDistAtCpaNm(_BroadcastPairs, PairObsField):
         fill = _per_own(own, lambda o: self.bounds(o)[1])
         return _cd_pair_values("dcpa", own, other, fill, divisor=nm)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         value = one_confpair_value("dcpa", own_idx, other_idx)
         return self.bounds(own_idx)[1] if value is None else value / nm
 
@@ -462,7 +462,7 @@ class VerticalSepAtCpaFt(_BroadcastPairs, PairObsField):
         rel_vs_ms = vs[other] - vs[own]
         return np.abs(rel_alt_m + rel_vs_ms * tcpa_s) * _M_TO_FT
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         east, north, v_east, v_north = one_pair_motion(own_idx, other_idx)
         v2 = max(v_east * v_east + v_north * v_north, 1e-6)
         tcpa = max(-(east * v_east + north * v_north) / v2, 0.0)
@@ -506,7 +506,7 @@ class IntruderFixApproachDistNm(_BroadcastPairs, PairObsField):
         )
         return np.where(has_fix, cpa_nm, float(self.high))
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         projection = one_pair_fix_projection(
             own_idx, other_idx, self.route_offset, self.own_eta_mode
         )
@@ -549,7 +549,7 @@ class IntruderFixArrivalDeltaS(_BroadcastPairs, PairObsField):
         )
         return np.where(has_fix, intr_eta - own_eta, 0.0)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         projection = one_pair_fix_projection(
             own_idx, other_idx, self.route_offset, self.own_eta_mode
         )
@@ -597,7 +597,7 @@ class IntruderFixVerticalSepFt(_BroadcastPairs, PairObsField):
         )
         return np.where(has_fix, vsep_ft, 0.0)
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         projection = one_pair_fix_projection(
             own_idx, other_idx, self.route_offset, self.own_eta_mode
         )
@@ -629,7 +629,7 @@ class BrgFromOwnDeg(_BroadcastPairs, PairObsField):
         qdr, _dist = _pair_qdr_dist(own, other)
         return qdr
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         own = (float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx]))
         other = (float(bs.traf.lat[other_idx]), float(bs.traf.lon[other_idx]))
         return float(qdrdist(*own, *other)[0])
@@ -665,7 +665,7 @@ class BrgFromOwnRelTrkDeg(_BroadcastPairs, PairObsField):
         qdr, _dist = _pair_qdr_dist(own, other)
         return (qdr - _traf_array("trk")[own] + 540.0) % 360.0 - 180.0
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         own = (float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx]))
         other = (float(bs.traf.lat[other_idx]), float(bs.traf.lon[other_idx]))
         relative = float(qdrdist(*own, *other)[0]) - float(bs.traf.trk[own_idx])

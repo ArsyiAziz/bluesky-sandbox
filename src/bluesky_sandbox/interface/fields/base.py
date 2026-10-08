@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
 import bluesky as bs
 import numpy as np
 
+from ._consistency import beyond_rounding, differs
 from .grid import Grid
 
 if TYPE_CHECKING:
@@ -523,15 +524,46 @@ class ObsField(_BoundedField, ABC):
         """
         return [self.get(int(idx)) for idx in indices]
 
-    def _expected(self, idx: int) -> Any:
-        """Test reference: this field's value for aircraft ``idx``, stated plainly.
+    def expected(self, idx: int) -> Any:
+        """This field's value for the aircraft at ``idx``, stated plainly: the
+        reference its bulk code is checked against (:meth:`check_consistency`).
 
-        Never called at runtime. Built-in fields compute in bulk, and each also
-        states its value here for one aircraft, independently of the bulk code;
-        ``tests/test_field_batching.py`` compares the two for every field.
-        Custom fields need not implement it.
+        Optional, and never called at runtime. Built-in fields state it
+        independently of their bulk code; a custom field may too. Its older
+        name, ``_expected``, still works.
         """
+        if type(self)._expected is not ObsField._expected:
+            return self._expected(idx)
         raise NotImplementedError
+
+    def _expected(self, idx: int) -> Any:
+        """:meth:`expected`'s older name."""
+        return self.expected(idx)
+
+    @classmethod
+    def states_expected(cls) -> bool:
+        """Whether this field states :meth:`expected`, by either name."""
+        return cls.expected is not ObsField.expected or cls._expected is not ObsField._expected
+
+    def check_consistency(self, indices: Any) -> list[str]:
+        """Where this field's ways of computing disagree for the live aircraft
+        at ``indices``: its bulk values against one at a time, and against
+        :meth:`expected` where it states it (rules in :mod:`._consistency`).
+        None when they agree."""
+        idx = [int(i) for i in indices]
+        bulk = self.get_many(idx)
+        found: list[str] = []
+        for k, i in enumerate(idx):
+            found += differs(bulk[k], self.get(i), f"aircraft {i}: bulk vs one at a time")
+            if self.states_expected():
+                found += beyond_rounding(bulk[k], self.expected(i), f"aircraft {i}: bulk vs expected")
+        return found
+
+    def values_about(self, own: int, others: Any) -> Any:
+        """The raw values an intruder block holds for ``own``: each of
+        ``others``' own value - what it normalizes as a batch. Read as the
+        assembler reads it: every aircraft's at once."""
+        return np.asarray(self.get_many(list(range(bs.traf.ntraf))))[np.asarray(others, dtype=np.intp)]
 
     @abstractmethod
     def bounds(self, idx: int) -> tuple[float, float]:
@@ -689,13 +721,57 @@ class PairObsField(_BoundedField, ABC):
         """Return pair observations for one ownship and multiple intruders."""
         return [self.get_pair(own_idx, int(other_idx)) for other_idx in other_indices]
 
-    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
-        """Test reference: this field's value for one ownship/intruder pair.
-
-        The pair-field counterpart of :meth:`ObsField._expected` - never called
-        at runtime, compared against the bulk result by the tests.
-        """
+    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        """This field's value for one ownship and intruder, stated plainly: the
+        pair-field counterpart of :meth:`ObsField.expected`. Its older name,
+        ``_expected_pair``, still works."""
+        if type(self)._expected_pair is not PairObsField._expected_pair:
+            return self._expected_pair(own_idx, other_idx)
         raise NotImplementedError
+
+    def _expected_pair(self, own_idx: int, other_idx: int) -> Any:
+        """:meth:`expected_pair`'s older name."""
+        return self.expected_pair(own_idx, other_idx)
+
+    @classmethod
+    def states_expected(cls) -> bool:
+        """Whether this field states :meth:`expected_pair`, by either name."""
+        return (
+            cls.expected_pair is not PairObsField.expected_pair
+            or cls._expected_pair is not PairObsField._expected_pair
+        )
+
+    def check_consistency(self, indices: Any) -> list[str]:
+        """Where this field's ways of computing disagree, with ``indices``
+        every live aircraft: each ownship's pairs against one at a time, its
+        row of the pair matrix against its pairs (a subset of ownships' rows
+        too), and against :meth:`expected_pair` where it states it (rules in
+        :mod:`._consistency`). None when they agree."""
+        owns = [int(i) for i in indices]
+        matrix = np.asarray(self.get_pair_matrix(np.array(owns)))
+        if matrix.shape[:2] != (len(owns), bs.traf.ntraf):
+            return [f"pair matrix shape {matrix.shape[:2]}, not {(len(owns), bs.traf.ntraf)}"]
+        found: list[str] = []
+        for row, own in enumerate(owns):
+            others = [j for j in owns if j != own]
+            pairs = self.get_pairs(own, others)
+            for k, other in enumerate(others):
+                where = f"own {own}, other {other}"
+                found += differs(pairs[k], self.get_pair(own, other), f"{where}: bulk vs one at a time")
+                if self.states_expected():
+                    found += beyond_rounding(
+                        matrix[row, other], self.expected_pair(own, other), f"{where}: bulk vs expected"
+                    )
+            found += differs(matrix[row][others], pairs, f"own {own}: pair matrix vs pairs")
+        subset = owns[1::3]
+        if subset:
+            found += differs(self.get_pair_matrix(np.array(subset)), matrix[1::3], "a subset of ownships' rows")
+        return found
+
+    def values_about(self, own: int, others: Any) -> Any:
+        """The raw values an intruder block holds for ``own``: its pairs with
+        ``others`` - what it normalizes as a batch."""
+        return self.get_pairs(own, [int(i) for i in others])
 
     def get_pair_matrix(self, own_indices: Any) -> np.ndarray:
         """Pair observations for several ownships against EVERY live aircraft.

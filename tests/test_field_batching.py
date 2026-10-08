@@ -25,10 +25,12 @@ import numpy as np
 import pytest
 
 import bluesky_sandbox.interface.fields.observations as observations
+from bluesky_sandbox.checks import normalization_findings
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core import services
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions
+from bluesky_sandbox.interface.fields._consistency import differs
 from bluesky_sandbox.interface.fields.base import ObsField, PairObsField
 from bluesky_sandbox.interface.wrappers.observations import normalizer as nz
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
@@ -155,10 +157,8 @@ def fields():
 
 
 def _assert_same(batched, single, what: str) -> None:
-    b = np.asarray(batched, dtype=np.float32)
-    s = np.asarray(single, dtype=np.float32)
-    assert b.shape == s.shape, f"{what}: shape {b.shape} vs {s.shape}"
-    np.testing.assert_array_equal(b, s, err_msg=what)
+    found = differs(batched, single, what)
+    assert not found, found
 
 
 def _all_indices() -> tuple[int, ...]:
@@ -169,107 +169,34 @@ def _others(own: int) -> tuple[int, ...]:
     return tuple(j for j in _all_indices() if j != own)
 
 
-@pytest.mark.parametrize("cls", OWN_CLASSES, ids=lambda c: c.__name__)
-def test_get_many_matches_get(fields, cls):
-    field = fields[cls.__name__]
-    batched = field.get_many(_all_indices())
-    for idx in _all_indices():
-        _assert_same(batched[idx], field.get(idx), f"aircraft {idx}")
-
-
-@pytest.mark.parametrize("cls", PAIR_CLASSES, ids=lambda c: c.__name__)
-def test_get_pairs_matches_get_pair(fields, cls):
-    field = fields[cls.__name__]
-    for own in _all_indices():
-        others = _others(own)
-        batched = field.get_pairs(own, others)
-        for k, other in enumerate(others):
-            _assert_same(
-                batched[k], field.get_pair(own, other), f"own {own}, other {other}"
-            )
-
-
-@pytest.mark.parametrize("cls", PAIR_CLASSES, ids=lambda c: c.__name__)
-def test_get_pair_matrix_matches_get_pairs(fields, cls):
-    """The assembler reads each ownship's row of one matrix per field."""
-    field = fields[cls.__name__]
-    owns = np.array(_all_indices())
-    matrix = np.asarray(field.get_pair_matrix(owns))
-    assert matrix.shape[:2] == (len(owns), bs.traf.ntraf)
-    for row, own in enumerate(owns):
-        others = np.array(_others(int(own)))
-        _assert_same(
-            matrix[row][others], field.get_pairs(int(own), others), f"own {own}"
-        )
-    # A subset of ownships reads the same rows.
-    subset = owns[1::3]
-    _assert_same(field.get_pair_matrix(subset), matrix[1::3], "ownship subset")
-
-
-# The bulk path is checked against each field's own plain statement of its
-# value (``_expected`` / ``_expected_pair``), which does not share the bulk
-# code. Lag wrappers are exempt: their value is a PAST value, which a stateless
-# reference cannot compute; test_normalizers pins their semantics directly.
+# Each field compares its own ways of computing (``check_consistency``):
+# bulk against one at a time, the pair matrix against the pairs, and the bulk
+# values against its plain statement of them (``expected`` /
+# ``expected_pair``), which does not share the bulk code - the same check
+# bluesky_sandbox.checks runs on a design's fields. Lag wrappers state no
+# value: theirs is a PAST value, which a stateless reference cannot compute;
+# test_normalizers pins their semantics directly.
 _NO_REFERENCE = frozenset({"LaggedObs", "LaggedPair"})
 
 
-def _assert_matches_reference(bulk, reference, what: str) -> None:
-    bulk = np.asarray(bulk)
-    reference = np.asarray(reference, dtype=np.float64)
-    assert bulk.shape == reference.shape, (
-        f"{what}: shape {bulk.shape} vs {reference.shape}"
-    )
-    # Computed independently, so equal to rounding: tight for float64 results,
-    # to float32 precision for the fields that emit float32.
-    rtol = 1e-6 if bulk.dtype == np.float32 else 1e-9
-    np.testing.assert_allclose(
-        bulk.astype(np.float64), reference, rtol=rtol, atol=rtol, err_msg=what
-    )
+@pytest.mark.parametrize("cls", OWN_CLASSES + PAIR_CLASSES, ids=lambda c: c.__name__)
+def test_each_field_agrees_with_itself(fields, cls):
+    found = fields[cls.__name__].check_consistency(_all_indices())
+    assert not found, found[:5]
 
 
 @pytest.mark.parametrize("cls", OWN_CLASSES, ids=lambda c: c.__name__)
 def test_every_ownship_field_states_its_value(cls):
     if cls.__name__ in _NO_REFERENCE:
         pytest.skip("a lagged value; see the lag tests in test_normalizers")
-    assert cls._expected is not ObsField._expected, (
-        f"{cls.__name__} has no _expected reference"
-    )
+    assert cls.states_expected(), f"{cls.__name__} states no expected value"
 
 
 @pytest.mark.parametrize("cls", PAIR_CLASSES, ids=lambda c: c.__name__)
 def test_every_pair_field_states_its_value(cls):
     if cls.__name__ in _NO_REFERENCE:
         pytest.skip("a lagged value; see the lag tests in test_normalizers")
-    assert cls._expected_pair is not PairObsField._expected_pair, (
-        f"{cls.__name__} has no _expected_pair reference"
-    )
-
-
-@pytest.mark.parametrize("cls", OWN_CLASSES, ids=lambda c: c.__name__)
-def test_the_bulk_values_match_the_reference(fields, cls):
-    if cls.__name__ in _NO_REFERENCE:
-        pytest.skip("a lagged value; see the lag tests in test_normalizers")
-    field = fields[cls.__name__]
-    every = _all_indices()
-    bulk = np.asarray(field.get_many(every))
-    for idx in every:
-        _assert_matches_reference(bulk[idx], field._expected(idx), f"aircraft {idx}")
-
-
-@pytest.mark.parametrize("cls", PAIR_CLASSES, ids=lambda c: c.__name__)
-def test_the_bulk_pairs_match_the_reference(fields, cls):
-    if cls.__name__ in _NO_REFERENCE:
-        pytest.skip("a lagged value; see the lag tests in test_normalizers")
-    field = fields[cls.__name__]
-    owns = np.array(_all_indices())
-    matrix = np.asarray(field.get_pair_matrix(owns))
-    for own in owns:
-        for other in _others(int(own)):
-            _assert_matches_reference(
-                matrix[own, other],
-                field._expected_pair(int(own), other),
-                f"own {own}, other {other}",
-            )
+    assert cls.states_expected(), f"{cls.__name__} states no expected value"
 
 
 def _normalized_field(field, normalizer):
@@ -293,17 +220,8 @@ def test_batch_normalization_matches_one_at_a_time(fields, cls, name):
     if field is None:
         pytest.skip(f"{name} does not apply to {cls.__name__}")
     for own in (0, bs.traf.ntraf // 2):
-        others = _others(own)
-        if isinstance(field, PairObsField):
-            raw = field.get_pairs(own, others)
-        else:
-            raw = np.asarray(field.get_many(_all_indices()))[np.asarray(others)]
-        batched = services._normalize_field_values_batch(field, raw, own)
-        single = [
-            services._normalize_field_value(field, raw[k], own)
-            for k in range(len(others))
-        ]
-        _assert_same(batched, single, f"own {own}")
+        found = normalization_findings(field, own, _others(own))
+        assert not found, found
 
 
 def test_the_intruder_block_matches_per_ownship_assembly():
