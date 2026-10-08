@@ -45,6 +45,9 @@ type Field = {
   normalizer: { name: string; params: Record<string, unknown> } | null;
   output: { low: (number | null)[]; high: (number | null)[] };
   curve: Curve | null;
+  // A crossover speed action in Mach above its crossover: its mapping there,
+  // on the Mach scale - the curve is the knots' below it.
+  crossover?: (Partial<Curve> & { title?: string; note?: string }) | null;
   curve_note?: string;
   // An action's mapping, stage by stage: the policy's value, the normalizer,
   // its grid (the value's or the target's), the command.
@@ -403,11 +406,13 @@ function Detail({
       </dl>
       {f.curve?.discrete ? (
         <figure className="mdp-plot">
+          {f.crossover && <figcaption className="muted small mdp-plot-title">below the crossover: a change in knots</figcaption>}
           <ChoicesPlot curve={f.curve} unit={f.raw.unit} color={color} />
           {f.curve_note && <figcaption className="muted small">{f.curve_note}</figcaption>}
         </figure>
       ) : lines.length > 0 ? (
         <figure className="mdp-plot">
+          {f.crossover && <figcaption className="muted small mdp-plot-title">below the crossover: a change in knots</figcaption>}
           <Plot lines={lines} ends={ends} color={color} xLabel={labels.x} yLabel={labels.y} />
           {aircraft.length > 0 && (
             <figcaption className="muted small">
@@ -418,6 +423,24 @@ function Detail({
         </figure>
       ) : (
         f.curve_note && <div className="muted">{f.curve_note}</div>
+      )}
+      {f.crossover?.x && f.crossover.series ? (
+        <figure className="mdp-plot">
+          <figcaption className="muted small mdp-plot-title">{f.crossover.title}</figcaption>
+          {f.crossover.discrete ? (
+            <ChoicesPlot curve={f.crossover as Curve} unit="Mach" color={color} />
+          ) : (
+            <Plot
+              lines={f.crossover.series.map((ys, s) => ({ xs: f.crossover!.x!, ys, strong: true, dashed: s > 0 }))}
+              ends={rangeEnds(f.crossover.x)}
+              color={color}
+              xLabel={f.crossover.x_label ?? ""}
+              yLabel={f.crossover.y_label ?? ""}
+            />
+          )}
+        </figure>
+      ) : (
+        f.crossover?.note && <div className="muted small">{f.crossover.title}: {f.crossover.note}</div>
       )}
     </div>
   );

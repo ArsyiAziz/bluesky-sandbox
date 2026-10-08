@@ -504,6 +504,22 @@ class _Emitter:
         return expr
 
     def field_kwarg(self, value: Any) -> str:
+        if isinstance(value, dict) and value.get("type") == "crossover":
+            cas, mach = float(value.get("cas_kts", 300.0)), float(value.get("mach", 0.78))
+            margin = float(value.get("margin_ft", 300.0))
+            tail = "" if margin == 300.0 else f", margin_ft={margin!r}"
+            return f"act.Crossover(cas_kts={cas!r}, mach={mach!r}{tail})"
+        if isinstance(value, dict) and value.get("type") == "mach_regime":
+            parts = [self.field_kwarg(value.get("crossover") or {"type": "crossover"})]
+            for key in ("low", "high"):
+                if value.get(key) is not None:
+                    parts.append(f"{key}={float(value[key])!r}")
+            for key in ("normalizer", "grid"):
+                if value.get(key) is not None:
+                    parts.append(f"{key}={self.field_kwarg(value[key])}")
+            if value.get("handover") is False:
+                parts.append("handover=False")
+            return f"act.MachRegime({', '.join(parts)})"
         if isinstance(value, dict) and value.get("type") == "normalizer":
             kwargs = ", ".join(f"{k}={v!r}" for k, v in dict(value.get("kwargs", {})).items())
             return f"{value['name']}({kwargs})"

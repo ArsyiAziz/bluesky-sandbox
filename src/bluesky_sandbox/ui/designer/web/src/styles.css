@@ -4901,3 +4901,8 @@ button:disabled {
 .geo-airspace {
   margin: 2px 0 8px;
 }
+
+/* A plot's title above it - which regime of a crossover speed action. */
+.mdp-plot figcaption.mdp-plot-title {
+  padding: 0 0 4px 52px;
+}

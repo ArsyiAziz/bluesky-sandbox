@@ -21,6 +21,10 @@ export interface FieldOption {
   normalizable?: boolean;
   // Whether an action takes a grid (a switch does not).
   griddable?: boolean;
+  // Whether an action acts in Mach above a crossover, given one
+  // (`above_crossover`), and whether an observation takes a crossover.
+  mach_regime?: boolean;
+  crossover?: boolean;
   pair_only?: boolean;
   params?: FieldParam[];
   queryable_spec?: QueryableFieldSpec | null;
@@ -336,10 +340,14 @@ function fieldParams(f: SpecDict): string {
   if (kw.grid?.type === "grid") {
     parts.push(`grid ${kw.grid.step}${kw.grid.on === "target" ? " on the target" : ""}`);
   }
+  if (kw.crossover?.type === "crossover") parts.push(`crossover ${crossoverLabel(kw.crossover)}`);
+  if (kw.above_crossover?.type === "mach_regime") {
+    parts.push(`Mach above ${crossoverLabel(kw.above_crossover.crossover)}`);
+  }
   if (kw.query_name) parts.push(String(kw.query_name));
   if (Array.isArray(kw.query_names) && kw.query_names.length) parts.push(kw.query_names.join(","));
   for (const [k, v] of Object.entries(kw)) {
-    if (["query_name", "query_names", "normalizer", "grid"].includes(k) || v == null) continue;
+    if (["query_name", "query_names", "normalizer", "grid", "crossover", "above_crossover"].includes(k) || v == null) continue;
     parts.push(`${k}=${v}`);
   }
   return parts.join(", ");
@@ -613,6 +621,32 @@ function FieldConfigModal({
                   if (moved.normalizer) next.normalizer = moved.normalizer;
                   if (moved.grid) next.grid = moved.grid;
                   else delete next.grid;
+                  onChange(next);
+                }}
+              />
+            )}
+
+            {kind === "obs" && option?.crossover && (
+              <CrossoverControls
+                value={kwargs.crossover?.type === "crossover" ? kwargs.crossover : null}
+                blank="each aircraft's CAS against its Mmo"
+                onChange={(crossover) => {
+                  const next = { ...kwargs };
+                  if (crossover) next.crossover = crossover;
+                  else delete next.crossover;
+                  onChange(next);
+                }}
+              />
+            )}
+
+            {kind === "action" && option?.mach_regime && (
+              <MachRegimeControls
+                normalizers={normalizers}
+                value={kwargs.above_crossover?.type === "mach_regime" ? kwargs.above_crossover : null}
+                onChange={(regime) => {
+                  const next = { ...kwargs };
+                  if (regime) next.above_crossover = regime;
+                  else delete next.above_crossover;
                   onChange(next);
                 }}
               />
@@ -1188,6 +1222,146 @@ function GridControls({
             />
           </label>}
           <div className="muted small">In the action's unit. A step normalizer steps along it.</div>
+        </>
+      )}
+    </>
+  );
+}
+
+// A speed schedule's crossover (Crossover): where its CAS and Mach are the
+// same speed - CAS below, Mach above.
+const DEFAULT_CROSSOVER: SpecDict = { type: "crossover", cas_kts: 300, mach: 0.78 };
+
+function crossoverLabel(value?: SpecDict | null): string {
+  const c = value ?? DEFAULT_CROSSOVER;
+  return `${c.cas_kts ?? 300} kt / M${c.mach ?? 0.78}`;
+}
+
+function CrossoverInputs({ value, onChange }: { value: SpecDict; onChange: (value: SpecDict) => void }) {
+  return (
+    <>
+      <label className="numfield inline" title="the schedule's CAS below the crossover">
+        <span>CAS kt</span>
+        <input type="number" min={1} step={10} value={value.cas_kts ?? 300} onChange={(e) => onChange({ ...value, cas_kts: Number(e.target.value) })} />
+      </label>
+      <label className="numfield inline" title="the schedule's Mach above the crossover">
+        <span>Mach</span>
+        <input type="number" min={0.1} max={0.99} step={0.01} value={value.mach ?? 0.78} onChange={(e) => onChange({ ...value, mach: Number(e.target.value) })} />
+      </label>
+      <label className="numfield inline" title="how far past the crossover the regime changes: within it, an aircraft stays in the one it holds, so a level-off near it does not flip back and forth">
+        <span>margin ft</span>
+        <input type="number" min={0} step={100} value={value.margin_ft ?? 300} onChange={(e) => onChange({ ...value, margin_ft: Math.max(0, Number(e.target.value)) })} />
+      </label>
+    </>
+  );
+}
+
+// An observation's crossover: a speed schedule's, or (blank) its own rule.
+function CrossoverControls({
+  value,
+  blank,
+  onChange,
+}: {
+  value: SpecDict | null;
+  blank: string;
+  onChange: (value: SpecDict | null) => void;
+}) {
+  return (
+    <>
+      <div className="sub-label">crossover</div>
+      <label className="radio modal-check" title={`unset: ${blank}`}>
+        <input type="checkbox" checked={value != null} onChange={(e) => onChange(e.target.checked ? { ...DEFAULT_CROSSOVER } : null)} />
+        a speed schedule's: CAS below, Mach above
+      </label>
+      {value != null && <CrossoverInputs value={value} onChange={onChange} />}
+      {value == null && <div className="muted small">Unset: {blank}.</div>}
+    </>
+  );
+}
+
+// A crossover speed action above its crossover (actions.MachRegime): its value a
+// change in Mach, with bounds, a normalizer and a grid of its own - the same
+// part and size of the action space, which the build checks.
+function MachRegimeControls({
+  value,
+  normalizers,
+  onChange,
+}: {
+  value: SpecDict | null;
+  normalizers: FieldOption[];
+  onChange: (value: SpecDict | null) => void;
+}) {
+  const set = (patch: SpecDict) => onChange({ ...(value ?? {}), ...patch });
+  const normalizer: SpecDict | null = value?.normalizer ?? null;
+  const bounded = value?.low != null && value?.high != null;
+  return (
+    <>
+      <div className="sub-label">above crossover</div>
+      <label className="radio modal-check" title="below the crossover it acts in knots, as without one">
+        <input
+          type="checkbox"
+          checked={value != null}
+          onChange={(e) => onChange(e.target.checked ? { type: "mach_regime", crossover: { ...DEFAULT_CROSSOVER } } : null)}
+        />
+        in Mach: a change in Mach above a crossover
+      </label>
+      {value != null && (
+        <>
+          <CrossoverInputs value={value.crossover ?? DEFAULT_CROSSOVER} onChange={(crossover) => set({ crossover })} />
+          <label className="radio modal-check" title="as an FMS does, and BlueSky does not: a CAS held becomes its Mach climbing past the crossover; a Mach, its CAS, descending">
+            <input type="checkbox" checked={value.handover !== false} onChange={(e) => set({ handover: e.target.checked })} />
+            hand the speed hold over at the crossover
+          </label>
+          <label className="radio modal-check" title="unset: the action's knot bounds as Mach at the crossover - the same output, the same change on both sides; without knot bounds, symmetric about the nominal Mach within what the aircraft can fly">
+            <input
+              type="checkbox"
+              checked={bounded}
+              onChange={(e) => set(e.target.checked ? { low: -0.03, high: 0.03 } : { low: null, high: null })}
+            />
+            bounds of its own
+          </label>
+          {bounded && (
+            <>
+              <label className="numfield inline">
+                <span>low Mach</span>
+                <input type="number" step={0.01} value={value.low} onChange={(e) => set({ low: Number(e.target.value) })} />
+              </label>
+              <label className="numfield inline">
+                <span>high Mach</span>
+                <input type="number" step={0.01} value={value.high} onChange={(e) => set({ high: Number(e.target.value) })} />
+              </label>
+            </>
+          )}
+          <label className="numfield inline">
+            <span>normalizer</span>
+            <Picker
+              searchable={false}
+              placeholder="the action's"
+              value={normalizer?.name ?? ""}
+              onChange={(v) => set({ normalizer: v ? { type: "normalizer", name: v, kwargs: {} } : null })}
+              options={[
+                { value: "", label: "the action's", description: "the action's own normalizer, where it has no unit of its own" },
+                ...normalizers.map((n) => ({ value: n.name, description: n.doc })),
+              ]}
+            />
+          </label>
+          {normalizer && (
+            <NormalizerParams
+              option={normalizers.find((n) => n.name === normalizer.name)}
+              value={normalizer}
+              onChange={(v) => set({ normalizer: v })}
+            />
+          )}
+          <GridControls
+            label="Mach grid"
+            startStep={0.01}
+            value={value.grid ?? null}
+            onChange={(grid) => set({ grid })}
+          />
+          <div className="muted small">
+            Add AboveCrossover with the same crossover to the observation, so the
+            policy sees which regime the action is in.
+          </div>
         </>
       )}
     </>

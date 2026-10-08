@@ -435,6 +435,11 @@ def _takes_grid(cls: type) -> bool:
     return any(f.name == "grid" and f.init for f in dataclasses.fields(cls))
 
 
+def _takes(cls: type, name: str) -> bool:
+    """Whether the constructor accepts ``name``."""
+    return any(f.name == name and f.init for f in dataclasses.fields(cls))
+
+
 def _category(cls: type) -> dict[str, str]:
     """The module a field is defined in, which the picker groups it under.
 
@@ -462,6 +467,8 @@ def obs_fields() -> list[dict[str, Any]]:
                 "doc": _doc(cls),
                 **_category(cls),
                 "normalizable": _takes_normalizer(cls),
+                # Takes a speed schedule's crossover (``crossover``).
+                "crossover": _takes(cls, "crossover"),
                 "pair_only": issubclass(cls, PairObsField),
                 "params": _field_params(cls),
                 "profile": _profile(cls),
@@ -481,6 +488,8 @@ def action_fields() -> list[dict[str, Any]]:
             "kind": cls.kind.value,
             "normalizable": _takes_normalizer(cls),
             "griddable": _takes_grid(cls),
+            # Acts in Mach above a crossover, given one (``above_crossover``).
+            "mach_regime": _takes(cls, "above_crossover"),
             "params": _field_params(cls),
             "profile": _profile(cls),
         }

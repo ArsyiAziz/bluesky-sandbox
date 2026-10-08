@@ -31,7 +31,7 @@ from typing import Any
 from bluesky_sandbox.config import EnvConfig, apply_performance_model
 from bluesky_sandbox.env import BATCHABLE_HOOKS
 from bluesky_sandbox.interface.fields import actions as _actions
-from bluesky_sandbox.interface.fields.actions import Clearance, Grid
+from bluesky_sandbox.interface.fields.actions import Clearance, Crossover, Grid, MachRegime
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
@@ -245,9 +245,40 @@ def _resolve_grid(value: Any) -> Any:
         raise BuildError(f"grid: {e}") from e
 
 
+def _resolve_crossover(value: Any) -> Any:
+    """``{"type": "crossover", "cas_kts": 300, "mach": 0.78}`` as a
+    :class:`Crossover`."""
+    if not isinstance(value, dict) or value.get("type") != "crossover":
+        return value
+    try:
+        return Crossover(value.get("cas_kts", 300.0), value.get("mach", 0.78), value.get("margin_ft", 300.0))
+    except (TypeError, ValueError) as e:
+        raise BuildError(f"crossover: {e}") from e
+
+
+def _resolve_mach_regime(value: Any) -> Any:
+    """``{"type": "mach_regime", "crossover": {...}, "low", "high",
+    "normalizer", "grid"}`` as a :class:`MachRegime`."""
+    if not isinstance(value, dict) or value.get("type") != "mach_regime":
+        return value
+    try:
+        return MachRegime(
+            crossover=_resolve_crossover(value.get("crossover") or {"type": "crossover"}),
+            low=value.get("low"),
+            high=value.get("high"),
+            normalizer=_resolve_normalizer(value.get("normalizer")),
+            grid=_resolve_grid(value.get("grid")),
+            handover=bool(value.get("handover", True)),
+        )
+    except (TypeError, ValueError) as e:
+        raise BuildError(f"above crossover: {e}") from e
+
+
 _RESOLVERS: dict[str, Callable[[Any], Any]] = {
     "normalizer": _resolve_normalizer,
     "grid": _resolve_grid,
+    "crossover": _resolve_crossover,
+    "above_crossover": _resolve_mach_regime,
 }
 
 

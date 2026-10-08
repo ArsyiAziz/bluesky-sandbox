@@ -105,6 +105,9 @@ def _field(
         # grid (the value's, or the target's) - each shown, none applied out of
         # sight.
         "pipeline": _pipeline(field, normalizer, raw) if role == "action" else None,
+        # A crossover speed action acting in Mach above its crossover: its
+        # mapping there, on the Mach scale (the curve above is the knots').
+        "crossover": _above_crossover(field) if role == "action" else None,
     }
     if role == "action" and action_kind(field) is ActionKind.BINARY:
         # A switch is a choice too: off or on.
@@ -280,6 +283,43 @@ def _curve(
         "x_label": x_label,
         "y_label": y_label,
     }
+
+
+def _above_crossover(field: Any) -> dict[str, Any] | None:
+    """For a crossover speed action with a Mach regime: its mapping above the
+    crossover, on that regime's own scale - the policy's value to a change in
+    Mach - as the main curve is the change in knots below it."""
+    regime = getattr(field, "above_crossover", None)
+    if regime is None:
+        return None
+    from bluesky.tools.aero import ft  # noqa: PLC0415
+
+    from bluesky_sandbox.interface.fields.actions.crossover import _MachView  # noqa: PLC0415
+
+    level = f"FL{round(regime.crossover.altitude_m / ft / 100):03d}"
+    view = _MachView(field)
+    normalizer = view.normalizer
+    raw = {
+        "width": 1,
+        "unit": "Mach",
+        "low": None if view.low is None else float(view.low),
+        "high": None if view.high is None else float(view.high),
+        "per_aircraft": view.low is None,
+    }
+    try:
+        if normalizer is None:
+            curve = _identity(raw, "action")
+        else:
+            curve = _curve(view, normalizer, raw, "action")
+    except Exception as error:  # a mapping it cannot sample is still named
+        return {"title": f"above the crossover ({level})", "note": str(error)}
+    curve["title"] = f"above the crossover ({level}): a change in Mach"
+    curve["unit"] = "Mach"
+    if not curve.get("discrete"):
+        curve["y_label"] = "Mach change" if not raw["per_aircraft"] else "position in range"
+    else:
+        curve["y_label"] = "Mach change"
+    return curve
 
 
 def _on_grid(field: Any, value: float) -> float:
