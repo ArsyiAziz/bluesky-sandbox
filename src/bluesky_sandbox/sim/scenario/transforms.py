@@ -7,9 +7,10 @@ together about a pivot by an angle drawn from a distribution. This is applied at
 schema-stable ``support`` episode stays in the canonical (unrotated) frame.
 
 Rotation is computed in a local tangent plane about the pivot (via
-:class:`LocalFrame`), so it is accurate over airspace-sized regions. Footprints
-become polygons after rotation (geometry is what the runtime needs); the design
-document keeps the original parametric primitives untouched.
+:class:`LocalFrame`), so it is accurate over airspace-sized regions. A footprint
+keeps its primitive through it - a circle stays a circle, a sector a sector at
+its turned bearing (``Footprint.mapped``) - so the episode's geometry is what
+the design draws; the design document is untouched.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from bluesky_sandbox.sim.bounds import (
     LatLon,
     LinearAltitudeBand,
     LocalFrame,
-    PolygonFootprint,
     RadialAltitudeBand,
     RegionBounds,
     VertexAltitudeBand,
@@ -116,37 +116,47 @@ def _map_altitude(band: AltitudeBand | None, point) -> AltitudeBand | None:
 def transform_bounds(bounds: Bounds, point) -> Bounds:
     """Apply a point map to a :class:`RegionBounds` (footprint + altitude anchors).
 
-    The footprint becomes a polygon (geometry is what the runtime needs); the
-    design document keeps the original parametric primitive untouched.
+    The footprint keeps its primitive (``Footprint.mapped``); the turn the map
+    gives is added to the region's orientation, which a shape with no axis of
+    its own is oriented by.
     """
     if not isinstance(bounds, RegionBounds):
         return bounds
-    verts = [point(lat, lon) for lat, lon in bounds.footprint.vertices]
-    return RegionBounds(PolygonFootprint(verts), _map_altitude(bounds.altitude, point))
+    center = bounds.center
+    moved = LatLon(*point(center.lat_deg, center.lon_deg))
+    north = LocalFrame(center).offset(0.0, 1.0)
+    x, y = LocalFrame(moved).to_xy_nm(LatLon(*point(north.lat_deg, north.lon_deg)))
+    out = RegionBounds(bounds.footprint.mapped(point), _map_altitude(bounds.altitude, point))
+    out._orientation_deg = (
+        getattr(bounds, "_orientation_deg", 0.0) + math.degrees(math.atan2(x, y))
+    ) % 360.0
+    return out
 
 
 def transform_queryable(q: Queryable, point) -> Queryable:
-    """Apply a point map to a queryable (region bounds or waypoint position)."""
+    """Apply a point map to a queryable (a region's shape or a waypoint's position)."""
     if isinstance(q, QueryRegion):
         return QueryRegion(
-            transform_bounds(q.bounds, point),
+            transform_bounds(q.shape, point),
             color=q.color,
             render_shape=q.render_shape,
             render_label=q.render_label,
             track_temporal_state=q.track_temporal_state,
         )
     if isinstance(q, Waypoint):
+        if q.at is not None:
+            # Its point, carried: the waypoint is where the point goes (and
+            # keeps a fix's name only where the point stays on it).
+            at = q.at
+            if isinstance(at, LatLon):
+                moved = LatLon(*point(at.lat_deg, at.lon_deg))
+            elif isinstance(at, Bounds):
+                moved = transform_bounds(at, point)
+            else:
+                moved = at.mapped(point)
+            return replace(q, at=moved)
         lat, lon = point(q.lat, q.lon)
-        return Waypoint(
-            lat=lat, lon=lon, alt_ft=q.alt_ft, speed_kts=q.speed_kts,
-            reach_radius_nm=q.reach_radius_nm,
-            alt_tolerance_ft=q.alt_tolerance_ft,
-            speed_tolerance_kts=q.speed_tolerance_kts,
-            color=q.color,
-            tsas_region=q.tsas_region,
-            render_shape=q.render_shape, render_tsas=q.render_tsas, render_label=q.render_label,
-            track_temporal_state=q.track_temporal_state,
-        )
+        return replace(q, lat=lat, lon=lon, waypoint=None)
     return q
 
 
@@ -187,7 +197,7 @@ def rotate_spawn(spawn: SpawnConfig, pivot: tuple[float, float], angle_deg: floa
     # The old explicit constructors silently dropped conflict-free spawning
     # from every rotated episode.
     regions = [
-        replace(r, bounds=rotate_bounds(r.bounds, pivot, angle_deg), route=rotate_route(r.route))
+        replace(r, shape=rotate_bounds(r.shape, pivot, angle_deg), route=rotate_route(r.route))
         for r in spawn.regions
     ]
     return replace(

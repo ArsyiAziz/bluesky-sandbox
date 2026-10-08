@@ -22,6 +22,7 @@ from bluesky_sandbox.sim.geometry.conflict import (
     cd_rpz_m,
 )
 
+from bluesky_sandbox._renames import renamed
 from bluesky_sandbox.sim.bounds import Bounds
 from bluesky_sandbox.sim.performance.envelope import (
     EnvelopeSample,
@@ -107,14 +108,16 @@ def param_alt_range(alt_p) -> tuple[float, float] | None:
     return (lo, hi) if math.isfinite(lo) and math.isfinite(hi) else None
 
 
+@renamed(bounds="shape")
 @dataclass
 class SpawnRegion:
     """A spatial region with its own aircraft count and scalar spawn distributions.
 
     Parameters
     ----------
-    bounds:
-        Spatial region used to sample ``(lat, lon)`` spawn positions.
+    shape:
+        Spatial region used to sample ``(lat, lon)`` spawn positions
+        (``bounds``, its older name, still works).
     n_aircraft:
         Number of aircraft to spawn in this region each episode.  Either a
         fixed ``int`` or any :class:`CountDistribution` - any frozen
@@ -206,7 +209,7 @@ class SpawnRegion:
             callsign_prefixes=Categorical({"KL": 3.0, "BA": 1.0, "DL": 1.0}),
         )
     """
-    bounds:            Bounds
+    shape:             Bounds
     n_aircraft:        int | CountDistribution
     params:            dict[str, tuple[float, float] | ParamDistribution] = field(default_factory=dict)
     aircraft_type:     str | TypeDistribution | None = field(default=None)
@@ -247,7 +250,7 @@ class SpawnRegion:
         if "alt_ft" not in self.params and self._finite_alt_band() is None:
             raise ValueError(
                 "SpawnRegion needs a spawn altitude: set params['alt_ft'] or "
-                "give the bounds a finite altitude band."
+                "give its shape a finite altitude band."
             )
         if isinstance(self.n_aircraft, int) and self.n_aircraft < 0:
             raise ValueError(
@@ -366,8 +369,8 @@ class SpawnRegion:
 
     def _finite_alt_band(self) -> tuple[float, float] | None:
         """The bounds' altitude band, when it is finite; otherwise ``None``."""
-        lo = getattr(self.bounds, "alt_min_ft", None)
-        hi = getattr(self.bounds, "alt_max_ft", None)
+        lo = getattr(self.shape, "alt_min_ft", None)
+        hi = getattr(self.shape, "alt_max_ft", None)
         if lo is None or hi is None or not (math.isfinite(lo) and math.isfinite(hi)):
             return None
         return float(lo), float(hi)
@@ -393,10 +396,10 @@ class SpawnRegion:
                     pos["_spd_from_envelope"] = True
                     pos[k] = _ENVELOPE_PROVISIONAL_SPD_KTS
                 else:  # alt_ft
-                    band = getattr(self.bounds, "alt_band_at", None)
+                    band = getattr(self.shape, "alt_band_at", None)
                     alt_min_ft = alt_max_ft = None
                     if band is not None:
-                        lat_for_band, lon_for_band = self.bounds.sample_point(rng)
+                        lat_for_band, lon_for_band = self.shape.sample_point(rng)
                         alt_min_ft, alt_max_ft = band(lat_for_band, lon_for_band)
                         pos["lat_deg"], pos["lon_deg"] = lat_for_band, lon_for_band
                     pos[k] = feasible_alt_for_type(
@@ -425,11 +428,11 @@ class SpawnRegion:
                     f"SpawnRegion.params[{k!r}] sampled a non-finite value: {pos[k]!r}."
                 )
         if "lat_deg" not in pos or "lon_deg" not in pos:
-            pos["lat_deg"], pos["lon_deg"] = self.bounds.sample_point(rng)
+            pos["lat_deg"], pos["lon_deg"] = self.shape.sample_point(rng)
         # When params doesn't pin the altitude, draw it from the bounds band so
         # spawn altitude follows the region geometry (no duplicated alt range).
         if "alt_ft" not in pos:
-            band = getattr(self.bounds, "alt_band_at", None)
+            band = getattr(self.shape, "alt_band_at", None)
             lo, hi = band(pos["lat_deg"], pos["lon_deg"]) if band else self._finite_alt_band()
             pos["alt_ft"] = float(rng.uniform(lo, hi)) if hi > lo else float(lo)
         return pos
@@ -621,7 +624,7 @@ class SpawnConfig:
         scalar_lows: dict[str, list[float]] = {}
         scalar_highs: dict[str, list[float]] = {}
         for r in self.regions:
-            (r_lat_min, r_lat_max), (r_lon_min, r_lon_max) = r.bounds.bounding_box
+            (r_lat_min, r_lat_max), (r_lon_min, r_lon_max) = r.shape.bounding_box
             lat_mins.append(r_lat_min)
             lat_maxs.append(r_lat_max)
             lon_mins.append(r_lon_min)

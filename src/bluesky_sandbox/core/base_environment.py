@@ -63,6 +63,7 @@ from bluesky_sandbox.sim.queryables import (
     RegionResult,
 )
 from bluesky_sandbox.sim.arrival import hurry_overdue
+from bluesky_sandbox.sim.bounds import Bounds, moving_in
 from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
 from bluesky_sandbox.sim.weather import WindField, wind_from_config
 from bluesky_sandbox.ui.drivers import FRAME_DRIVERS, RenderMode, get_driver_class
@@ -464,6 +465,11 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._runtime.reset(seed=seed)
         # ``bs.sim.reset()`` clears BlueSky's wind field; re-apply ours.
         self._runtime.apply_wind(self._wind)
+        # Regions that move during the episode: every one of them, wherever it
+        # is held, timed from now.
+        self._moving = moving_in(self.episode_spec)
+        self._motion_t0 = float(bs.sim.simt)
+        self._advance_motion()
 
         self._hooks.on_before_spawn()
         self._spawn_generator.schedule_episode(self._rng)
@@ -544,9 +550,12 @@ class BlueskyBaseEnvironment(ParallelEnv):
 
         for _ in range(self._n_substeps):
             self._driver.step()
+            self._advance_motion(every="substep")
             self._traffic_monitor.record_substep()
             self._query_state_monitor.record_substep()
             self._hooks.on_sim_step()
+        # A region moved once a step: now, at its end.
+        self._advance_motion()
 
         self._purge_missing_aircraft_state()
         self._update_stateful_fields()
@@ -656,6 +665,29 @@ class BlueskyBaseEnvironment(ParallelEnv):
     def episode_airspace_bounds(self):
         """Airspace bounds active for the current episode."""
         return self.episode_spec.airspace_bounds
+
+    def _advance_motion(self, every: str | None = None) -> None:
+        """Move the moving regions to the simulation's time in the episode:
+        those updated ``every`` ``"substep"`` - before the substep is
+        recorded, so what is inside is of the shape now - or, with no
+        ``every``, all of them."""
+        if not getattr(self, "_moving", None):
+            return
+        t = float(bs.sim.simt) - self._motion_t0
+        for footprint in self._moving:
+            if every is None or footprint.update == every:
+                footprint.advance(t)
+
+    @property
+    def episode_shapes(self) -> dict[str, Bounds]:
+        """The design's shapes - areas and points - for the current episode, by
+        name, in its frame: what a custom field reads their geometry from."""
+        return self.episode_spec.shapes
+
+    @property
+    def episode_bounds(self) -> dict[str, Bounds]:
+        """:attr:`episode_shapes`' older name."""
+        return self.episode_shapes
 
     @property
     def episode_max_aircraft(self) -> int:
@@ -818,8 +850,10 @@ class BlueskyBaseEnvironment(ParallelEnv):
             intruder_idx=intruder_indices(acidx),
             infos=[infos[acid] for acid in agent_ids],
             rng=self._rng,
+            airspace_bounds=self.episode_airspace_bounds,
             _query=self.query_batch,
             _context=self.agent_context,
+            _shapes=self.episode_shapes,
         )
         return self._batch
 
@@ -1012,6 +1046,8 @@ class BlueskyBaseEnvironment(ParallelEnv):
             action=self._step_values.action(acid),
             airspace=self._build_airspace_context(acidx),
             separation=self._traffic_monitor.build_separation_context(acid, acidx),
+            shapes=self.episode_shapes,
+            airspace_bounds=self.episode_airspace_bounds,
         )
 
     def _build_airspace_context(self, acidx: int) -> RegionResult:

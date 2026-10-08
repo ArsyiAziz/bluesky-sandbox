@@ -27,6 +27,8 @@ from typing import (
 import bluesky as bs
 import numpy as np
 
+from bluesky_sandbox._renames import renamed
+from bluesky_sandbox.sim.bounds import LatLon, RegionBounds
 from bluesky_sandbox.sim.geometry.conflict import ConflictView
 
 if TYPE_CHECKING:
@@ -258,16 +260,20 @@ class DesignKeys:
     are the observation's parts, each keyed by its fields' names; ``"state"``
     the state fields' parts the same way; ``"action"``
     the action fields' names; ``"queryable"`` / ``"queryable_result"`` the
-    configured queryables' names, each giving the queryable or its result. On a
-    parameter, the argument is one of those keys. ``batched`` marks values
+    configured queryables' names, each giving the queryable or its result;
+    ``"shapes"`` the design's shapes - areas and points (``"bounds"``, their
+    older name). On a parameter, the argument is one of those keys. ``batched`` marks values
     stacked over agents. The designer's code editor completes, colors and
     checks these keys against the design.
     """
 
-    source: Literal["observation", "state", "action", "queryable", "queryable_result"]
+    source: Literal[
+        "observation", "state", "action", "queryable", "queryable_result", "shapes", "bounds"
+    ]
     batched: bool = False
 
 
+@renamed(named_bounds="shapes")
 @dataclass(frozen=True)
 class AgentStepContext:
     """Agent-bound task/development context for the current step.
@@ -285,12 +291,18 @@ class AgentStepContext:
       field was set to.
 
     All read the values the step already computed.
+
+    ``bounds(name)`` is one of the design's named bounds in this episode's
+    frame - its boundary as primitives, its center, its frame - and
+    ``airspace_bounds`` the airspace's; ``position`` is this aircraft's.
     """
 
     acid: str
     acidx: int
     data: Any = None
-    queryables: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    queryables: Annotated[Mapping[str, Any], DesignKeys("queryable")] = field(
+        default_factory=dict, repr=False
+    )
     query_state: Any = field(default=None, repr=False)
     airspace: RegionResult | None = field(default=None, repr=False)
     separation: SeparationContext = field(default_factory=SeparationContext)
@@ -303,7 +315,29 @@ class AgentStepContext:
     action: Annotated[Mapping[str, Any], DesignKeys("action")] = field(
         default_factory=dict, repr=False
     )
+    #: The design's shapes - areas and points - by name, in this episode's
+    #: frame (``named_bounds``, its older name, still works).
+    shapes: Annotated[Mapping[str, RegionBounds], DesignKeys("shapes")] = field(
+        default_factory=dict, repr=False
+    )
+    airspace_bounds: RegionBounds | None = field(default=None, repr=False)
     _query_result_cache: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    def shape(self, name: Annotated[str, DesignKeys("shapes")]) -> RegionBounds:
+        """The design's shape ``name`` - an area or a point - in this episode's frame."""
+        try:
+            return self.shapes[name]
+        except KeyError as exc:
+            raise KeyError(f"shape {name!r} is not in the design") from exc
+
+    def bounds(self, name: Annotated[str, DesignKeys("shapes")]) -> RegionBounds:
+        """:meth:`shape`'s older name."""
+        return self.shape(name)
+
+    @property
+    def position(self) -> LatLon:
+        """This aircraft's position."""
+        return LatLon(float(bs.traf.lat[self.acidx]), float(bs.traf.lon[self.acidx]))
 
     def queryable(self, name: Annotated[str, DesignKeys("queryable")]) -> Any:
         try:

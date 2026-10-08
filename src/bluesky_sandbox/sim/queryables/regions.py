@@ -14,6 +14,7 @@ from bluesky_sandbox.interface.task import (
     StepTime,
     UnavailableStepTime,
 )
+from bluesky_sandbox._renames import renamed
 from bluesky_sandbox.sim.bounds import Bounds
 
 from .base import _require_bound_query_result
@@ -94,14 +95,16 @@ class RegionResult:
         return self.current.inside
 
 
+@renamed(bounds="shape")
 @dataclass
 class QueryRegion:
     """A named spatial region tested for containment per step.
 
     Parameters
     ----------
-    bounds:
-        The spatial (and optional altitude) region to test.
+    shape:
+        The spatial (and optional altitude) region to test (``bounds``, its
+        older name, still works).
     color:
         Display color name recognized by drivers (e.g. ``"orange"``,
         ``"cyan"``, ``"#FF8800"``).  Defaults to ``"orange"``.
@@ -142,7 +145,7 @@ class QueryRegion:
         )
     """
 
-    bounds: Bounds
+    shape: Bounds
     result_type: ClassVar[type[RegionResult]] = RegionResult
     color: str = "orange"
     render_shape: bool = True
@@ -154,4 +157,4 @@ class QueryRegion:
         lat_deg = float(bs.traf.lat[acidx])
         lon_deg = float(bs.traf.lon[acidx])
         alt_ft = float(bs.traf.alt[acidx] / ft)
-        return self.bounds.contains(lat_deg, lon_deg, alt_ft)
+        return self.shape.contains(lat_deg, lon_deg, alt_ft)

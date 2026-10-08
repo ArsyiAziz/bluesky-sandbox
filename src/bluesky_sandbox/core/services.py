@@ -615,7 +615,7 @@ class RenderableBuilder:
                 continue
             default_name = f"SPAWN {i}" if region.name is None else region.name
             yield BoundsResource(
-                bounds=region.bounds,
+                bounds=region.shape,
                 color="green",
                 label=default_name if region.render_name else "",
                 kind="spawn",
@@ -628,7 +628,7 @@ class RenderableBuilder:
                 if not qable.render_shape:
                     continue
                 yield BoundsResource(
-                    bounds=qable.bounds,
+                    bounds=qable.shape,
                     color=qable.color,
                     label=name if qable.render_label else "",
                     kind="query",
@@ -782,7 +782,7 @@ class QueryStateMonitor:
                 continue
             if not isinstance(queryable, QueryRegion):
                 continue
-            inside = contains_many(queryable.bounds, lat_deg, lon_deg, alt_ft)
+            inside = contains_many(queryable.shape, lat_deg, lon_deg, alt_ft)
             if inside is None:
                 inside = np.fromiter(
                     (queryable.contains_aircraft(acidx) for acidx in range(n)),
@@ -1180,7 +1180,7 @@ class QueryBatch:
             alt_ft = np.asarray(bs.traf.alt, dtype=np.float64)[idx] / ft
             lat = np.asarray(bs.traf.lat, dtype=np.float64)[idx]
             lon = np.asarray(bs.traf.lon, dtype=np.float64)[idx]
-            inside = contains_many(self._queryable.bounds, lat, lon, alt_ft)
+            inside = contains_many(self._queryable.shape, lat, lon, alt_ft)
             if inside is None:
                 inside = [self._queryable.contains_aircraft(int(i)) for i in idx]
             return np.asarray(inside, dtype=bool).astype(np.float64)

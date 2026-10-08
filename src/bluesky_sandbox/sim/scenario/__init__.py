@@ -14,12 +14,14 @@ from .base import (
 )
 from .randomized import (
     RandomizedScenario,
+    GeometryDict,
     RegionParamSampler,
 )
 
 __all__ = [
     "EpisodeSpec",
     "RandomizedScenario",
+    "GeometryDict",
     "RegionParamSampler",
     "Scenario",
 ]

@@ -21,6 +21,7 @@ import numpy as np
 
 from bluesky_sandbox.interface.fields.base import PairObsField
 from bluesky_sandbox.interface.task import AgentStepContext, DesignKeys
+from bluesky_sandbox.sim.bounds import LatLon, RegionBounds
 
 from .step_values import ACID, StepValues, unique_names_of
 
@@ -119,6 +120,9 @@ class StepBatch:
     part. ``terminated`` and ``truncated`` are filled in
     once decided, for ``reward_batch`` and ``cost_batch``. ``query(name)`` reads a queryable for
     every agent at once; ``context(k)`` is agent ``k``'s per-agent context.
+    ``bounds(name)`` is a named bounds in this episode's frame, and
+    ``positions`` every agent's position as arrays - give it to a bounds'
+    geometry for an answer per agent.
     """
 
     acids: tuple[str, ...]
@@ -133,8 +137,10 @@ class StepBatch:
     rng: np.random.Generator
     terminated: np.ndarray | None = None
     truncated: np.ndarray | None = None
+    airspace_bounds: RegionBounds | None = None
     _query: Callable[[str, np.ndarray], Any] = field(default=None, repr=False)
     _context: Callable[[int], Any] = field(default=None, repr=False)
+    _shapes: Mapping[str, RegionBounds] = field(default_factory=dict, repr=False)
 
     def __len__(self) -> int:
         return len(self.acids)
@@ -144,6 +150,25 @@ class StepBatch:
     ) -> QueryBatch:
         """Queryable ``name`` for every agent at once, as arrays."""
         return self._query(name, self.acidx)
+
+    def shape(self, name: Annotated[str, DesignKeys("shapes", batched=True)]) -> RegionBounds:
+        """The design's shape ``name`` - an area or a point - in this episode's frame."""
+        try:
+            return self._shapes[name]
+        except KeyError as exc:
+            raise KeyError(f"shape {name!r} is not in the design") from exc
+
+    def bounds(self, name: Annotated[str, DesignKeys("shapes", batched=True)]) -> RegionBounds:
+        """:meth:`shape`'s older name."""
+        return self.shape(name)
+
+    @property
+    def positions(self) -> LatLon:
+        """Every agent's position, as arrays in agent order."""
+        return LatLon(
+            np.asarray(bs.traf.lat, dtype=np.float64)[self.acidx],
+            np.asarray(bs.traf.lon, dtype=np.float64)[self.acidx],
+        )
 
     def context(self, k: int) -> AgentStepContext:
         """Agent ``k``'s :class:`~bluesky_sandbox.interface.task.AgentStepContext`."""

@@ -12,6 +12,8 @@ from bluesky.tools.aero import ft as _M_PER_FT
 from bluesky.tools.aero import nm as _M_PER_NM
 from bluesky.tools.geo import qdrdist
 
+from bluesky_sandbox.sim.bounds.coordinates import LatLon
+
 from bluesky_sandbox.interface.task import (
     QueryableTemporalStateUnavailable,
     StepTime,
@@ -252,6 +254,20 @@ class WaypointResult:
         return abs(state.normalized_error)
 
 
+def _point_of(at: Any) -> tuple[LatLon, str | None]:
+    """A waypoint's ``at``: its position, and the navdb fix it names, if any."""
+    if isinstance(at, LatLon):
+        return at, None
+    footprint = getattr(at, "footprint", at)
+    # A placed or moving point: the point under its layers.
+    inner = footprint
+    while not hasattr(inner, "fix") and hasattr(inner, "footprint"):
+        inner = inner.footprint
+    if hasattr(footprint, "center_point"):
+        return footprint.center_point(), getattr(inner, "fix", None)
+    raise TypeError(f"Waypoint at= takes a point (bounds, footprint or LatLon), not {type(at).__name__}")
+
+
 @dataclass
 class Waypoint:
     """A BlueSky waypoint or ad-hoc navigation point used as a query target.
@@ -264,6 +280,13 @@ class Waypoint:
 
     Parameters
     ----------
+    at:
+        Where it is: a point - a :class:`RegionBounds` of a
+        :class:`PointFootprint` (a design's named point), a footprint, or a
+        :class:`LatLon`.  Its position is the point's; a point at a navdb fix
+        (``PointFootprint.at_fix("EKROS")``) names it.  A scenario hands each
+        episode's draw of the point - placed, in a group - on to it.
+        Mutually exclusive with :attr:`lat` / :attr:`lon` and :attr:`waypoint`.
     lat, lon:
         Waypoint position in degrees.  Mutually exclusive with
         :attr:`waypoint`.
@@ -339,6 +362,8 @@ class Waypoint:
     render_tsas: bool | None = None
     render_label: bool = True
     track_temporal_state: bool = False
+    at: Any = None
+
     @staticmethod
     def _acid(acidx: int) -> str | None:
         try:
@@ -347,6 +372,12 @@ class Waypoint:
             return None
 
     def __post_init__(self) -> None:
+        if self.at is not None:
+            # Where its point is - by name, at a fix.
+            center, fix = _point_of(self.at)
+            self.lat, self.lon = center.lat_deg, center.lon_deg
+            self.waypoint = fix
+            return
         latlon_set = self.lat is not None and self.lon is not None
         if self.waypoint is not None:
             if latlon_set:

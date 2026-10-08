@@ -50,7 +50,23 @@ def bounds_geometry(bounds: Bounds) -> dict[str, Any]:
         per_vertex = None
     if per_vertex:
         out["per_vertex_alt_ft"] = [[float(lo), float(hi)] for lo, hi in per_vertex]
+    # A moving one: how it moves - its outline every few minutes of the next
+    # hour - for a viewer to play through. Left as it was.
+    footprint = getattr(bounds, "footprint", None)
+    if getattr(footprint, "animatable", False):
+        was = footprint.t_s
+        frames = []
+        for t_s in range(0, MOTION_PREVIEW_S + 1, MOTION_FRAME_S):
+            footprint.advance(float(t_s))
+            frames.append({"t_s": t_s, "vertices": [[round(float(a), 5), round(float(b), 5)] for a, b in bounds.vertices]})
+        footprint.advance(was)
+        out["frames"] = frames
     return out
+
+
+#: How far ahead, and how finely, a moving region's motion is shown, s.
+MOTION_PREVIEW_S = 3600
+MOTION_FRAME_S = 60
 
 
 def heading_range(hdg: Any) -> list[float] | None:
@@ -84,7 +100,7 @@ def queryable_geometry(name: str, q: Any, *, per_aircraft: bool = False) -> dict
             "color": q.color,
             "render_shape": q.render_shape,
             "render_label": q.render_label,
-            **bounds_geometry(q.bounds),
+            **bounds_geometry(q.shape),
         }
     if isinstance(q, Waypoint):
         return {
@@ -121,7 +137,7 @@ def spawn_region_geometry(index: int, region: Any) -> dict[str, Any]:
         "max_aircraft": region.max_n(),
         # Initial-heading range (deg), or None when unconstrained (uniform 0-360).
         "heading": heading_range(region.params.get("hdg_deg")),
-        **bounds_geometry(region.bounds),
+        **bounds_geometry(region.shape),
     }
 
 

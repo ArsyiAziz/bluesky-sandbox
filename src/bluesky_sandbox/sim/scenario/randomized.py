@@ -9,6 +9,9 @@ per-episode sampler with two forms of domain randomization:
   from the region band) from a :class:`Bounds` each episode;
 * ``rotation`` rotates the *whole geometry as a group* (airspace + queryables +
   spawn) about a pivot by a sampled angle;
+* named ``shapes`` - the design's areas and points - move with the group they
+  are in (element id ``"b:<name>"``), or with ``rotation``, so the episode
+  hands code its regions in the frame it flies in;
 * ``groups`` generalizes ``rotation`` to **several** rotation groups that each
   rotate a chosen subset of elements, and that **nest**: a group inside another
   is rotated locally first and then carried by its parent's rotation
@@ -21,6 +24,8 @@ designer) so generated task packages depend only on the main library.
 
 from __future__ import annotations
 
+import math
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from itertools import product
@@ -28,12 +33,35 @@ from typing import Any
 
 import numpy as np
 
-from bluesky_sandbox.sim.bounds import Bounds, RegionBounds, union_footprints
-from bluesky_sandbox.sim.queryables import Queryable, Waypoint
+from bluesky_sandbox.sim.bounds import (
+    BoxFootprint,
+    Bounds,
+    LatLon,
+    Carrier,
+    GeneratedFootprint,
+    MovingFootprint,
+    RegionBounds,
+    generate_regions,
+    union_footprints,
+)
+from bluesky_sandbox._renames import renamed
+from bluesky_sandbox.sim.queryables import Queryable, QueryRegion, Waypoint
 from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from . import transforms as _t
 from .base import EpisodeSpec, Scenario
+
+
+class GeometryDict(dict):
+    """An episode's geometry, as the per-episode hooks pass it round: keys
+    ``airspace_bounds`` / ``spawn`` / ``queryables`` / ``sampled_waypoints`` /
+    ``shapes``. ``geometry["bounds"]`` - the shapes' older name - still reads
+    them."""
+
+    def __missing__(self, key: str) -> Any:
+        if key == "bounds" and "shapes" in self:
+            return self["shapes"]
+        raise KeyError(key)
 
 
 def _mean_point(points: list[tuple[float, float]]) -> tuple[float, float]:
@@ -48,12 +76,14 @@ def _episode_spec(
     airspace: Bounds | None,
     spawn: SpawnConfig,
     queryables: dict[str, Queryable],
+    shapes: dict[str, Bounds] | None = None,
 ) -> EpisodeSpec:
     return EpisodeSpec(
         airspace_bounds=airspace,
         spawn=spawn,
         queryables=dict(queryables),
         max_aircraft=scenario.spawn.max_aircraft(),
+        shapes=dict(scenario.shapes if shapes is None else shapes),
     )
 
 
@@ -61,10 +91,11 @@ def _default_pivot(scenario: RandomizedScenario) -> tuple[float, float]:
     if scenario.airspace_bounds is not None:
         return _t.bbox_center(scenario.airspace_bounds)
     if scenario.spawn.regions:
-        return _t.bbox_center(scenario.spawn.regions[0].bounds)
+        return _t.bbox_center(scenario.spawn.regions[0].shape)
     return (0.0, 0.0)
 
 
+@renamed(bounds="shapes")
 @dataclass(frozen=True)
 class RandomizedScenario(Scenario):
     """Scenario over materialized resources with optional per-episode randomization."""
@@ -75,7 +106,8 @@ class RandomizedScenario(Scenario):
     rotation: dict[str, Any] | None = None  # {"angle": value|dist, "pivot": (lat,lon)|None}
     # Nestable rotation groups. Each: {"id", "angle": value|dist, "pivot": (lat,lon)|None,
     # "members": [element-id], "parent": id|None}. Element ids: "airspace", "q:<name>"
-    # (queryable), "s:<name>" (spawn region). Supersedes ``rotation`` when set.
+    # (queryable), "s:<name>" (spawn region), "b:<name>" (named bounds).
+    # Supersedes ``rotation`` when set.
     groups: tuple[dict[str, Any], ...] | None = None
     # name -> Bounds a waypoint's position (lat/lon, and altitude) is drawn from per episode.
     sampled_waypoints: dict[str, Bounds] = field(default_factory=dict)
@@ -93,8 +125,12 @@ class RandomizedScenario(Scenario):
     episode_geometry_fn: (
         Callable[[np.random.Generator], dict[str, Any]] | None
     ) = None
+    # name -> Bounds: the design's named regions, carried into each episode
+    # (``EpisodeSpec.shapes``) transformed with it. ``bounds``, its older
+    # name, still works.
+    shapes: dict[str, Bounds] = field(default_factory=dict)
 
-    _GEOMETRY_FIELDS = ("airspace_bounds", "spawn", "queryables", "sampled_waypoints")
+    _GEOMETRY_FIELDS = ("airspace_bounds", "spawn", "queryables", "sampled_waypoints", "shapes")
 
     def __post_init__(self) -> None:
         # Stash the pristine (support-covering) geometry so ``support()`` can
@@ -109,7 +145,11 @@ class RandomizedScenario(Scenario):
     def _apply_episode_geometry(self, rng: np.random.Generator) -> None:
         if self.episode_geometry_fn is None:
             return
-        overrides = self.episode_geometry_fn(rng) or {}
+        overrides = dict(self.episode_geometry_fn(rng) or {})
+        # ``bounds``, the shapes' older name, still works - and wins, as only
+        # a hook that set it would have it.
+        if "bounds" in overrides:
+            overrides["shapes"] = overrides.pop("bounds")
         unknown = set(overrides) - set(self._GEOMETRY_FIELDS)
         if unknown:
             raise ValueError(
@@ -130,7 +170,7 @@ class RandomizedScenario(Scenario):
             region = self.sampled_waypoints.get(name)
             if region is not None and isinstance(q, Waypoint):
                 lat, lon = region.sample_point(rng)
-                updates: dict[str, Any] = {"lat": lat, "lon": lon, "waypoint": None}
+                updates: dict[str, Any] = {"lat": lat, "lon": lon, "waypoint": None, "at": None}
                 # Draw altitude from the region's band too, but only when the
                 # waypoint actually has an altitude target and the band varies.
                 band = getattr(region, "alt_band_at", None)
@@ -176,10 +216,13 @@ class RandomizedScenario(Scenario):
             if isinstance(q, Waypoint):
                 pts.append((q.lat, q.lon))
             else:
-                add_bounds(getattr(q, "bounds", None))
+                add_bounds(getattr(q, "shape", None))
         for region in spawn.regions:
             if f"s:{region.name}" in member_ids:
-                add_bounds(region.bounds)
+                add_bounds(region.shape)
+        for name, b in self.shapes.items():
+            if f"b:{name}" in member_ids:
+                add_bounds(b)
         return pts
 
     def _group_geometry(self):
@@ -270,6 +313,60 @@ class RandomizedScenario(Scenario):
         # map preview transforms named-region geometry with them).
         object.__setattr__(self, "last_group_maps", dict(group_map))
 
+        # Groups that move during the episode: each one's motion drawn once -
+        # from its own stream, one number drawn only when a group moves - turned
+        # with the group's own transform, about its pivot where the episode
+        # starts it. Every member element carries it (inner groups first), so
+        # the group moves as one.
+        carriers: dict[str, Carrier] = {}
+        moving = {gid: g for gid, g in groups.items() if g.get("motion")}
+        if moving:
+            base = int(rng.integers(2**63))
+            for gid, g in moving.items():
+                stream = np.random.default_rng([base, zlib.crc32(gid.encode())])
+                to_episode = _t.compose(*(group_map[c] for c in chain(gid)))
+                pivot = LatLon(*to_episode(*pivots[gid]))
+                pts = [to_episode(*pt) for pt in self._bbox_points(subtree[gid], airspace, queryables, spawn)] or [
+                    (pivot.lat_deg, pivot.lon_deg)
+                ]
+                lats, lons = [pt[0] for pt in pts], [pt[1] for pt in pts]
+                extent = BoxFootprint(min(lats), max(lats) + 1e-9, min(lons), max(lons) + 1e-9)
+                turn, scale = _turn_and_scale(to_episode, pivots[gid])
+                motions = tuple(m.realized(stream).turned(turn, scale) for m in g["motion"])
+                carriers[gid] = Carrier(motions, pivot, extent)
+
+        def carried(bounds, eid: str):
+            """``bounds`` carried by the motions of the groups ``eid`` is in."""
+            chain_ = [carriers[gid] for gid in elem_chain.get(eid, ()) if gid in carriers]
+            if not chain_ or not isinstance(bounds, RegionBounds):
+                return bounds
+            substep = any(
+                groups[gid].get("motion_update") == "substep"
+                for gid in elem_chain.get(eid, ())
+                if gid in carriers
+            )
+            fp = bounds.footprint
+            if isinstance(fp, MovingFootprint):
+                moved = MovingFootprint(
+                    fp.footprint,
+                    fp.motions,
+                    "substep" if substep or fp.update == "substep" else "step",
+                    (*fp.carriers, *chain_),
+                )
+            else:
+                moved = MovingFootprint(fp, (), "substep" if substep else "step", tuple(chain_))
+            return RegionBounds(moved, bounds.altitude, bounds.name)
+
+        def spin_and_carry(geom, eid, apply):
+            geom = spin(geom, eid, apply)
+            if not carriers:
+                return geom
+            if isinstance(geom, RegionBounds):
+                return carried(geom, eid)
+            if isinstance(geom, QueryRegion):
+                return replace(geom, shape=carried(geom.shape, eid))
+            return geom  # a waypoint: held where the episode puts it
+
         # Route steps carry per-aircraft waypoint sample bounds (e.g. an exit
         # corridor). They must move with their *waypoint's* group - mirroring
         # the single-rotation path's rotate_spawn - or grouped designs leave
@@ -300,18 +397,28 @@ class RandomizedScenario(Scenario):
             return [transform_step(step) for step in route]
 
         if airspace is not None:
-            airspace = spin(airspace, "airspace", _t.transform_bounds)
+            airspace = spin_and_carry(airspace, "airspace", _t.transform_bounds)
         queryables = {
-            name: spin(q, f"q:{name}", _t.transform_queryable) for name, q in queryables.items()
+            name: spin_and_carry(q, f"q:{name}", _t.transform_queryable)
+            for name, q in queryables.items()
         }
         regions = [
             replace(
                 r,
-                bounds=spin(r.bounds, f"s:{r.name}", _t.transform_bounds),
+                shape=spin_and_carry(r.shape, f"s:{r.name}", _t.transform_bounds),
                 route=transform_route(r.route),
             )
             for r in spawn.regions
         ]
+        def named_id(name: str) -> str:
+            # A partition's shape (``<region>.<i>``) moves with its region.
+            base = name.rsplit(".", 1)[0]
+            return f"b:{base}" if f"b:{name}" not in elem_chain and base in self.shapes else f"b:{name}"
+
+        named = {
+            name: spin_and_carry(b, named_id(name), _t.transform_bounds)
+            for name, b in self.shapes.items()
+        }
         # replace(), NOT field-by-field reconstruction: only the transformed
         # fields change, so conflict_free_* flags and any future SpawnConfig
         # field carry into the episode (the old constructor
@@ -322,7 +429,7 @@ class RandomizedScenario(Scenario):
             route=transform_route(spawn.route),
             routes={name: transform_route(rt) for name, rt in spawn.routes.items()},
         )
-        return _episode_spec(self, airspace, spawn, queryables)
+        return _episode_spec(self, airspace, spawn, queryables, named)
 
     def sample(self, rng: np.random.Generator) -> EpisodeSpec:
         self._apply_episode_geometry(rng)
@@ -349,7 +456,10 @@ class RandomizedScenario(Scenario):
             name: _t.rotate_queryable(q, pivot, angle) for name, q in queryables.items()
         }
         spawn = _t.rotate_spawn(self.spawn, pivot, angle)
-        return _episode_spec(self, airspace, spawn, queryables)
+        named = {
+            name: _t.rotate_bounds(b, pivot, angle) for name, b in self.shapes.items()
+        }
+        return _episode_spec(self, airspace, spawn, queryables, named)
 
     def support(self) -> EpisodeSpec:
         # Restore pristine geometry first: after a sample(), the fields hold
@@ -370,6 +480,8 @@ class RegionParamSampler:
       keyed ``"<region>.<param>"`` -> value;
     * ``dists`` maps those same keys to samplers - a ``(low, high)`` tuple or
       a scipy distribution with finite ``support()``;
+    * a region whose footprint is a ``GeneratedFootprint`` is drawn anew each
+      episode by its generator (its envelope in the support);
     * ``geometry_fn(regions)`` builds the episode-geometry field dict
       (``airspace_bounds`` / ``spawn`` / ``queryables`` / ``sampled_waypoints``)
       from a regions dict.
@@ -434,12 +546,33 @@ class RegionParamSampler:
                 union_footprints([v.footprint for v in variants]),
                 variants[0].altitude,
             )
+        # A partition's shapes, before any draw: each where any of them can be -
+        # the partition's envelope - so what refers to one has a region.
+        for name, region in list(regions.items()):
+            footprint = getattr(region, "footprint", None)
+            if isinstance(footprint, GeneratedFootprint) and footprint.generator.count > 1:
+                for i in range(footprint.generator.count):
+                    regions.setdefault(f"{name}.{i}", region)
         return regions
 
     def episode_geometry(self, rng: np.random.Generator) -> dict[str, Any]:
+        """This episode's geometry: the sampled params drawn, then each
+        generated region (a ``GeneratedFootprint``) drawn - its shape, or a
+        partition's ``<name>.<i>`` shapes - before the geometry is built."""
         draw = {k: _t.sample_scalar(v, rng) for k, v in self._dists.items()}
-        regions = self._regions_fn(draw)
-        return self._geometry_fn(regions)
+        regions = generate_regions(self._regions_fn(draw), rng)
+        return GeometryDict(self._geometry_fn(regions))
+
+
+def _turn_and_scale(point, at: tuple[float, float]) -> tuple[float, float]:
+    """How far ``point`` turns (deg) and scales a scene, at ``at``."""
+    from bluesky_sandbox.sim.bounds import LocalFrame  # noqa: PLC0415 - kept local
+
+    here = LatLon(*at)
+    north = LocalFrame(here).offset(0.0, 1.0)
+    to = LatLon(*point(here.lat_deg, here.lon_deg))
+    x, y = LocalFrame(to).to_xy_nm(LatLon(*point(north.lat_deg, north.lon_deg)))
+    return math.degrees(math.atan2(x, y)), math.hypot(x, y)
 
 
 def _first_not_none(values) -> float | None:
