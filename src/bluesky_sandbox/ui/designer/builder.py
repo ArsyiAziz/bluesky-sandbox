@@ -31,7 +31,7 @@ from typing import Any
 from bluesky_sandbox.config import EnvConfig, apply_performance_model
 from bluesky_sandbox.env import BATCHABLE_HOOKS
 from bluesky_sandbox.interface.fields import actions as _actions
-from bluesky_sandbox.interface.fields.actions import Clearance
+from bluesky_sandbox.interface.fields.actions import Clearance, Grid
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
@@ -50,7 +50,6 @@ from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from . import setup_code
 from . import spec as _spec
-from .grid import apply_grid
 from .spec import SCENARIO_HOOKS, DesignSpec, EnvSpec, FieldRef
 
 
@@ -236,9 +235,25 @@ def _resolve_normalizer(value: Any) -> Any:
         raise BuildError(f"failed to construct normalizer {name!r}: {e}") from e
 
 
+def _resolve_grid(value: Any) -> Any:
+    """``{"type": "grid", "step": 1000, "on": "target"}`` as a :class:`Grid`."""
+    if not isinstance(value, dict) or value.get("type") != "grid":
+        return value
+    try:
+        return Grid(value.get("step"), on=value.get("on") or "value")
+    except (TypeError, ValueError) as e:
+        raise BuildError(f"grid: {e}") from e
+
+
+_RESOLVERS: dict[str, Callable[[Any], Any]] = {
+    "normalizer": _resolve_normalizer,
+    "grid": _resolve_grid,
+}
+
+
 def _resolve_constructor_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {
-        key: _resolve_normalizer(value) if key == "normalizer" else value
+        key: _RESOLVERS.get(key, lambda value: value)(value)
         for key, value in kwargs.items()
     }
 
@@ -320,6 +335,7 @@ def resolve_action_field(ref: FieldRef) -> ActionField | Clearance:
                 ref.clearance.get("duration_normalizer")
             ),
             duration_from=ref.clearance.get("duration_from") or "issued",
+            duration_grid=_resolve_grid(ref.clearance.get("duration_grid")),
         )
     except (TypeError, ValueError) as e:
         raise BuildError(f"clearance on {ref.name!r}: {e}") from e
@@ -874,7 +890,7 @@ def build_scenario(spec: DesignSpec) -> DesignScenario:
     # model BlueSky is set to. This path never builds an EnvConfig (the
     # designer previews geometry without one), so nothing else would set it.
     apply_performance_model(getattr(spec.env, "performance_model", None))
-    spec = with_inferred_temporal_tracking(apply_grid(spec))
+    spec = with_inferred_temporal_tracking(spec)
     region_dists = _region_param_dists(spec)
     # Named-region bounds for tooling (the designer preview): starts canonical
     # (representative shapes); the episode hook refreshes it with each sample's
@@ -964,7 +980,6 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
     # Make the design's editable code (reward/termination, custom fields)
     # importable before resolving any references to it.
     install_code_modules(spec.code)
-    spec = apply_grid(spec)
 
     env = spec.env
     for hook in BATCHABLE_HOOKS:

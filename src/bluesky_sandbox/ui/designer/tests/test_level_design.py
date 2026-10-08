@@ -1,6 +1,7 @@
-"""Flight levels in a design: an envelope marker's ``alt_step_ft`` survives the
-saved design, reaches the per-aircraft fix draw and the spawn draw, and is
-generated."""
+"""Flight levels in a design, each set where it applies - nothing global fills
+anything in: an envelope or start altitude's ``alt_step_ft`` (a spawn's, a
+fix's), an action's ``grid``, a step normalizer's ``step``. Each
+survives the saved design, reaches the env, and is generated as written."""
 
 from __future__ import annotations
 
@@ -11,7 +12,6 @@ from bluesky_sandbox.sim.performance.envelope import EnvelopeSample
 from bluesky_sandbox.ui.designer import codegen
 from bluesky_sandbox.ui.designer import spec as S
 from bluesky_sandbox.ui.designer.builder import build_design_config, build_scenario
-from bluesky_sandbox.ui.designer.grid import apply_grid
 
 from .test_designer import _example_design_spec
 
@@ -53,144 +53,89 @@ def test_levels_are_generated():
     assert "'alt_step_ft': 1000.0" in scenario
 
 
-# ---- the design's grid ---------------------------------------------------- #
+# ---- level flight, spawns on levels, actions on a grid --------------------- #
 
 
-GRID = {"alt_ft": 1000.0, "spd_kts": 10.0, "hdg_deg": 10.0}
-
-
-def _gridded() -> S.DesignSpec:
+def _cruise() -> S.DesignSpec:
     spec = _on_levels()
-    spec.grid = dict(GRID)
-    spec.queryables["fix"]["alt_ft"] = {"type": "envelope"}  # no step of its own
     spec.queryables["cruise"] = {
         "type": "waypoint",
         "lat": 56.0,
         "lon": 2.5,
-        "alt_ft": {"type": "start"},
+        "alt_ft": {"type": "start", "alt_step_ft": 1000.0},
         "speed_kts": None,
         "alt_tolerance_ft": 1000,
     }
-    step = {
-        "type": "normalizer",
-        "name": "StepNormalizer",
-        "kwargs": {"steps_each_way": 4},
-    }
-    spec.env.action_fields = [
-        S.FieldRef(
-            "AltDeltaFt", {"normalizer": dict(step, kwargs={"steps_each_way": 4})}
-        ),
-        S.FieldRef(
-            "SpdDeltaKts", {"normalizer": dict(step, kwargs={"steps_each_way": 4})}
-        ),
-        S.FieldRef(
-            "ApHdgDeltaDeg", {"normalizer": dict(step, kwargs={"steps_each_way": 4})}
-        ),
-    ]
+    spec.spawn["route"] = ["cruise"]
+    region = spec.spawn["regions"][0]
+    region.setdefault("params", {})["alt_ft"] = dict(LEVELS)
     return spec
 
 
-def test_a_grid_survives_the_saved_design_and_is_optional():
-    again = S.DesignSpec.from_json(_gridded().to_json())
-    assert again.grid == GRID
-    assert S.DesignSpec.from_json(_on_levels().to_json()).grid is None
-    assert apply_grid(_on_levels()) is not None  # no grid: a no-op
-
-
-def test_the_grid_sets_every_step_and_the_altitude_levels():
-    config = build_design_config(_gridded())
-    alt, spd, hdg = config.action_fields
-    assert (alt.normalizer.step, spd.normalizer.step, hdg.normalizer.step) == (
-        1000.0,
-        10.0,
-        10.0,
-    )
-    assert alt.command_step == 1000.0  # every level change lands on a level
-    assert getattr(spd, "command_step", None) is None  # speeds are steps, not rounded
-
-
-def test_the_grid_puts_target_altitudes_on_levels_and_level_flight_holds_its_start():
-    route_steps = {
-        name: build_scenario(_gridded()).support().spawn.route[0] for name in ("fix",)
+def _step(steps: int, step: float) -> dict:
+    return {
+        "type": "normalizer",
+        "name": "StepNormalizer",
+        "kwargs": {"steps_each_way": steps, "step": step},
     }
-    assert route_steps["fix"]["alt_step_ft"] == 1000.0
-    spec = _gridded()
-    spec.spawn["route"] = ["cruise"]
-    (step,) = build_scenario(spec).support().spawn.route
+
+
+def test_level_flight_holds_the_level_it_starts_on():
+    (step,) = build_scenario(_cruise()).support().spawn.route
     assert step["alt_from_start"] is True and step["alt_step_ft"] == 1000.0
+    again = S.DesignSpec.from_json(_cruise().to_json())
+    assert again.queryables["cruise"]["alt_ft"] == {"type": "start", "alt_step_ft": 1000.0}
 
 
-def test_a_spawn_marked_levels_takes_the_grid_and_needs_one():
-    spec = _gridded()
-    spec.spawn.setdefault("regions", [{"name": "R", "params": {}}])
-    spec.spawn["regions"][0].setdefault("params", {})["alt_ft"] = {
-        "type": "envelope",
-        "levels": True,
-    }
-    applied = apply_grid(spec)
-    assert applied.spawn["regions"][0]["params"]["alt_ft"] == {
-        "type": "envelope",
-        "alt_step_ft": 1000.0,
-    }
-    spec.grid = {"spd_kts": 10.0}
-    with pytest.raises(S.SpecError, match="no altitude grid"):
-        apply_grid(spec)
+def test_a_spawn_on_levels_is_drawn_on_levels_and_generated():
+    spec = _cruise()
+    region = S.DesignSpec.from_json(spec.to_json()).spawn["regions"][0]
+    assert region["params"]["alt_ft"] == LEVELS
+    files = codegen.generate_task(spec, "Cruise")
+    scenario = next(t for p, t in files.items() if p.endswith("scenario.py"))
+    assert "EnvelopeSample(alt_step_ft=1000.0)" in scenario
 
 
-def test_a_grid_is_generated_as_its_per_field_settings():
-    files = codegen.generate_task(_gridded(), "Gridded")
+def test_an_action_is_built_with_the_grid_and_step_it_states():
+    spec = _on_levels()
+    spec.env.action_fields = [
+        # On a grid, the step counts grid steps: two levels a choice.
+        S.FieldRef("AltDeltaFt", {"normalizer": _step(4, 2), "grid": {"type": "grid", "step": 1000.0, "on": "target"}}),
+        S.FieldRef("SpdDeltaKts", {"normalizer": _step(4, 10.0)}),
+        S.FieldRef("HdgDeltaDeg", {"grid": {"type": "grid", "step": 10.0}}),
+    ]
+    spec = S.DesignSpec.from_json(spec.to_json())
+    alt, spd, hdg = build_design_config(spec).action_fields
+    assert (alt.normalizer.step, alt.grid) == (2.0, act.Grid(1000.0, on="target"))
+    # Nothing it does not state: a speed in steps, not put on a grid.
+    assert (spd.normalizer.step, spd.grid) == (10.0, None)
+    assert hdg.grid == act.Grid(10.0)
+    files = codegen.generate_task(spec, "Steps")
     config = next(t for p, t in files.items() if p.endswith("config.py"))
     assert (
-        "StepNormalizer(steps_each_way=4, step=1000.0), command_step=1000.0" in config
-    )
+        "StepNormalizer(steps_each_way=4, step=2), "
+        "grid=act.Grid(1000.0, on='target')"
+    ) in config
     assert "StepNormalizer(steps_each_way=4, step=10.0))" in config
+    assert "act.HdgDeltaDeg(grid=act.Grid(10.0))" in config
 
 
-@pytest.mark.parametrize("bad", [{"alt": 1000}, {"alt_ft": -5}, {"alt_ft": "x"}])
-def test_a_bad_grid_is_refused(bad):
-    with pytest.raises(S.SpecError):
-        S.validated_grid(bad)
+@pytest.mark.parametrize("old", ["command_step", "target_grid"])
+def test_an_action_saved_with_an_earlier_grid_loads_on_its_target_grid(old):
+    ref = S.FieldRef.from_dict({"field": "AltDeltaFt", "kwargs": {old: 1000.0}})
+    assert ref.kwargs == {"grid": {"type": "grid", "step": 1000.0, "on": "target"}}
 
 
-def test_spawning_on_levels_without_an_altitude_grid_is_refused():
-    spec = _on_levels()  # no grid at all
-    spec.spawn.setdefault("regions", [{"name": "R", "params": {}}])
-    spec.spawn["regions"][0].setdefault("params", {})["alt_ft"] = {
-        "type": "envelope",
-        "levels": True,
-    }
-    with pytest.raises(S.SpecError, match="no altitude grid"):
-        build_scenario(spec)
-
-
-def test_an_action_the_grid_cannot_read_is_an_error_not_skipped():
-    spec = _gridded()
-    spec.env.action_fields.append(S.FieldRef("NoSuchAction", {}))
-    with pytest.raises(S.SpecError, match="cannot read action 'NoSuchAction'"):
-        apply_grid(spec)
-
-
-def test_a_custom_action_takes_the_grid_too():
-    spec = _gridded()
-    spec.code["custom_actions.py"] = (
-        "from dataclasses import dataclass\n"
-        "from bluesky_sandbox.interface.fields import actions as act\n\n\n"
-        "@dataclass(frozen=True)\n"
-        "class MyLevels(act.AltDeltaFt):\n"
-        "    pass\n"
+@pytest.mark.parametrize(("feet", "count"), [(1000.0, None), (2000.0, 2)])
+def test_a_step_saved_in_feet_on_an_earlier_grid_loads_as_the_grid_steps_it_is(feet, count):
+    ref = S.FieldRef.from_dict(
+        {"field": "AltDeltaFt", "kwargs": {"target_grid": 1000.0, "normalizer": _step(4, feet)}}
     )
-    spec.env.action_fields.append(
-        S.FieldRef(
-            "custom_actions:MyLevels",
-            {
-                "normalizer": {
-                    "type": "normalizer",
-                    "name": "StepNormalizer",
-                    "kwargs": {},
-                }
-            },
-        )
-    )
-    applied = apply_grid(spec).env.action_fields[-1]
-    assert applied.kwargs["normalizer"]["kwargs"]["step"] == 1000.0
-    assert applied.kwargs["command_step"] == 1000.0
+    assert ref.kwargs["normalizer"]["kwargs"].get("step") == count
+
+
+def test_a_design_with_a_global_grid_is_refused_with_where_each_step_goes():
+    data = _on_levels().to_dict()
+    data["grid"] = {"alt_ft": 1000}
+    with pytest.raises(S.SpecError, match="alt_step_ft.*grid.*step"):
+        S.DesignSpec.from_dict(data)

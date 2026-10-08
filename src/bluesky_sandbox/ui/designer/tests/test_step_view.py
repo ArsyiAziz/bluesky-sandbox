@@ -12,7 +12,8 @@ from bluesky_sandbox.ui.designer import mdp
 
 def test_a_step_action_is_drawn_as_its_choices():
     field = act.AltDeltaFt(
-        normalizer=StepNormalizer(1000.0, 3, include_zero=False), command_step=1000.0
+        normalizer=StepNormalizer(steps_each_way=3, include_zero=False),
+        grid=act.Grid(1000.0, on="target"),
     )
     raw = {"per_aircraft": True, "low": -1.0, "high": 1.0, "width": 1}
     # No aircraft is needed: each choice before any aircraft's reach clips it.

@@ -73,3 +73,13 @@ def test_a_clearance_counted_from_capture_is_built_and_generated():
     assert "duration_from='captured')" in text
     again = S.DesignSpec.from_dict(spec.to_dict())
     assert again.env.action_fields[0].clearance["duration_from"] == "captured"
+
+
+def test_a_clearance_duration_grid_is_built_kept_and_generated():
+    spec = _with_clearance()
+    spec.env.action_fields[0].clearance["duration_grid"] = {"type": "grid", "step": 30.0}
+    spec = S.DesignSpec.from_dict(spec.to_dict())
+    assert build_design_config(spec).action_fields[1].grid == act.Grid(30.0)
+    files = codegen.generate_task(spec, "Cleared")
+    text = next(t for p, t in files.items() if p.endswith("config.py"))
+    assert "duration_grid=act.Grid(30.0)" in text

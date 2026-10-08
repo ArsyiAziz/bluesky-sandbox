@@ -304,30 +304,6 @@ def is_start_value(v: Any) -> bool:
     return isinstance(v, dict) and v.get("type") == "start"
 
 
-#: The quantities a design's ``grid`` sets a step for.
-GRID_KEYS = ("alt_ft", "spd_kts", "hdg_deg")
-
-
-def validated_grid(grid: Any) -> dict[str, float] | None:
-    """A design's ``grid`` - ``{"alt_ft": 1000, "spd_kts": 10, "hdg_deg": 10}``,
-    any key omitted or None - as positive floats, or None for no grid."""
-    if grid is None:
-        return None
-    if not isinstance(grid, dict):
-        raise SpecError(f"grid must be a mapping of {GRID_KEYS}, got {grid!r}")
-    unknown = sorted(set(grid) - set(GRID_KEYS))
-    if unknown:
-        raise SpecError(f"grid has unknown keys {unknown}; allowed: {list(GRID_KEYS)}")
-    out = {}
-    for key, value in grid.items():
-        if value is None:
-            continue
-        if not isinstance(value, (int, float)) or not value > 0:
-            raise SpecError(f"grid {key} must be a positive number, got {value!r}")
-        out[key] = float(value)
-    return out or None
-
-
 def envelope_alt_step(v: Any) -> float | None:
     """The level grid of an envelope marker (``alt_step_ft``), None without."""
     step = v.alt_step_ft if isinstance(v, EnvelopeSample) else v.get("alt_step_ft")
@@ -887,6 +863,7 @@ class FieldRef:
     ``clearance``, on an action, makes it an ``actions.Clearance``:
     ``{"duration": [low, high] | None, "lock": "duration" | "captured" | None,
     "duration_normalizer": normalizer spec | None,
+    "duration_grid": {"type": "grid", "step": s, "on": ...} | None,
     "duration_from": "issued" | "captured" | None}`` - a missing
     ``duration_from`` counts from when it is given.
     """
@@ -912,13 +889,38 @@ class FieldRef:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> FieldRef:
         clearance = d.get("clearance")
+        kwargs = dict(d.get("kwargs", {}))
+        # An action's target grid, by its earlier names: the same grid, on the
+        # target it commands - and a step normalizer's step on it, then in the
+        # action's unit, as the grid steps it counts now.
+        for old in ("command_step", "target_grid"):
+            step = kwargs.pop(old, None)
+            if step is not None and "grid" not in kwargs:
+                kwargs["grid"] = {"type": "grid", "step": float(step), "on": "target"}
+                if "normalizer" in kwargs:
+                    kwargs["normalizer"] = _in_grid_steps(kwargs["normalizer"], float(step))
         return cls(
             name=d["field"],
-            kwargs=dict(d.get("kwargs", {})),
+            kwargs=kwargs,
             transform=d.get("transform"),
             transform_kwargs=dict(d.get("transform_kwargs", {})),
             clearance=None if clearance is None else dict(clearance),
         )
+
+
+def _in_grid_steps(normalizer: Any, grid: float) -> Any:
+    """A step normalizer's ``step``, given in the action's unit, as the number
+    of ``grid`` steps it is - unset for one."""
+    if not (isinstance(normalizer, dict) and normalizer.get("name") == "StepNormalizer"):
+        return normalizer
+    kwargs = dict(normalizer.get("kwargs", {}))
+    step = kwargs.pop("step", None)
+    if step is not None:
+        count = float(step) / grid
+        kwargs["step"] = round(count) if abs(count - round(count)) < 1e-9 else count
+        if kwargs["step"] == 1:
+            del kwargs["step"]
+    return {**normalizer, "kwargs": kwargs}
 
 
 @dataclass
@@ -1154,12 +1156,6 @@ class DesignSpec:
     nav_cycle: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     version: int = _SPEC_VERSION
-    # One step per quantity for the whole design - {"alt_ft": 1000, "spd_kts":
-    # 10, "hdg_deg": 10}, any omitted - applied by ``grid.apply_grid`` before
-    # building: the altitude grid is the levels every target altitude is on
-    # (fixes, level clearances, and spawns marked "levels"), and every step
-    # action's step comes from its quantity's. None: no grid.
-    grid: dict[str, float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1175,7 +1171,6 @@ class DesignSpec:
             "code": dict(self.code),
             "scenario_setup": self.scenario_setup,
             "scenario_hooks": dict(self.scenario_hooks),
-            **({"grid": dict(self.grid)} if self.grid else {}),
         }
 
     @classmethod
@@ -1185,6 +1180,14 @@ class DesignSpec:
             raise SpecError(
                 f"unsupported DesignSpec version {version}; this build expects "
                 f"{_SPEC_VERSION}."
+            )
+        if "grid" in d:
+            # Nothing global fills in a field: each step is set where it applies.
+            raise SpecError(
+                "a design has no grid: set each step where it applies - an "
+                "envelope or start altitude's alt_step_ft (a spawn's, a fix's), "
+                "an action's grid (Grid: its values, or the targets it "
+                "commands, on whole steps), a StepNormalizer's step"
             )
         env = EnvSpec.from_dict(d["env"])
         code = dict(d.get("code", {}))
@@ -1214,8 +1217,6 @@ class DesignSpec:
             nav_cycle=d.get("nav_cycle"),
             metadata=dict(d.get("metadata", {})),
             version=version,
-            # Absent in pre-grid designs: no grid.
-            grid=validated_grid(d.get("grid")),
         )
 
     def to_json(self, **json_kwargs: Any) -> str:

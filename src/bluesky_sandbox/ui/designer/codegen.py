@@ -45,7 +45,6 @@ from .builder import (
 from .catalog import hooks as _hook_catalog
 from .emit import emit_env_sources, emit_scenario_sources
 from .evaluation import eval_render_mode, rl_evaluate_py, sb3_evaluate_py
-from .grid import apply_grid
 from .recording import (
     RecordOptions,
     main_with_wandb,
@@ -85,9 +84,6 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
     (``custom_fields:MyField`` -> ``<pkg>.custom_fields:MyField``) so the
     package is self-contained and importable.
     """
-    # The design's grid, expanded into its fields first: the generated task
-    # carries the per-field settings, exactly as the designer builds them.
-    spec = apply_grid(spec)
     pkg = _valid_package_name(package_name)
     class_stem = _class_stem(pkg)
     template = template_of(spec)

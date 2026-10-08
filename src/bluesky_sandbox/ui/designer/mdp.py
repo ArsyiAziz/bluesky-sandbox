@@ -101,6 +101,10 @@ def _field(
         "normalizer": None,
         "output": _output(field, normalizer, raw),
         "curve": None,
+        # An action, stage by stage: the policy's value, its normalizer, and its
+        # grid (the value's, or the target's) - each shown, none applied out of
+        # sight.
+        "pipeline": _pipeline(field, normalizer, raw) if role == "action" else None,
     }
     if role == "action" and action_kind(field) is ActionKind.BINARY:
         # A switch is a choice too: off or on.
@@ -132,6 +136,47 @@ def _field(
                     "take now is clipped to the largest one it can"
                 )
     return out
+
+
+def _pipeline(field: Any, normalizer: Any, raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """An action's mapping from the policy's value to the command, in order."""
+    unit = raw["unit"]
+    kind = action_kind(field)
+    if kind is ActionKind.BINARY:
+        policy = "a switch: 0 or 1"
+    elif kind is ActionKind.DISCRETE:
+        policy = "a choice: an index"
+    else:
+        policy = "a value in a range"
+    stages = [{"stage": "policy", "text": policy}]
+    grid = getattr(field, "grid", None)
+    if normalizer is not None:
+        text = type(normalizer).__name__
+        if getattr(normalizer, "discrete", False):
+            every = getattr(normalizer, "step", None) or 1.0
+            if grid is not None and grid.on == "target":
+                values = "grid values" if every == 1 else f"× {every:g} grid values"
+                text += f": k {values} above or below the present one (0: the nearest)"
+            elif grid is not None or getattr(normalizer, "step", None) is not None:
+                step = grid.step * every if grid is not None else normalizer.step
+                text += f": k whole steps of {_number(step):g} {unit}".rstrip()
+        stages.append({"stage": "normalizer", "text": text})
+    mode = getattr(getattr(field.meta, "mode", None), "value", None)
+    stages.append({"stage": "value", "text": "a delta" if mode == "delta" else "the value"})
+    if grid is not None:
+        if grid.on == "target" and mode == "delta":
+            what = "nominal + delta"
+        else:
+            what = "the delta" if mode == "delta" else "the value"
+        stages.append(
+            {
+                "stage": "grid",
+                "text": f"{what}, on its nearest grid value (every {_number(grid.step):g} {unit})",
+                "step": _number(grid.step),
+            }
+        )
+    stages.append({"stage": "command", "text": "the target BlueSky is given"})
+    return stages
 
 
 def _raw(field: Any) -> dict[str, Any]:
@@ -208,7 +253,7 @@ def _curve(
         return _choices(field, normalizer)
     unit_axis = raw["per_aircraft"]
     low, high = (0.0, 1.0) if unit_axis else (raw["low"], raw["high"])
-    field = _Ranged(field, low, high)
+    field = _Ranged(field, low, high, unit_axis=unit_axis)
     raw_label = "position in range (low → high)" if unit_axis else "raw"
     if role == "observation" or normalizer.output_size(field) > 1:
         # Raw -> what the policy sees. For an action that takes several values
@@ -226,7 +271,7 @@ def _curve(
         # The policy's value -> the command it gives.
         out_low, out_high = normalizer.output_bounds(field)
         xs = _span(float(out_low[0]), float(out_high[0]))
-        series = [[float(normalizer.denormalize(field, [x], 0)) for x in xs]]
+        series = [[float(_on_grid(field, normalizer.denormalize(field, [x], 0))) for x in xs]]
         x_label = "policy's value"
         y_label = raw_label if unit_axis else "command"
     return {
@@ -235,6 +280,16 @@ def _curve(
         "x_label": x_label,
         "y_label": y_label,
     }
+
+
+def _on_grid(field: Any, value: float) -> float:
+    """``value`` on the action's grid, as the environment puts it - drawn from
+    a nominal of 0. A range that is each aircraft's own is drawn as a position
+    in it, which no grid in the action's unit fits: left as is."""
+    grid = getattr(field, "grid", None)
+    if grid is None or getattr(field, "_unit_axis", False):
+        return value
+    return grid.apply(field, value, 0)
 
 
 def _identity(raw: dict[str, Any], role: str) -> dict[str, Any]:
@@ -283,15 +338,22 @@ class _Ranged:
     """``field`` with a given range: what a normalizer scales against - its
     bounds and its reach - and nothing else changed."""
 
-    def __init__(self, field: Any, low: float, high: float) -> None:
+    def __init__(
+        self, field: Any, low: float, high: float, *, unit_axis: bool = False
+    ) -> None:
         self._field = field
         self._range = (low, high)
+        self._unit_axis = unit_axis
 
     def bounds(self, idx: int) -> tuple[float, float]:
         return self._range
 
     def reach(self, idx: int) -> tuple[float, float]:
         return self._range
+
+    def nominal(self, idx: int) -> float:
+        # Drawn from a nominal of 0, on the grid: no aircraft is read.
+        return 0.0
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._field, name)

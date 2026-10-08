@@ -394,6 +394,9 @@ class _Emitter:
             if ref.clearance.get("duration_normalizer") is not None:
                 normalizer = self.field_kwarg(ref.clearance["duration_normalizer"])
                 parts.append(f"duration_normalizer={normalizer}")
+            if ref.clearance.get("duration_grid") is not None:
+                grid = self.field_kwarg(ref.clearance["duration_grid"])
+                parts.append(f"duration_grid={grid}")
             if ref.clearance.get("duration_from") not in (None, "issued"):
                 parts.append(f"duration_from={ref.clearance['duration_from']!r}")
             expr = f"act.Clearance({', '.join(parts)})"
@@ -403,6 +406,10 @@ class _Emitter:
         if isinstance(value, dict) and value.get("type") == "normalizer":
             kwargs = ", ".join(f"{k}={v!r}" for k, v in dict(value.get("kwargs", {})).items())
             return f"{value['name']}({kwargs})"
+        if isinstance(value, dict) and value.get("type") == "grid":
+            on = value.get("on") or "value"
+            tail = "" if on == "value" else f", on={on!r}"
+            return f"act.Grid({float(value['step'])!r}{tail})"
         return repr(value)
 
     def field_list(self, refs: list[FieldRef], module_alias: str) -> str:

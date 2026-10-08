@@ -125,3 +125,71 @@ def test_a_lag_names_the_field_it_lags_and_keeps_its_range():
     # A lag's own meta says its range is read at runtime; it is the field's.
     assert (lag["raw"]["low"], lag["raw"]["high"]) == (0.0, 200.0)
     assert not lag["raw"]["per_aircraft"]
+
+
+def test_an_action_shows_its_mapping_stage_by_stage_with_its_grid():
+    design = _example_design_spec()
+    design.env.action_fields = [
+        S.FieldRef(
+            "AltDeltaFt",
+            kwargs={
+                "normalizer": {
+                    "type": "normalizer",
+                    "name": "StepNormalizer",
+                    "kwargs": {"step": 2, "steps_each_way": 4},
+                },
+                "grid": {"type": "grid", "step": 1000.0, "on": "target"},
+            },
+        )
+    ]
+    (part,) = mdp_summary(design)["action"]["parts"]
+    (alt,) = part["fields"]
+    stages = [s["stage"] for s in alt["pipeline"]]
+    assert stages == ["policy", "normalizer", "value", "grid", "command"]
+    grid = alt["pipeline"][3]
+    assert grid["step"] == 1000.0 and grid["text"].startswith("nominal + delta")
+    normalizer = alt["pipeline"][1]
+    assert "k × 2 grid values above or below" in normalizer["text"]
+    assert alt["curve"]["series"][0] == [-8000.0, -6000.0, -4000.0, -2000.0, 0.0, 2000.0, 4000.0, 6000.0, 8000.0]
+    # No grid of its own: no grid stage - nothing applied out of sight.
+    spd = _fields(mdp_summary(_example_design_spec())["action"]["parts"][0])["spd_kts"]
+    assert "grid" not in [s["stage"] for s in spd["pipeline"]]
+
+
+def test_a_value_grid_is_shown_on_the_delta_and_drawn_on_the_curve():
+    design = _example_design_spec()
+    design.env.action_fields = [
+        S.FieldRef(
+            "HdgDeltaDeg",
+            kwargs={
+                "normalizer": {"type": "normalizer", "name": "SymmetricNormalizer", "kwargs": {}},
+                "grid": {"type": "grid", "step": 30.0},
+            },
+        )
+    ]
+    (hdg,) = mdp_summary(design)["action"]["parts"][0]["fields"]
+    grid = next(s for s in hdg["pipeline"] if s["stage"] == "grid")
+    assert grid["text"].startswith("the delta")
+    # The policy's values, each on a whole 30 deg turn.
+    assert all(abs(y / 30.0 - round(y / 30.0)) < 1e-9 for y in hdg["curve"]["series"][0])
+
+
+def test_a_step_action_on_its_axis_grid_needs_no_step_and_shows_it():
+    design = _example_design_spec()
+    design.env.action_fields = [
+        S.FieldRef(
+            "AltDeltaFt",
+            kwargs={
+                "normalizer": {
+                    "type": "normalizer",
+                    "name": "StepNormalizer",
+                    "kwargs": {"steps_each_way": 2},
+                },
+                "grid": {"type": "grid", "step": 1000.0, "on": "target"},
+            },
+        )
+    ]
+    (alt,) = mdp_summary(design)["action"]["parts"][0]["fields"]
+    assert alt["curve"]["series"][0] == [-2000.0, -1000.0, 0.0, 1000.0, 2000.0]
+    normalizer = next(s for s in alt["pipeline"] if s["stage"] == "normalizer")
+    assert "grid values above or below" in normalizer["text"]

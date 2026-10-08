@@ -72,6 +72,8 @@ def _dataclass_params(cls) -> list[dict[str, Any]]:
 def _type_name(t: Any) -> str:
     if isinstance(t, str):
         return t
+    if hasattr(t, "__metadata__"):  # Annotated[T, ...]: T's name
+        t = get_args(t)[0]
     return getattr(t, "__name__", str(t))
 
 
@@ -197,6 +199,16 @@ def _refers(hint: Any) -> str | None:
     return None
 
 
+def _blank(hint: Any) -> str | None:
+    """What leaving an optional parameter blank (``None``) means, as its
+    annotation says it: the text after ``None =`` in ``Annotated[T, "...;
+    None = the grid's step"]``."""
+    for note in getattr(hint, "__metadata__", ()):
+        if isinstance(note, str) and "None =" in note:
+            return note.rsplit("None =", 1)[1].strip().rstrip(".") or None
+    return None
+
+
 def _field_params(cls) -> list[dict[str, Any]]:
     """Simple-typed constructor params of a field (e.g. ``low`` / ``high``).
 
@@ -221,6 +233,9 @@ def _field_params(cls) -> list[dict[str, Any]]:
             # the designer can override, leaving blank (``None``) to keep the
             # field's runtime/dynamic bounds.
             entry["optional"] = True
+            blank = _blank(hints.get(name, annotation))
+            if blank is not None:
+                entry["blank"] = blank
             out.append(entry)
         # else: a non-scalar object the uniform Picker can't edit - skip.
 
@@ -326,6 +341,11 @@ def _takes_normalizer(cls: type) -> bool:
     return any(f.name == "normalizer" and f.init for f in dataclasses.fields(cls))
 
 
+def _takes_grid(cls: type) -> bool:
+    """Whether the constructor accepts a ``grid`` - a switch does not."""
+    return any(f.name == "grid" and f.init for f in dataclasses.fields(cls))
+
+
 def _category(cls: type) -> dict[str, str]:
     """The module a field is defined in, which the picker groups it under.
 
@@ -371,6 +391,7 @@ def action_fields() -> list[dict[str, Any]]:
             **_category(cls),
             "kind": cls.kind.value,
             "normalizable": _takes_normalizer(cls),
+            "griddable": _takes_grid(cls),
             "params": _field_params(cls),
             "profile": _profile(cls),
         }
