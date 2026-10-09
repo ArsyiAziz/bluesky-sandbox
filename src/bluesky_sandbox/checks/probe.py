@@ -41,6 +41,7 @@ import bluesky as bs
 import numpy as np
 from bluesky.stack.stackbase import Stack
 
+from bluesky_sandbox.checks.fields import batched_path
 from bluesky_sandbox.core import services
 from bluesky_sandbox.interface.fields import _lag
 from bluesky_sandbox.interface.fields._consistency import beyond_rounding, differs
@@ -737,13 +738,11 @@ def _cost(env, field_obj, is_action, is_pair, repeats) -> dict[str, Any]:
             "per ownship": lambda: [field_obj.get_pairs(i, [j for j in every if j != i]) for i in every],
             "per pair": lambda: [field_obj.get_pair(i, j) for i in every for j in every if j != i],
         }
-        batched = type(field_obj).get_pair_matrix is not PairObsField.get_pair_matrix
     else:
         paths = {
             "batched": lambda: field_obj.get_many(every),
             "one at a time": lambda: [field_obj.get(i) for i in every],
         }
-        batched = type(field_obj).get_many is not ObsField.get_many
     timings = {name: _median_ms(path, repeats) for name, path in paths.items()}
     most = int(getattr(env, "episode_max_aircraft", n) or n)
     scale = (most / n) ** (2 if is_pair else 1) if n else 1.0
@@ -752,7 +751,7 @@ def _cost(env, field_obj, is_action, is_pair, repeats) -> dict[str, Any]:
         "max_aircraft": most,
         "ms": timings,
         "ms_at_max": {name: ms * scale for name, ms in timings.items()},
-        "batched_path": batched,
+        "batched_path": batched_path(field_obj),
     }
 
 

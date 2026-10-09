@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type SpecDict } from "../api";
+import { api, type FieldsCheck, type SpecDict } from "../api";
 import { clone, gcOrphanShapes, scaffoldClass, stripClass } from "../specHelpers";
 import { Section } from "./panel/Section";
-import { FieldList, namedActions } from "./panel/FieldList";
+import { FieldList, ms, namedActions } from "./panel/FieldList";
 import { Picker } from "./panel/Picker";
 import { useRefresh } from "../refresh";
 
@@ -46,6 +46,25 @@ export default function SpacesEditor({
     onChange(next);
   };
 
+  // The last field check, kept while the design it checked is the one shown.
+  const signature = JSON.stringify({ env: spec.env, code: spec.code });
+  const [check, setCheck] = useState<{ signature: string; result: FieldsCheck } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const runCheck = () => {
+    const checked = signature;
+    setChecking(true);
+    setCheckError(null);
+    api
+      .checkFields(spec)
+      .then((result) => setCheck({ signature: checked, result }))
+      .catch((e) => setCheckError(String(e?.message ?? e)))
+      .finally(() => setChecking(false));
+  };
+  const current = check?.signature === signature ? check.result : null;
+  const checksOf = (key: string) =>
+    current ? (key === "action_fields" ? current.actions : current.entries[key] ?? []) : undefined;
+
   const env = spec.env ?? {};
   const scaffolds = catalog?.scaffolds;
   // What a field's referring parameter can name: this design's own actions.
@@ -86,11 +105,19 @@ export default function SpacesEditor({
 
   return (
     <div className="spaces-editor">
+        <div className="fields-check">
+          <button onClick={runCheck} disabled={checking}>
+            {checking ? "checking…" : "▶ check fields"}
+          </button>
+          {current && <FieldsCheckSummary check={current} />}
+          {checkError && <span className="bad small">{checkError}</span>}
+        </div>
         {/* ------------------------------------------------------ observations */}
         <Section title="Observations" subtitle="ownship + intruder features" hint="What the policy sees each step. Ownship fields describe the aircraft being controlled; intruder fields are repeated once per other aircraft in view. Critic-only fields are visible to the value network but never to the policy.">
           <FieldList
             spec={spec}
             listKey="obs_fields"
+            checks={checksOf("obs_fields")}
             label="ownship"
             fields={env.obs_fields ?? []}
             options={(catalog?.obs_fields ?? []).filter((f: any) => !f.pair_only)}
@@ -118,6 +145,7 @@ export default function SpacesEditor({
               <FieldList
             spec={spec}
             listKey="intruder_obs_fields"
+            checks={checksOf("intruder_obs_fields")}
                 label="intruder"
                 fields={env.intruder_obs_fields}
                 options={catalog?.obs_fields ?? []}
@@ -187,6 +215,7 @@ export default function SpacesEditor({
               <FieldList
             spec={spec}
             listKey="critic_obs_fields"
+            checks={checksOf("critic_obs_fields")}
                 label="critic ownship"
                 fields={env.critic_obs_fields}
                 options={(catalog?.obs_fields ?? []).filter((f: any) => !f.pair_only)}
@@ -216,6 +245,7 @@ export default function SpacesEditor({
               <FieldList
             spec={spec}
             listKey="critic_intruder_obs_fields"
+            checks={checksOf("critic_intruder_obs_fields")}
                 label="critic intruder"
                 fields={env.critic_intruder_obs_fields}
                 options={catalog?.obs_fields ?? []}
@@ -262,6 +292,7 @@ export default function SpacesEditor({
                 <FieldList
             spec={spec}
             listKey={key}
+            checks={checksOf(key)}
                   label={label}
                   addLabel={`Add ${perIntruder ? "an intruder" : "an ownship"} state field…`}
                   fields={env[key]}
@@ -288,6 +319,7 @@ export default function SpacesEditor({
           <FieldList
             spec={spec}
             listKey="action_fields"
+            checks={checksOf("action_fields")}
             label="action"
             fields={env.action_fields ?? []}
             options={catalog?.action_fields ?? []}
@@ -305,6 +337,34 @@ export default function SpacesEditor({
           <p className="strategy-note muted small">{actionStrategy(env, catalog)}</p>
         </Section>
     </div>
+  );
+}
+
+// What one step costs, at the traffic the check flew: the fields read and the
+// simulation stepped, and the costliest field.
+function FieldsCheckSummary({ check }: { check: FieldsCheck }) {
+  const slowest = Object.values(check.entries)
+    .flat()
+    .filter((e) => e.ms != null)
+    .sort((a, b) => (b.ms ?? 0) - (a.ms ?? 0))[0];
+  return (
+    <span className="muted small fields-check-summary">
+      {check.episode_findings.map((f) => (
+        <span key={f} className="bad">
+          {f}
+        </span>
+      ))}
+      <span>
+        per step at {check.aircraft} aircraft: fields {check.fields_ms == null ? "—" : ms(check.fields_ms)} ·
+        simulation {check.step_ms == null ? "—" : ms(check.step_ms)}
+      </span>
+      {slowest && (
+        <span>
+          slowest: {slowest.fields[0]} {ms(slowest.ms!)}
+          {slowest.batched ? "" : " (no batched path)"}
+        </span>
+      )}
+    </span>
   );
 }
 

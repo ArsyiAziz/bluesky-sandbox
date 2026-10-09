@@ -273,6 +273,36 @@ export interface ProbeRequest {
   give?: number | null;
 }
 
+// Each field checked against itself and timed, and each action probed once,
+// by spec entry (see runner.check_design_fields).
+export interface FieldEntryCheck {
+  entry: number;
+  fields: string[];
+  findings: string[];
+  notes: string[];
+  ms: number | null;
+  batched: boolean;
+}
+
+export interface ActionEntryCheck {
+  entry: number;
+  field?: string;
+  agrees?: boolean | null;
+  actual?: number | null;
+  expected?: number | null;
+  command?: string[];
+  error?: string;
+}
+
+export interface FieldsCheck {
+  entries: Record<string, FieldEntryCheck[]>;
+  actions: ActionEntryCheck[];
+  episode_findings: string[];
+  aircraft: number;
+  step_ms: number | null;
+  fields_ms: number | null;
+}
+
 export interface SampleResult {
   seed: number;
   sim_time_s: number;
@@ -522,6 +552,13 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec, seed, at_s: atS, acid, max_agents: maxAgents, max_intruders: maxIntruders }),
     }).then((r) => jsonOrThrow<SampleResult>(r)),
+
+  checkFields: (spec: SpecDict) =>
+    trackedFetch("/api/spec/check-fields", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec }),
+    }).then((r) => jsonOrThrow<FieldsCheck>(r)),
 
   probe: (spec: SpecDict, request: ProbeRequest) =>
     trackedFetch("/api/spec/probe", {

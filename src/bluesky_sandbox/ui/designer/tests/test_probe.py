@@ -70,3 +70,17 @@ def test_the_endpoint_probes_and_refuses_what_it_cannot():
     assert raw["actual"] == pytest.approx(10_000.0)
     assert client.post("/api/spec/probe", json={"spec": spec, "entry": 0}).status_code == 422
     assert client.post("/api/spec/probe", json={"spec": spec, "list": "obs_fields", "entry": 7}).status_code == 422
+
+
+def test_the_fields_are_checked_and_timed_by_spec_entry():
+    from bluesky_sandbox.ui.designer.runner import check_design_fields
+
+    out = check_design_fields(_stacked())
+    own = {e["entry"]: e for e in out["entries"]["obs_fields"]}
+    assert set(own) == {0, 1, 2}
+    # A frame stack is one entry: its live field and both lags, timed together.
+    assert len(own[2]["fields"]) == 3 and own[2]["ms"] > 0 and own[2]["batched"]
+    assert out["entries"]["intruder_obs_fields"][0]["entry"] == 0
+    assert [a["entry"] for a in out["actions"]] == [0, 1]
+    assert out["actions"][1]["agrees"] is True and out["actions"][1]["command"][0].startswith("SPD ")
+    assert out["step_ms"] > 0 and out["fields_ms"] > 0 and out["aircraft"] > 0

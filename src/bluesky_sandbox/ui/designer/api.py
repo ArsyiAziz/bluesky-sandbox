@@ -408,6 +408,17 @@ def create_app() -> FastAPI:
         except (BuildError, ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
+    @app.post("/api/spec/check-fields")
+    def check_fields(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Every field of the design checked against itself and timed, and
+        each action probed once, by spec entry - see
+        :func:`runner.check_design_fields`."""
+        spec = _parse_spec(body.get("spec", body))
+        try:
+            return _runner.check_design_fields(spec)
+        except (BuildError, ValueError, TypeError) as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
     @app.post("/api/spec/probe")
     def probe(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         """One field of the design probed at ``at_s`` into the seeded episode:

@@ -727,7 +727,7 @@ function withUnit(x: number | null, unit: string): string {
 
 function ms(x: number | undefined): string {
   if (x == null) return "—";
-  return `${x < 0.1 ? x.toPrecision(2) : x < 10 ? x.toFixed(2) : x.toFixed(1)} ms`;
+  return x < 0.01 ? "<0.01 ms" : `${x < 0.1 ? x.toPrecision(2) : x < 10 ? x.toFixed(2) : x.toFixed(1)} ms`;
 }
 
 // The choice in the middle for a step action - no change, where zero is one,

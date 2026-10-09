@@ -3,7 +3,7 @@
 // classes in custom_fields.py.
 import { Fragment, useEffect, useState } from "react";
 import Editor from "@monaco-editor/react";
-import type { SpecDict } from "../../api";
+import type { ActionEntryCheck, FieldEntryCheck, SpecDict } from "../../api";
 import { scaffoldClass, type Scaffolds } from "../../specHelpers";
 import { registerPythonIntel } from "../../code/pythonEditor";
 import { FieldPicker } from "./FieldPicker";
@@ -102,6 +102,7 @@ export function FieldList({
   addLabel,
   spec,
   listKey,
+  checks,
 }: {
   label: string;
   fields: SpecDict[];
@@ -126,6 +127,8 @@ export function FieldList({
   // them, a field's editor can probe it.
   spec?: SpecDict;
   listKey?: string;
+  // The last field check, by entry: an observation's or an action's.
+  checks?: (FieldEntryCheck | ActionEntryCheck)[];
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   // A row being dragged, and the gap it would drop into (0 is before the first).
@@ -272,6 +275,7 @@ export function FieldList({
                   {params}
                 </span>
               )}
+              {checks && <CheckLine check={checks.find((c) => c.entry === i)} />}
             </div>
           );
         })}
@@ -332,6 +336,55 @@ export function FieldList({
       </div>
     </div>
   );
+}
+
+// What the last check found for one entry, in a line under its row: whether
+// it holds, and what it costs a step.
+function CheckLine({ check }: { check?: FieldEntryCheck | ActionEntryCheck }) {
+  if (!check) return null;
+  if (!("fields" in check)) {
+    if (check.error) {
+      return (
+        <span className="field-row-check muted" title={check.error}>
+          not probed
+        </span>
+      );
+    }
+    if (check.agrees == null) return null;
+    const command = (check.command ?? []).join("; ");
+    return check.agrees ? (
+      <span className="field-row-check ok" title={command}>
+        ✓ commands as stated
+      </span>
+    ) : (
+      <span className="field-row-check bad" title={command}>
+        ✗ commands {brief(check.actual)}, states {brief(check.expected)}
+      </span>
+    );
+  }
+  const [mark, text, tone] = check.findings.length
+    ? ["✗", check.findings[0], "bad"]
+    : check.notes.length
+      ? ["⚠", check.notes[0].split(" (")[0], "warn"]
+      : ["✓", "", "ok"];
+  return (
+    <span className="field-row-check" title={[...check.findings, ...check.notes].join("\n") || "holds"}>
+      <span className={tone}>
+        {mark}
+        {text && ` ${text}`}
+      </span>
+      {check.ms != null && <span className="muted"> · {ms(check.ms)}</span>}
+      {!check.batched && <span className="warn"> · no batched path</span>}
+    </span>
+  );
+}
+
+function brief(x: number | null | undefined): string {
+  return x == null ? "—" : Number(x.toPrecision(6)).toLocaleString("en-US");
+}
+
+export function ms(x: number): string {
+  return x < 0.01 ? "<0.01 ms" : `${x < 0.1 ? x.toPrecision(2) : x < 10 ? x.toFixed(2) : x.toFixed(1)} ms`;
 }
 
 // A field's configured arguments in one line, e.g. `goal, low=-1, high=1`:

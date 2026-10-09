@@ -4281,6 +4281,44 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* The last field check, in a line under the row it is about. */
+.field-row-check {
+  grid-column: 3 / -1;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-row-check .ok,
+.field-row-check.ok {
+  color: var(--success);
+}
+
+.field-row-check .bad,
+.field-row-check.bad,
+.fields-check .bad {
+  color: var(--danger);
+}
+
+.field-row-check .warn {
+  color: var(--warning-text);
+}
+
+.fields-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+
+.fields-check-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
 /* A field list's add row: pick a built-in field, or write a custom one. */
 .field-add {
   display: flex;
