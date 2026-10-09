@@ -37,7 +37,7 @@ from typing import Any
 
 from . import codegen
 from . import worker as _worker
-from .builder import BuildError, build_design_config
+from .builder import BuildError, build_design_config, config_fields_of
 from .spec import DesignSpec
 
 # Render modes that open a window. (``None`` — headless — is not offered here:
@@ -628,6 +628,118 @@ def sample_design(
     build_design_config(spec)  # surface a broken design before spawning anything
     params = {"seed": seed, "max_agents": max_agents, "max_intruders": max_intruders, "at_s": float(at_s), "acid": acid}
     return _run_script(spec, "designed_sample", _SAMPLE_TEMPLATE, params, timeout_s)
+
+
+# One-shot script: fly the seeded episode to AT_S, every agent held still,
+# recording each stacked field's history as it goes, and probe one field there.
+_PROBE_TEMPLATE = """\
+\"\"\"Auto-generated: one field of a designed env, probed at one moment.\"\"\"
+from __future__ import annotations
+
+import json
+
+import bluesky as bs
+import numpy as np
+
+from bluesky_sandbox import zero_action
+from bluesky_sandbox.checks.probe import LagRecorder, Override, probe
+from {pkg} import Env
+
+SEED = {seed!r}
+AT_S = {at_s!r}
+ACID = {acid!r}
+OTHER = {other!r}
+LIST = {list_key!r}
+INDEX = {index!r}
+OVERRIDES = {overrides!r}
+GIVE = {give!r}
+MARKER = {marker!r}
+#: Steps to wait for the first aircraft, for designs that spawn them over time.
+MAX_WAIT_STEPS = 2000
+
+
+def _nearest(own):
+    lat, lon = np.radians(bs.traf.lat), np.radians(bs.traf.lon)
+    d = np.hypot((lat - lat[own]) * 1.0, (lon - lon[own]) * np.cos(lat[own]))
+    d[own] = np.inf
+    return str(bs.traf.id[int(np.argmin(d))])
+
+
+def main() -> None:
+    env = Env(render_mode=None)
+    try:
+        obs, _ = env.reset(seed=SEED)
+        base = env.unwrapped
+        history = LagRecorder(base)
+        history.record()
+        steps = 0
+        while steps < MAX_WAIT_STEPS:
+            if obs and bs.sim.simt >= AT_S and (ACID is None or ACID in obs):
+                break
+            obs, *_ = env.step({{a: zero_action(env.action_space(a)) for a in env.agents}})
+            history.record()
+            steps += 1
+        ids = [str(acid) for acid in bs.traf.id]
+        acid = ACID if ACID in ids else (list(obs)[-1] if obs else None)
+        field = getattr(base.config, LIST)[INDEX]
+        out = {{"seed": SEED, "sim_time_s": float(bs.sim.simt), "aircraft": ids, "acid": acid}}
+        if acid is None:
+            out["error"] = "no aircraft is in the air"
+        else:
+            other = OTHER
+            if other is None and hasattr(field, "get_pair_matrix") and len(ids) > 1:
+                other = _nearest(ids.index(acid))
+            try:
+                result = probe(
+                    base, field, acid, other=other, give=GIVE, history=history,
+                    overrides=[Override(**o) for o in OVERRIDES],
+                )
+                out["result"] = result.as_dict()
+            except (ValueError, TypeError, KeyError, AttributeError) as e:
+                out["error"] = str(e)
+        print(MARKER + json.dumps(out))
+    finally:
+        env.close()
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def probe_design(
+    spec: DesignSpec,
+    *,
+    list_key: str,
+    entry: int,
+    part: int = 0,
+    seed: int = 0,
+    at_s: float = 0.0,
+    acid: str | None = None,
+    other: str | None = None,
+    overrides: list[dict[str, Any]] | None = None,
+    give: float | None = None,
+    timeout_s: float = 180.0,
+) -> dict[str, Any]:
+    """Fly the seeded episode to ``at_s`` and probe the spec's entry ``entry``
+    of ``list_key`` - its field ``part``, for an entry that is several (a frame
+    stack's live field and its lags) - for ``acid`` (the newest aircraft
+    when not named): see :func:`bluesky_sandbox.checks.probe.probe`."""
+    build_design_config(spec)  # surface a broken design before spawning anything
+    start, count = config_fields_of(spec, list_key, entry)
+    if not 0 <= part < count:
+        raise ValueError(f"{list_key} entry {entry} has no part {part}")
+    params = {
+        "seed": int(seed),
+        "at_s": float(at_s),
+        "acid": acid,
+        "other": other,
+        "list_key": list_key,
+        "index": start + part,
+        "overrides": [dict(o) for o in overrides or ()],
+        "give": None if give is None else float(give),
+    }
+    return _run_script(spec, "designed_probe", _PROBE_TEMPLATE, params, timeout_s)
 
 
 # One-shot script: run the seeded episode, every agent held still, until its

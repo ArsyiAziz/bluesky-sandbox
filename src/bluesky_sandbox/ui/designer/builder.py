@@ -32,6 +32,7 @@ from bluesky_sandbox.config import EnvConfig, apply_performance_model
 from bluesky_sandbox.env import BATCHABLE_HOOKS
 from bluesky_sandbox.interface.fields import actions as _actions
 from bluesky_sandbox.interface.fields.actions import Clearance, Crossover, Grid, MachRegime
+from bluesky_sandbox.interface.fields.actions.clearance import expand_clearances
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
@@ -1436,12 +1437,32 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
     return config
 
 
+def config_fields_of(spec: DesignSpec, list_key: str, index: int) -> tuple[int, int]:
+    """Where the spec's entry ``index`` of ``list_key`` (``obs_fields``,
+    ``action_fields``, ...) lands in the config's list of that name: its first
+    position and how many fields it is - a frame stack is its live field and
+    each lag, a clearance the action and the parts it declares."""
+    install_code_modules(spec.code)
+    entries = list(getattr(spec.env, list_key) or ())
+    if not 0 <= index < len(entries):
+        raise BuildError(f"{list_key} has no entry {index}")
+
+    def width(ref: FieldRef) -> int:
+        if list_key == "action_fields":
+            return len(expand_clearances([resolve_action_field(ref)]))
+        resolved = resolve_obs_field(ref)
+        return len(resolved) if isinstance(resolved, (list, tuple)) else 1
+
+    return sum(width(ref) for ref in entries[:index]), width(entries[index])
+
+
 # Re-exported for callers that want to apply derived bounds etc. themselves.
 __all__ = [
     "BuildError",
     "DesignScenario",
     "build_design_config",
     "build_scenario",
+    "config_fields_of",
     "resolve_action_field",
     "resolve_callable",
     "resolve_obs_field",

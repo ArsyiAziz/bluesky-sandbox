@@ -408,6 +408,31 @@ def create_app() -> FastAPI:
         except (BuildError, ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
+    @app.post("/api/spec/probe")
+    def probe(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """One field of the design probed at ``at_s`` into the seeded episode:
+        its stages actual and expected, the calls and traffic it read, its lag
+        ring and cost - see :func:`runner.probe_design`."""
+        spec = _parse_spec(body.get("spec", body))
+        give = body.get("give")
+        try:
+            return _runner.probe_design(
+                spec,
+                list_key=str(body["list"]),
+                entry=int(body["entry"]),
+                part=int(body.get("part", 0)),
+                seed=int(body.get("seed", 0)),
+                at_s=float(body.get("at_s", 0.0)),
+                acid=body.get("acid") or None,
+                other=body.get("other") or None,
+                overrides=list(body.get("overrides") or []),
+                give=None if give is None else float(give),
+            )
+        except KeyError as e:
+            raise HTTPException(status_code=422, detail=f"missing {e}") from e
+        except (BuildError, ValueError, TypeError) as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
     @app.post("/api/spec/episode")
     def episode(body: dict[str, Any] = Body(...)) -> StreamingResponse:
         """Each aircraft of the seeded episode as it is created, one JSON line
