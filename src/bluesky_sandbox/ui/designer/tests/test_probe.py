@@ -47,6 +47,8 @@ def test_an_action_is_probed_to_its_command():
     out = probe_design(_example_design_spec(), list_key="action_fields", entry=1, give=0.5, at_s=1.0)
     stages = {s["name"]: s for s in out["result"]["stages"]}
     assert stages["policy"]["actual"] == 0.5
+    # Held in m/s by BlueSky, commanded in knots: the same to a command's precision.
+    assert stages["target"]["agrees"] is True
     assert stages["BS command"]["actual"].startswith(f"SPD {out['acid']} ")
 
 

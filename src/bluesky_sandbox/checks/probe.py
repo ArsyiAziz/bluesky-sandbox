@@ -47,6 +47,10 @@ from bluesky_sandbox.interface.fields._consistency import beyond_rounding, diffe
 from bluesky_sandbox.interface.fields.base import EnvBound, ObsField, PairObsField
 from bluesky_sandbox.sim.geometry.conflict import invalidate_conflict_geometry
 
+#: How closely what BlueSky holds after a command agrees with the target
+#: commanded: a command's number is written to six decimals.
+_COMMAND_RTOL = 1e-6
+
 __all__ = ["LagRecorder", "Override", "ProbeResult", "Stage", "TraceNode", "probe"]
 
 _PACKAGE = str(Path(__file__).resolve().parents[1])
@@ -258,7 +262,10 @@ def _action(env, field_obj, own, give, recorder, notes) -> tuple[list[Stage], li
     held = getattr(acting, "held", None)
     target = held(own) if callable(held) else None
     if planned is not None or target is not None:
-        stages.append(_stage("target", target, planned))
+        # What BlueSky holds went through the command's text and its own
+        # units: it agrees to the precision a command carries.
+        agrees = None if target is None or planned is None else bool(np.isclose(target, planned, rtol=_COMMAND_RTOL, atol=_COMMAND_RTOL))
+        stages.append(Stage("target", target, planned, agrees=agrees))
     stages.append(Stage("BS command", "; ".join(command) if command else None))
     return stages, command, trace
 
