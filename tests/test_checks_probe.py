@@ -1,6 +1,6 @@
 """Probing one field at one moment (bluesky_sandbox.checks.probe): its stages
 actual and expected, the calls and traffic it read, overrides of either, its
-lag ring, an action's command and the cost of each way it computes."""
+lag ring and an action's command."""
 
 from __future__ import annotations
 
@@ -183,7 +183,6 @@ def test_a_pair_field_reads_about_another(flown):
     own, other = bs.traf.id[0], bs.traf.id[1]
     result = probe(env, env.config.intruder_obs_fields[0], own, other=other)
     assert result.kind == "pair" and _stage(result, "raw").agrees is True
-    assert set(result.cost["ms"]) == {"pair matrix", "per ownship", "per pair"}
     with pytest.raises(ValueError, match="another aircraft"):
         probe(env, env.config.intruder_obs_fields[0], own)
 
@@ -199,13 +198,6 @@ def test_an_action_goes_policy_to_value_to_grid_to_its_command(flown):
     assert result.command == [stages["BS command"].actual] and result.command[0].startswith(f"ALT {own} ")
     with pytest.raises(ValueError, match="give it a value"):
         probe(env, env.config.action_fields[0], own)
-
-
-def test_cost_times_each_way_a_field_computes(flown):
-    env, _ = flown
-    cost = probe(env, _field(env, "reach_nm"), bs.traf.id[0]).cost
-    assert set(cost["ms"]) == {"batched", "one at a time"} and cost["batched_path"] is True
-    assert cost["aircraft"] == bs.traf.ntraf and cost["max_aircraft"] == env.episode_max_aircraft
 
 
 def test_an_aircraft_not_in_the_air_is_refused(flown):
@@ -258,3 +250,44 @@ def test_a_function_override_reaches_the_modules_that_imported_it(flown):
     nominal_ft = float(bs.traf.alt[0]) / 0.3048
     assert float(result.command[0].split()[-1]) == pytest.approx(nominal_ft + 2000.0)
     assert base_environment.value_on_grid is services.value_on_grid  # put back after
+
+
+def test_the_normalizer_is_traced_with_what_it_reads(flown):
+    env, _ = flown
+    own = bs.traf.id[0]
+    result = probe(env, _field(env, "alt_ft"), own)
+    (normalize,) = [n for n in result.trace if "normalize(" in n.label]
+    reads = {n.label for n in _nodes([normalize])}
+    # Its bounds are the aircraft's own: from the ground to its ceiling.
+    assert any(label.startswith("AltFt.bounds(") for label in reads)
+    assert f"bs.traf.perf.hmax[{own}]" in reads
+
+
+def test_an_actions_normalizer_is_traced_before_its_command(flown):
+    env, _ = flown
+    result = probe(env, env.config.action_fields[1], bs.traf.id[0], give=4)
+    first, *_ = result.trace
+    assert first.label == "denormalize(4)" and first.number == _stage(result, "value").actual
+    labels = [n.label for n in _nodes([first])]
+    assert any(label.startswith("StepNormalizer.denormalize(") for label in labels)
+    assert any(label.startswith("Grid.nth(") for label in labels)
+
+
+def test_a_bound_is_overridden_as_one_number_of_the_pair(flown):
+    env, _ = flown
+    own = bs.traf.id[0]
+    field = _field(env, "alt_ft")
+    plain = probe(env, field, own)
+    bounds = next(n for n in _nodes(plain.trace) if n.label.startswith("AltFt.bounds("))
+    assert [leaf for leaf, _text, _number in bounds.leaves] == ["[0]", "[1]"]
+    raw = _stage(plain, "raw").actual
+    # The ceiling at twice the altitude: it normalizes to a half.
+    halved = probe(env, field, own, overrides=[Override(bounds.key, 2 * raw, leaf="[1]")])
+    assert _stage(halved, "normalized").actual[0] == pytest.approx(0.5, abs=1e-6)
+
+
+def test_only_an_argument_naming_an_aircraft_is_shown_by_callsign(flown):
+    env, _ = flown
+    result = probe(env, env.config.action_fields[1], bs.traf.id[0], give=4)
+    (nth,) = [n for n in _nodes(result.trace) if n.label.startswith("Grid.nth(")]
+    assert nth.label == f"Grid.nth(HdgDeltaDeg, 1, {bs.traf.id[0]}, 1)"

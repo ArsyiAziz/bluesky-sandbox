@@ -14,6 +14,7 @@ const LABELS: [RegExp, string][] = [
   [/^\/api\/spec\/preview/, "Drawing the design…"],
   [/^\/api\/spec\/generate/, "Generating the task…"],
   [/^\/api\/spec\/run/, "Starting the run…"],
+  [/^\/api\/spec\/probe\/cost/, "Timing the field…"],
   [/^\/api\/spec\/probe/, "Probing the field…"],
   [/^\/api\/spec\/check-fields/, "Checking the fields…"],
   [/^\/api\/spec\/(mdp|code-intel|diagnostics)/, "Reading the design…"],

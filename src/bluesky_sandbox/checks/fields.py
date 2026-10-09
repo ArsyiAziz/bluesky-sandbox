@@ -14,16 +14,11 @@ Over the same run it watches each field's values: one that is not a number
 flown again with the same seed cannot be reproduced - both fail. One outside
 the field's bounds is noted, not failed: a clipped normalizer loses it, and
 whether that matters is the designer's call.
-
-And it times each field as the env reads it: in bulk for every aircraft at the
-end of the run - what one step costs it - against the simulation's own step.
 """
 
 from __future__ import annotations
 
-import statistics
-import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -36,9 +31,6 @@ from bluesky_sandbox.interface.fields.base import ObsField, PairObsField
 
 __all__ = ["FieldCheck", "FieldsReport", "batched_path", "check_fields", "normalization_findings"]
 
-#: Times a field is read to time it; the median is kept.
-_TIMING_REPEATS = 5
-
 
 @dataclass(frozen=True)
 class FieldCheck:
@@ -50,9 +42,8 @@ class FieldCheck:
     notes: tuple[str, ...] = ()
     #: Where it is in the config: the list's name and its place in it.
     where: tuple[str, int] | None = None
-    #: What reading it for every aircraft costs, as the env reads it (ms),
-    #: and whether that is a batched path or one aircraft at a time.
-    ms: float | None = None
+    #: Whether it reads every aircraft at once or one at a time (see
+    #: :mod:`.cost` for what that costs).
     batched: bool | None = None
 
     @property
@@ -66,10 +57,6 @@ class FieldsReport:
     #: What fails the whole episode rather than one field: it is not
     #: repeatable - the same seed flies other traffic.
     episode_findings: tuple[str, ...] = ()
-    #: The simulation's step, without the observation (ms, median), and the
-    #: aircraft the fields were timed on.
-    step_ms: float | None = None
-    aircraft: int = 0
 
     @property
     def ok(self) -> bool:
@@ -101,12 +88,10 @@ def check_fields(env: Any, *, steps: int = 20, seed: int = 0) -> FieldsReport:
     every step - then flown again the same way, to compare."""
     where = dict(_checkable(env.config))
     checked = list(where.values())
-    step_ms: list[float] = []
-    first = _fly(env, checked, steps, seed, step_ms)
+    first = _fly(env, checked, steps, seed)
     # The state the consistency checks read: the end of the first flight.
     indices = list(range(bs.traf.ntraf))
     consistency = {id(f): list(_findings(f, indices)) for f in checked}
-    timings = {id(f): _timed(f, indices) for f in checked}
     second = _fly(env, checked, steps, seed)
     traffic = _traffic_differs(first, second)
     results = []
@@ -121,16 +106,10 @@ def check_fields(env: Any, *, steps: int = 20, seed: int = 0) -> FieldsReport:
                 tuple(findings),
                 tuple(_outside_bounds(samples)),
                 where=next(k for k, v in where.items() if v is f),
-                ms=timings[id(f)],
                 batched=batched_path(f),
             )
         )
-    return FieldsReport(
-        tuple(results),
-        tuple(traffic),
-        step_ms=statistics.median(step_ms) if step_ms else None,
-        aircraft=len(indices),
-    )
+    return FieldsReport(tuple(results), tuple(traffic))
 
 
 def batched_path(field: Any) -> bool | None:
@@ -143,46 +122,22 @@ def batched_path(field: Any) -> bool | None:
     return None
 
 
-def _timed(field: Any, indices: list[int]) -> float | None:
-    """What reading ``field`` for every aircraft costs, as the env reads it
-    (ms, median) - None when it cannot be read."""
-    if isinstance(field, PairObsField):
-        read: Callable[[], Any] = lambda: field.get_pair_matrix(np.asarray(indices))  # noqa: E731
-    elif isinstance(field, ObsField):
-        read = lambda: field.get_many(indices)  # noqa: E731
-    else:
-        return None
-    times = []
-    try:
-        for _ in range(_TIMING_REPEATS):
-            start = time.perf_counter()
-            read()
-            times.append((time.perf_counter() - start) * 1000.0)
-    except Exception:  # noqa: BLE001 - the consistency check reports it
-        return None
-    return statistics.median(times)
-
-
 #: One step's record: the traffic (callsigns), and each field's values and
 #: bounds - by the field's id.
 _Step = tuple[tuple[str, ...], dict[int, Any]]
 
 
-def _fly(env: Any, checked: list[Any], steps: int, seed: int, step_ms: list[float] | None = None) -> list[_Step]:
+def _fly(env: Any, checked: list[Any], steps: int, seed: int) -> list[_Step]:
     """``env``'s episode ``seed``, ``steps`` steps of actions drawn from its
     action space by a generator seeded ``seed``, recorded after the reset and
-    each step - the simulation's part of each step timed into ``step_ms``."""
+    each step."""
     env.reset(seed=seed)
     rng = np.random.default_rng(seed)
     record = [_record(checked)]
     for _ in range(steps):
         if not env.agents:
             break
-        actions = {agent: _drawn(env.action_space(agent), rng) for agent in env.agents}
-        start = time.perf_counter()
-        env.step(actions)
-        if step_ms is not None:
-            step_ms.append((time.perf_counter() - start) * 1000.0)
+        env.step({agent: _drawn(env.action_space(agent), rng) for agent in env.agents})
         record.append(_record(checked))
     return record
 

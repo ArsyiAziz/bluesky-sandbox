@@ -203,12 +203,16 @@ export interface ProbeLag {
   fields: string[];
 }
 
+// Each way a field computes, timed with 1, 2, 4, ... up to the design's most
+// aircraft in the air (see checks.cost.cost_curve).
 export interface ProbeCost {
-  aircraft?: number;
-  max_aircraft?: number;
-  ms?: Record<string, number>;
-  ms_at_max?: Record<string, number>;
-  batched_path?: boolean;
+  acid?: string;
+  aircraft: number[];
+  ms: Record<string, (number | null)[]>;
+  sim_step_ms: number[];
+  batched: boolean | null;
+  env_path: string;
+  error?: string;
 }
 
 export interface ProbeResultBody {
@@ -225,7 +229,6 @@ export interface ProbeResultBody {
   choices: { choice: number; steps: number; value: number; on_grid: number; target: number | null }[];
   command: string[];
   lag: ProbeLag | null;
-  cost: ProbeCost;
   notes: string[];
 }
 
@@ -498,6 +501,13 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec }),
     }).then((r) => jsonOrThrow<FieldsCheck>(r)),
+
+  probeCost: (spec: SpecDict, request: ProbeRequest) =>
+    trackedFetch("/api/spec/probe/cost", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec, ...request }),
+    }).then((r) => jsonOrThrow<ProbeCost>(r)),
 
   probe: (spec: SpecDict, request: ProbeRequest) =>
     trackedFetch("/api/spec/probe", {

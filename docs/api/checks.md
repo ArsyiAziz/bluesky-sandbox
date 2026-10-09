@@ -2,7 +2,7 @@
 
 Two kinds of check, for built-in and custom fields alike.
 
-**Each field against itself.** A field may compute the same value several ways - in bulk for every aircraft, one at a time, as a pair matrix, normalized as a batch or one value at a time - and the env reads whichever is quickest where it is. `check_fields(env)` steps the env on live traffic and compares them, and compares a field with its plain statement of its value, `expected(idx)` (`expected_pair(own, other)` for a pair field), where it states one. Every built-in field states one; a custom field may. Over the same run, a value that is not a number (NaN, infinite) fails, and so does one that differs when the episode is flown again with the same seed. A value outside the field's bounds is noted, not failed: a clipped normalizer loses it, and whether that matters is the designer's call. Each field is also timed as the env reads it, every aircraft at once, against the simulation's own step: `FieldCheck.ms`, whether it has a batched path (`FieldCheck.batched`), and `FieldsReport.step_ms`.
+**Each field against itself.** A field may compute the same value several ways - in bulk for every aircraft, one at a time, as a pair matrix, normalized as a batch or one value at a time - and the env reads whichever is quickest where it is. `check_fields(env)` steps the env on live traffic and compares them, and compares a field with its plain statement of its value, `expected(idx)` (`expected_pair(own, other)` for a pair field), where it states one. Every built-in field states one; a custom field may. Over the same run, a value that is not a number (NaN, infinite) fails, and so does one that differs when the episode is flown again with the same seed. A value outside the field's bounds is noted, not failed: a clipped normalizer loses it, and whether that matters is the designer's call.
 
 ```python
 from bluesky_sandbox.checks import check_fields
@@ -47,6 +47,15 @@ probe(env, my_field, "KLM12", overrides=[Override("call:my_design.fields:reach_o
 
 For a field that is stacked, a `LagRecorder` told to record at each step gives the probe the history to show the lag ring with: the frames the ring holds for the aircraft, and what each lagged field read at each step. The probe also times each way the field computes.
 
+**What a field costs.** `cost_curve(env, field, like=Like.of(idx))` times each way a field computes (batched and one at a time; a pair field's matrix, per ownship and per pair) with 1, 2, 4, ... up to the design's most aircraft in the air. It adds them as copies of one aircraft, spread out, since how many matters and where does not. Each read is at a new sim time, so what a field keeps for a sim time is computed again and a time includes getting what it reads. The simulation's part of an env step is timed on the same traffic. Nothing is projected from fewer aircraft.
+
+```python
+from bluesky_sandbox.checks.cost import Like, cost_curve
+
+curve = cost_curve(env, obs.AltFt(), like=Like.of(0))
+curve.aircraft, curve.ms["batched"], curve.ms["one at a time"], curve.sim_step_ms
+```
+
 ## `bluesky_sandbox.checks.fields`
 
 ```{eval-rst}
@@ -76,5 +85,13 @@ For a field that is stacked, a `LagRecorder` told to record at each step gives t
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.checks.probe
    :members: probe, Override, Stage, TraceNode, ProbeResult, LagRecorder
+   :show-inheritance:
+```
+
+## `bluesky_sandbox.checks.cost`
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.checks.cost
+   :members:
    :show-inheritance:
 ```

@@ -3671,11 +3671,73 @@ button:disabled {
   height: 12px;
 }
 
-.probe-cost-table {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2px 16px;
-  padding: 4px 0 6px 22px;
+.probe-cost-body {
+  padding: 6px 0 8px 22px;
+}
+
+.probe-cost-line polyline {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.probe-cost-line circle {
+  fill: currentColor;
+}
+
+.probe-cost-line.s0 {
+  color: var(--accent);
+}
+
+.probe-cost-line.s1 {
+  color: var(--warning);
+}
+
+.probe-cost-line.s2 {
+  color: var(--danger);
+}
+
+.probe-cost-line.sim {
+  color: var(--muted);
+}
+
+.probe-cost-line.sim polyline {
+  stroke-dasharray: 4 3;
+}
+
+.probe-cost-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.probe-cost-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+}
+
+.probe-cost-legend .probe-cost-swatch {
+  width: 12px;
+  height: 2px;
+  background: currentColor;
+}
+
+.probe-cost-legend .s0 .probe-cost-swatch {
+  background: var(--accent);
+}
+
+.probe-cost-legend .s1 .probe-cost-swatch {
+  background: var(--warning);
+}
+
+.probe-cost-legend .s2 .probe-cost-swatch {
+  background: var(--danger);
+}
+
+.probe-cost-legend .sim .probe-cost-swatch {
+  background: var(--muted);
 }
 
 .probe-foot {

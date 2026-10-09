@@ -870,6 +870,85 @@ def episode_spawns(spec: DesignSpec, **kwargs: Any) -> dict[str, Any]:
     return {**out, "aircraft": aircraft}
 
 
+# One-shot script: fly the seeded episode to AT_S as the probe does, and time
+# the field with 1, 2, 4, ... up to the design's most aircraft in the air -
+# copies of the aircraft probed.
+_PROBE_COST_TEMPLATE = """\
+\"\"\"Auto-generated: what one field of a designed env costs to read.\"\"\"
+from __future__ import annotations
+
+import json
+
+import bluesky as bs
+
+from bluesky_sandbox import zero_action
+from bluesky_sandbox.checks.cost import Like, cost_curve
+from {pkg} import Env
+
+SEED = {seed!r}
+AT_S = {at_s!r}
+ACID = {acid!r}
+LIST = {list_key!r}
+INDEX = {index!r}
+MARKER = {marker!r}
+#: Steps to wait for the first aircraft, for designs that spawn them over time.
+MAX_WAIT_STEPS = 2000
+
+
+def main() -> None:
+    env = Env(render_mode=None)
+    try:
+        obs, _ = env.reset(seed=SEED)
+        base = env.unwrapped
+        steps = 0
+        while steps < MAX_WAIT_STEPS:
+            if obs and bs.sim.simt >= AT_S and (ACID is None or ACID in obs):
+                break
+            obs, *_ = env.step({{a: zero_action(env.action_space(a)) for a in env.agents}})
+            steps += 1
+        ids = [str(acid) for acid in bs.traf.id]
+        acid = ACID if ACID in ids else (list(obs)[-1] if obs else None)
+        if acid is None:
+            print(MARKER + json.dumps({{"error": "no aircraft is in the air"}}))
+            return
+        like = Like.of(ids.index(acid))
+        curve = cost_curve(base, getattr(base.config, LIST)[INDEX], like=like, seed=SEED)
+        print(MARKER + json.dumps({{
+            "acid": acid, "aircraft": list(curve.aircraft), "ms": curve.ms,
+            "sim_step_ms": list(curve.sim_step_ms), "batched": curve.batched, "env_path": curve.env_path,
+        }}))
+    finally:
+        env.close()
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def probe_cost(
+    spec: DesignSpec,
+    *,
+    list_key: str,
+    entry: int,
+    part: int = 0,
+    seed: int = 0,
+    at_s: float = 0.0,
+    acid: str | None = None,
+    timeout_s: float = 300.0,
+) -> dict[str, Any]:
+    """What the spec's entry ``entry`` of ``list_key`` (its field ``part``)
+    costs to read, each way, with 1, 2, 4, ... up to the design's most aircraft
+    in the air - copies of ``acid`` as it is at ``at_s``: see
+    :func:`bluesky_sandbox.checks.cost.cost_curve`."""
+    build_design_config(spec)  # surface a broken design before spawning anything
+    start, count = config_fields_of(spec, list_key, entry)
+    if not 0 <= part < count:
+        raise ValueError(f"{list_key} entry {entry} has no part {part}")
+    params = {"seed": int(seed), "at_s": float(at_s), "acid": acid, "list_key": list_key, "index": start + part}
+    return _run_script(spec, "designed_probe_cost", _PROBE_COST_TEMPLATE, params, timeout_s)
+
+
 # One-shot script: every field of the design checked against itself and
 # timed, and each action probed once: whether it commands what it states.
 _FIELDS_TEMPLATE = """\
@@ -881,6 +960,7 @@ import json
 import bluesky as bs
 
 from bluesky_sandbox.checks import check_fields
+from bluesky_sandbox.checks.cost import field_cost, fill_traffic, sim_step_ms
 from bluesky_sandbox.checks.probe import probe
 from {pkg} import Env
 
@@ -902,7 +982,7 @@ def main() -> None:
             {{
                 "list": r.where[0], "index": r.where[1], "field": r.field,
                 "findings": list(r.findings[:5]), "notes": list(r.notes),
-                "ms": r.ms, "batched": r.batched,
+                "batched": r.batched,
             }}
             for r in report.results
         ]
@@ -922,9 +1002,15 @@ def main() -> None:
                 }})
             except Exception as e:  # noqa: BLE001 - reported as the action's
                 actions.append({{"index": i, "error": f"{{type(e).__name__}}: {{e}}"}})
+        # Last: it adds aircraft, as many as the design may fly - each field
+        # timed as the env reads it, and the simulation's step, on them.
+        aircraft = fill_traffic(base)
+        for f in fields:
+            cost = field_cost(getattr(base.config, f["list"])[f["index"]], every_way=False)
+            f["ms"] = cost.ms.get(cost.env_path)
         out = {{
             "fields": fields, "actions": actions, "episode_findings": list(report.episode_findings),
-            "step_ms": report.step_ms, "aircraft": report.aircraft,
+            "step_ms": sim_step_ms(base), "aircraft": aircraft,
         }}
         print(MARKER + json.dumps(out, default=float))
     finally:
@@ -937,8 +1023,9 @@ if __name__ == "__main__":
 
 
 def check_design_fields(spec: DesignSpec, *, timeout_s: float = 300.0) -> dict[str, Any]:
-    """Every field of the design checked against itself and timed (see
-    :func:`bluesky_sandbox.checks.check_fields`), and each action probed once:
+    """Every field of the design checked against itself (see
+    :func:`bluesky_sandbox.checks.check_fields`) and timed on as many aircraft
+    as it may fly (:mod:`bluesky_sandbox.checks.cost`), and each action probed once:
     each result placed at the spec entry it is - a frame stack's fields
     together, as the one entry they are."""
     build_design_config(spec)  # surface a broken design before spawning anything

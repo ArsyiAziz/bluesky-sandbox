@@ -417,6 +417,27 @@ def create_app() -> FastAPI:
         except (BuildError, ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
+    @app.post("/api/spec/probe/cost")
+    def probe_cost(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """What one field of the design costs to read, each way, with 1, 2, 4,
+        ... up to the design's most aircraft in the air - see
+        :func:`runner.probe_cost`."""
+        spec = _parse_spec(body.get("spec", body))
+        try:
+            return _runner.probe_cost(
+                spec,
+                list_key=str(body["list"]),
+                entry=int(body["entry"]),
+                part=int(body.get("part", 0)),
+                seed=int(body.get("seed", 0)),
+                at_s=float(body.get("at_s", 0.0)),
+                acid=body.get("acid") or None,
+            )
+        except KeyError as e:
+            raise HTTPException(status_code=422, detail=f"missing {e}") from e
+        except (BuildError, ValueError, TypeError) as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
     @app.post("/api/spec/probe")
     def probe(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         """One field of the design probed at ``at_s`` into the seeded episode:

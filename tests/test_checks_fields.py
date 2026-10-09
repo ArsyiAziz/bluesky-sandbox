@@ -197,7 +197,7 @@ def test_a_value_outside_its_bounds_is_noted_not_failed(report):
     assert not report["LatDeg"].notes
 
 
-def test_each_field_is_timed_as_the_env_reads_it_and_found_where_it_is():
+def test_each_field_is_found_where_it_is_and_says_how_it_reads():
     config = EnvConfig(dt=5.0, obs_fields=[States(), obs.AltFt()], intruder_obs_fields=[obs.DistToOwnNm()], action_fields=[])
     env = BlueskyEnv(scenario=_Scenario(), config=config)
     try:
@@ -207,6 +207,4 @@ def test_each_field_is_timed_as_the_env_reads_it_and_found_where_it_is():
     by_name = {r.field: r for r in report.results}
     assert by_name["States"].where == ("obs_fields", 0) and by_name["AltFt"].where == ("obs_fields", 1)
     assert by_name["DistToOwnNm"].where == ("intruder_obs_fields", 0)
-    assert all(r.ms is not None and r.ms >= 0 for r in report.results)
     assert by_name["AltFt"].batched is True and by_name["DistToOwnNm"].batched is True
-    assert report.step_ms is not None and report.step_ms > 0 and report.aircraft > 0

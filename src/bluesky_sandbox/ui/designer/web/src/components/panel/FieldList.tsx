@@ -383,8 +383,9 @@ function brief(x: number | null | undefined): string {
   return x == null ? "—" : Number(x.toPrecision(6)).toLocaleString("en-US");
 }
 
+// A time to read: µs under a millisecond, so a small one keeps its digits.
 export function ms(x: number): string {
-  return x < 0.01 ? "<0.01 ms" : `${x < 0.1 ? x.toPrecision(2) : x < 10 ? x.toFixed(2) : x.toFixed(1)} ms`;
+  return x < 1 ? `${Number((x * 1000).toPrecision(3))} µs` : `${Number(x.toPrecision(3))} ms`;
 }
 
 // A field's configured arguments in one line, e.g. `goal, low=-1, high=1`:

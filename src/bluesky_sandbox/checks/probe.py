@@ -18,7 +18,8 @@ Nothing is listed by hand: what the field reads is watched as it runs.
 - **Lag ring** - for a field that is stacked, the frames its ring holds for
   the aircraft, and what each lagged field read at each step it was recorded
   (:class:`LagRecorder`), against the inner value then.
-- **Cost** - each way the field can compute, timed on the traffic there is.
+- **Cost** - not here: what the field costs is measured on as many aircraft
+  as the design may fly, by :mod:`.cost`, which adds aircraft to the traffic.
 """
 
 from __future__ import annotations
@@ -28,9 +29,7 @@ import copy
 import dataclasses
 import functools
 import importlib
-import statistics
 import sys
-import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,12 +40,17 @@ import bluesky as bs
 import numpy as np
 from bluesky.stack.stackbase import Stack
 
-from bluesky_sandbox.checks.fields import batched_path
 from bluesky_sandbox.core import services
 from bluesky_sandbox.interface.fields import _lag
 from bluesky_sandbox.interface.fields._consistency import beyond_rounding, differs
 from bluesky_sandbox.interface.fields.base import EnvBound, ObsField, PairObsField
 from bluesky_sandbox.sim.geometry.conflict import invalidate_conflict_geometry
+
+#: The arguments that name an aircraft by its index (``own_idx``, and any
+#: other ``..._idx``, too): shown by callsign.
+_AIRCRAFT_ARGS = frozenset({"idx", "own", "other", "i", "j"})
+#: A tuple or list of at most this many numbers has each overridable.
+_ITEMS_SHOWN = 4
 
 #: How closely what BlueSky holds after a command agrees with the target
 #: commanded: a command's number is written to six decimals.
@@ -140,7 +144,6 @@ class ProbeResult:
     choices: list[dict[str, Any]] = field(default_factory=list)
     command: list[str] = field(default_factory=list)
     lag: dict[str, Any] | None = None
-    cost: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -159,7 +162,6 @@ def probe(
     overrides: tuple[Override, ...] | list[Override] = (),
     give: float | None = None,
     history: LagRecorder | None = None,
-    timing_repeats: int = 5,
 ) -> ProbeResult:
     """Read ``field_obj`` - an observation or an action of ``env``'s config -
     for ``aircraft`` (about ``other``, for a pair field) as the env stands now.
@@ -206,7 +208,6 @@ def probe(
         choices=_choices(field_obj, own) if is_action else [],
         command=command,
         lag=lag,
-        cost=_cost(env, field_obj, is_action, is_pair, timing_repeats),
         notes=notes,
     )
 
@@ -235,9 +236,20 @@ def _observation(field_obj, own, oth, is_pair, recorder, history, notes, pinned)
         batched = services._normalize_field_values_batch(field_obj, np.atleast_1d(actual)[None] if np.ndim(actual) else np.array([actual]), own)
         single = services._normalize_field_value(field_obj, expected if expected is not None else actual, own)
         batched = np.asarray(batched, dtype=np.float32).reshape(-1)[: np.size(single)]
-        # What reaches the observation is float32: one value's normalization
-        # and the batch's must agree there exactly.
-        stages.append(Stage("normalized", batched, single, agrees=not differs(batched, single, "normalized")))
+        # The normalizer's own calls - its bounds, what they read - traced on
+        # the value the env normalizes.
+        normalized, norm_trace = recorder.run(
+            lambda: services._normalize_field_value(field_obj, actual, own), f"normalize({_short(actual)})"
+        )
+        trace = [*trace, *norm_trace]
+        normalized = np.asarray(normalized, dtype=np.float32).reshape(-1)
+        if pinned and differs(normalized, batched, "normalized"):
+            notes.append("the batched normalization does not make the call overridden: its value is one value's")
+            stages.append(Stage("normalized", normalized, single))
+        else:
+            # What reaches the observation is float32: one value's
+            # normalization and the batch's must agree there exactly.
+            stages.append(Stage("normalized", batched, single, agrees=not differs(batched, single, "normalized")))
     return stages, trace
 
 
@@ -251,7 +263,10 @@ def _action(env, field_obj, own, give, recorder, notes) -> tuple[list[Stage], li
     if callable(steps):
         choices = steps()
         stages.append(Stage("steps", choices[min(max(int(round(float(give))), 0), len(choices) - 1)]))
-    value = services._denormalized(acting, np.array([give], dtype=np.float32), own)
+    # The normalizer's own calls - a step's grid, the reach it reads - traced.
+    value, denormalizing = recorder.run(
+        lambda: services._denormalized(acting, np.array([give], dtype=np.float32), own), f"denormalize({_short(give)})"
+    )
     stages.append(Stage("value", value))
     on_grid = services._on_grid(acting, value, own)
     if getattr(acting, "grid", None) is not None:
@@ -259,8 +274,9 @@ def _action(env, field_obj, own, give, recorder, notes) -> tuple[list[Stage], li
     targets = getattr(acting, "targets", None)
     planned = float(np.asarray(targets(own, np.array([on_grid]))).reshape(-1)[0]) if callable(targets) else None
     queued = len(Stack.cmdstack)
-    _applied, trace = recorder.run(lambda: env.apply_action(own, field_obj, value))
-    if trace and trace[0].value == "False":
+    applied, trace = recorder.run(lambda: env.apply_action(own, field_obj, value))
+    trace = [*denormalizing, *trace]
+    if applied is False:
         notes.append(f"{type(field_obj).__name__} was held back: a mask, or a clearance's lock, keeps the axis")
     command = [line for line, _sender in Stack.cmdstack[queued:]]
     bs.stack.process()
@@ -432,6 +448,12 @@ def _with_leaf(obj: Any, path: list[str], value: Any) -> Any:
     """A copy of ``obj`` with the number at ``path`` set to ``value`` - each
     object on the way copied, the original untouched, its type kept."""
     name, rest = path[0], path[1:]
+    if name.startswith("["):
+        # One number of a tuple or list: its place, ``[k]``.
+        k = int(name[1:-1])
+        items = list(obj)
+        items[k] = value if not rest else _with_leaf(items[k], rest, value)
+        return type(obj)(items)
     new_value = value if not rest else _with_leaf(getattr(obj, name), rest, value)
     new = copy.copy(obj)
     attr = getattr(type(obj), name, None)
@@ -462,8 +484,9 @@ class _Recorder:
         self.own = own
         self.other = other
 
-    def run(self, call: Callable[[], Any]) -> tuple[Any, list[TraceNode]]:
-        """What ``call`` returns, and the calls and reads it made."""
+    def run(self, call: Callable[[], Any], label: str = "") -> tuple[Any, list[TraceNode]]:
+        """What ``call`` returns, and the calls and reads it made - under
+        ``label`` when they are more than one call."""
         root = TraceNode("root")
         stack: list[tuple[Any, TraceNode]] = [(None, root)]
 
@@ -496,7 +519,7 @@ class _Recorder:
         finally:
             sys.setprofile(None)
             bluesky.traf = real
-        top = TraceNode(f"{getattr(call, '__name__', 'call')}", _summary(result, self.names)[0], _number(result))
+        top = TraceNode(label or getattr(call, "__name__", "call"), _summary(result, self.names)[0], _number(result))
         top.children = root.children
         top.reads = root.reads
         for node in _walk([top]):
@@ -515,7 +538,9 @@ class _Recorder:
         return f"{name}({', '.join(args)})"
 
     def _arg(self, name: str, value: Any) -> str:
-        if isinstance(value, (int, np.integer)) and not isinstance(value, bool) and int(value) in self.names:
+        # An aircraft's index by its callsign - only an argument named as one.
+        aircraft = name in _AIRCRAFT_ARGS or name.endswith("_idx")
+        if aircraft and isinstance(value, (int, np.integer)) and not isinstance(value, bool) and int(value) in self.names:
             return self.names[int(value)]
         if value is None or isinstance(value, (bool, int, float, str, np.number, np.ndarray, list, tuple)):
             return _short(value)
@@ -591,6 +616,9 @@ def _walk(nodes: list[TraceNode]) -> Iterator[TraceNode]:
 
 def _summary(value: Any, names: dict[int, str]) -> tuple[str, list[tuple[str, str, float]]]:
     """``value`` in a few characters, and the numbers in it one can override."""
+    if isinstance(value, (tuple, list)) and 0 < len(value) <= _ITEMS_SHOWN and all(_number(v) is not None for v in value):
+        # A few numbers - a pair of bounds, a reach: each its own leaf.
+        return _short(value), [(f"[{k}]", _short(v), float(v)) for k, v in enumerate(value)]
     if value is None or isinstance(value, (bool, int, float, np.number, str, np.ndarray, list, tuple, dict)):
         return _short(value), []
     leaves: list[tuple[str, str, float]] = []
@@ -637,6 +665,10 @@ def _short(value: Any) -> str:
     if isinstance(value, np.ndarray):
         flat = value.reshape(-1)
         return f"{float(flat[0]):.6g}" if flat.size == 1 else f"array({value.shape})"
+    if isinstance(value, (tuple, list)) and value and all(_number(v) is not None for v in value):
+        inner = ", ".join(_short(float(v)) for v in value)
+        text = f"({inner})" if isinstance(value, tuple) else f"[{inner}]"
+        return text if len(text) <= 40 else text[:37] + "..."
     text = repr(value)
     return text if len(text) <= 40 else text[:37] + "..."
 
@@ -758,46 +790,6 @@ def _lag_view(env, field_obj, acid, own, history) -> dict[str, Any] | None:
         "start_s": history.start_s if history is not None else None,
         "fields": [_name(inner), *[f"{_name(inner)}_lag{k}" for k in steps]],
     }
-
-
-# --------------------------------------------------------------------------- #
-# Cost                                                                        #
-# --------------------------------------------------------------------------- #
-def _cost(env, field_obj, is_action, is_pair, repeats) -> dict[str, Any]:
-    n = bs.traf.ntraf
-    if is_action or n == 0:
-        return {}
-    every = list(range(n))
-    if is_pair:
-        paths = {
-            "pair matrix": lambda: field_obj.get_pair_matrix(np.array(every)),
-            "per ownship": lambda: [field_obj.get_pairs(i, [j for j in every if j != i]) for i in every],
-            "per pair": lambda: [field_obj.get_pair(i, j) for i in every for j in every if j != i],
-        }
-    else:
-        paths = {
-            "batched": lambda: field_obj.get_many(every),
-            "one at a time": lambda: [field_obj.get(i) for i in every],
-        }
-    timings = {name: _median_ms(path, repeats) for name, path in paths.items()}
-    most = int(getattr(env, "episode_max_aircraft", n) or n)
-    scale = (most / n) ** (2 if is_pair else 1) if n else 1.0
-    return {
-        "aircraft": n,
-        "max_aircraft": most,
-        "ms": timings,
-        "ms_at_max": {name: ms * scale for name, ms in timings.items()},
-        "batched_path": batched_path(field_obj),
-    }
-
-
-def _median_ms(path: Callable[[], Any], repeats: int) -> float:
-    times = []
-    for _ in range(max(1, repeats)):
-        start = time.perf_counter()
-        path()
-        times.append((time.perf_counter() - start) * 1000.0)
-    return statistics.median(times)
 
 
 def _name(field_obj: Any) -> str:

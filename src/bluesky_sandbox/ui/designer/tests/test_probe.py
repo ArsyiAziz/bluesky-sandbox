@@ -10,8 +10,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from bluesky_sandbox.ui.designer.api import create_app
-from bluesky_sandbox.ui.designer.builder import BuildError, config_fields_of
-from bluesky_sandbox.ui.designer.runner import probe_design
+from bluesky_sandbox.ui.designer.builder import BuildError, build_scenario, config_fields_of
+from bluesky_sandbox.ui.designer.runner import check_design_fields, probe_cost, probe_design
 
 from .test_designer import _example_design_spec
 
@@ -40,7 +40,7 @@ def test_a_lag_of_a_stack_is_probed_with_its_ring():
     assert [s["name"] for s in result["stages"]] == ["raw", "normalized"]
     assert all(s["agrees"] for s in result["stages"])
     assert result["lag"]["fields"] == ["alt_ft", "alt_ft_lag1", "alt_ft_lag2"]
-    assert result["lag"]["progression"] and result["cost"]["ms"]
+    assert result["lag"]["progression"]
 
 
 def test_an_action_is_probed_to_its_command():
@@ -73,8 +73,6 @@ def test_the_endpoint_probes_and_refuses_what_it_cannot():
 
 
 def test_the_fields_are_checked_and_timed_by_spec_entry():
-    from bluesky_sandbox.ui.designer.runner import check_design_fields
-
     out = check_design_fields(_stacked())
     own = {e["entry"]: e for e in out["entries"]["obs_fields"]}
     assert set(own) == {0, 1, 2}
@@ -84,3 +82,13 @@ def test_the_fields_are_checked_and_timed_by_spec_entry():
     assert [a["entry"] for a in out["actions"]] == [0, 1]
     assert out["actions"][1]["agrees"] is True and out["actions"][1]["command"][0].startswith("SPD ")
     assert out["step_ms"] > 0 and out["fields_ms"] > 0 and out["aircraft"] > 0
+
+
+def test_a_fields_cost_is_timed_from_one_aircraft_up_to_the_designs_most():
+    spec = _example_design_spec()
+    out = probe_cost(spec, list_key="obs_fields", entry=2, at_s=1.0)
+    most = build_scenario(spec).support().max_aircraft
+    assert out["aircraft"] == [n for n in (1, 2, 4) if n < most] + [most]
+    assert set(out["ms"]) == {"batched", "one at a time"} and out["env_path"] == "batched"
+    assert all(len(v) == len(out["aircraft"]) and all(t > 0 for t in v) for v in out["ms"].values())
+    assert len(out["sim_step_ms"]) == len(out["aircraft"])

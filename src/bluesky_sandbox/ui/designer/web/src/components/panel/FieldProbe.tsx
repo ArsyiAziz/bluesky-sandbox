@@ -6,6 +6,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   api,
   type ProbeCell,
+  type ProbeCost,
   type ProbeLag,
   type ProbeNode,
   type ProbeOverride,
@@ -15,6 +16,7 @@ import {
   type SpecDict,
 } from "../../api";
 import { niceTicks } from "../MdpTab";
+import { Spinner } from "../Spinner";
 
 // How long the probe waits after an edit before it flies again (ms).
 const DEBOUNCE_MS = 450;
@@ -174,7 +176,7 @@ export function FieldProbe({
             ))}
             {result.lag && <LagRing lag={result.lag} result={result} dt={dt} />}
           </div>
-          <Cost result={result} />
+          <Cost spec={spec} request={{ list: listKey, entry, seed, at_s: atS, acid: own }} />
           <div className="probe-foot">
             <span className="muted small">
               {overrides.length === 0
@@ -248,7 +250,7 @@ function NormalizerChart({ result }: { result: ProbeResultBody }) {
           <>
             <circle cx={px} cy={py} r={4} className="probe-chart-dot" />
             <text className="probe-chart-label" x={right ? px + 8 : px - 8} y={py - 8} textAnchor={right ? "start" : "end"}>
-              {withUnit(raw, result.unit)} → {fmt(norm)}
+              ({fmt(raw)}, {fmt(norm)})
             </text>
           </>
         )}
@@ -664,34 +666,137 @@ function fold<T>(items: T[], keep: number): (T | null)[] {
 
 // -------------------------------------------------------------------- cost --
 
-function Cost({ result }: { result: ProbeResultBody }) {
+// What the field costs to read, timed only when opened: with 1, 2, 4, ... up
+// to the design's most aircraft in the air, each way it computes.
+function Cost({ spec, request }: { spec: SpecDict; request: { list: string; entry: number; seed: number; at_s: number; acid: string | null } }) {
   const [open, setOpen] = useState(false);
-  const cost = result.cost;
-  const paths = Object.keys(cost.ms ?? {});
-  if (!paths.length) return null;
-  const line = paths.map((p) => `${ms(cost.ms![p])} ${p}`).join(" · ");
+  const [cost, setCost] = useState<{ key: string; value: ProbeCost } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const key = JSON.stringify({ spec, request });
+  useEffect(() => {
+    if (!open || cost?.key === key) return;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setError(null);
+      api
+        .probeCost(spec, request)
+        .then((value) => {
+          if (!live) return;
+          if (value.error) setError(value.error);
+          else setCost({ key, value });
+        })
+        .catch((e) => live && setError(String(e?.message ?? e)))
+        .finally(() => live && setLoading(false));
+    }, DEBOUNCE_MS);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+    // The request, as one value: the spec is a new object on every edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, key]);
+  const value = cost?.key === key ? cost.value : null;
+  // Waiting from the moment it opens: the debounce included.
+  const waiting = open && !value && !error;
+  const most = value ? value.aircraft[value.aircraft.length - 1] : null;
+  const at = (p: string) => value?.ms[p]?.[value.aircraft.length - 1];
   return (
     <div className="probe-cost">
       <button className="probe-row" onClick={() => setOpen(!open)}>
         <span className="probe-caret">{open ? "▾" : "▸"}</span>
-        <span className="sub-label inline">cost</span> <span className="muted">{line}</span>
-        {cost.batched_path === false && <span className="warn"> · no batched path</span>}
+        <span className="sub-label inline">computation cost</span>{" "}
+        {value && (
+          <span className="muted">
+            at {most} aircraft: {Object.keys(value.ms).map((p) => `${ms(at(p) ?? undefined)} ${p}`).join(" · ")}
+          </span>
+        )}
+        {value?.batched === false && <span className="warn"> · no batched path</span>}
       </button>
       {open && (
-        <div className="probe-cost-table">
-          <span className="muted">path</span>
-          <span className="muted">{cost.aircraft} aircraft</span>
-          <span className="muted">{cost.max_aircraft} aircraft</span>
-          {paths.map((p) => (
-            <Fragment key={p}>
-              <span>{p}</span>
-              <span className="mono">{ms(cost.ms![p])}</span>
-              <span className="mono">{ms(cost.ms_at_max?.[p])}</span>
-            </Fragment>
-          ))}
+        <div className="probe-cost-body">
+          {(loading || waiting) && (
+            <div className="muted small">
+              <Spinner label="timing the field" /> timing with up to the design's most aircraft in the air…
+            </div>
+          )}
+          {error && <div className="probe-error">{error}</div>}
+          {value && !loading && <CostChart cost={value} />}
         </div>
       )}
     </div>
+  );
+}
+
+// Each way's time against the aircraft in the air, on a log scale: ways that
+// differ a thousandfold read on one chart. The simulation's step, dashed.
+function CostChart({ cost }: { cost: ProbeCost }) {
+  const W = 420;
+  const H = 180;
+  const M = { l: 52, r: 14, t: 10, b: 34 };
+  const series = [
+    ...Object.entries(cost.ms).map(([name, ys], i) => ({ name, ys, cls: `probe-cost-line s${i}` })),
+    { name: "simulation, per env step", ys: cost.sim_step_ms as (number | null)[], cls: "probe-cost-line sim" },
+  ];
+  const all = series.flatMap((s) => s.ys).filter((y): y is number => y != null && y > 0);
+  if (!all.length) return null;
+  const [lo, hi] = [Math.floor(Math.log10(Math.min(...all))), Math.ceil(Math.log10(Math.max(...all)))];
+  const xMax = Math.max(...cost.aircraft);
+  const sx = (n: number) => M.l + ((n - 0) / (xMax || 1)) * (W - M.l - M.r);
+  const sy = (y: number) => H - M.b - ((Math.log10(y) - lo) / (hi - lo || 1)) * (H - M.t - M.b);
+  const decades = Array.from({ length: hi - lo + 1 }, (_, k) => 10 ** (lo + k));
+  return (
+    <>
+      <svg className="probe-chart" viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img" aria-label="time against aircraft in the air">
+        {decades.map((y) => (
+          <g key={y}>
+            <line className="mdp-grid" x1={M.l} x2={W - M.r} y1={sy(y)} y2={sy(y)} />
+            <text className="mdp-tick" x={M.l - 6} y={sy(y) + 3} textAnchor="end">
+              {ms(y)}
+            </text>
+          </g>
+        ))}
+        {niceTicks(0, xMax, 5).map((x) => (
+          <text key={x} className="mdp-tick" x={sx(x)} y={H - M.b + 14} textAnchor="middle">
+            {x}
+          </text>
+        ))}
+        <line className="mdp-axis" x1={M.l} x2={W - M.r} y1={H - M.b} y2={H - M.b} />
+        <line className="mdp-axis" x1={M.l} x2={M.l} y1={M.t} y2={H - M.b} />
+        <text className="mdp-tick" x={(M.l + W - M.r) / 2} y={H - 4} textAnchor="middle">
+          aircraft in the air
+        </text>
+        <text className="mdp-tick" x={11} y={(M.t + H - M.b) / 2} textAnchor="middle"
+          transform={`rotate(-90 11 ${(M.t + H - M.b) / 2})`}>
+          time (log)
+        </text>
+        {series.map((s) => {
+          const pts = cost.aircraft
+            .map((n, i) => [n, s.ys[i]] as const)
+            .filter((p): p is readonly [number, number] => p[1] != null && p[1] > 0);
+          return (
+            <g key={s.name} className={s.cls}>
+              <polyline points={pts.map(([n, y]) => `${sx(n).toFixed(1)},${sy(y).toFixed(1)}`).join(" ")} />
+              {pts.map(([n, y]) => (
+                <circle key={n} cx={sx(n)} cy={sy(y)} r={2.5}>
+                  <title>{`${s.name}, ${n} aircraft: ${ms(y)}`}</title>
+                </circle>
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="probe-cost-legend small">
+        {series.map((s) => (
+          <span key={s.name} className={s.cls}>
+            <span className="probe-cost-swatch" />
+            {s.name}
+            {s.name === cost.env_path && <span className="muted"> (the env's)</span>}
+          </span>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -726,7 +831,8 @@ function withUnit(x: number | null, unit: string): string {
 
 function ms(x: number | undefined): string {
   if (x == null) return "—";
-  return x < 0.01 ? "<0.01 ms" : `${x < 0.1 ? x.toPrecision(2) : x < 10 ? x.toFixed(2) : x.toFixed(1)} ms`;
+  if (x < 1) return `${Number((x * 1000).toPrecision(3))} µs`;
+  return `${Number(x.toPrecision(3))} ms`;
 }
 
 // The choice in the middle for a step action - no change, where zero is one,
