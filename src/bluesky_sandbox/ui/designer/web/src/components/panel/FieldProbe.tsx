@@ -482,7 +482,7 @@ function OverridableRow({
           onChange={(e) => onSet({ ...set, value: Number(e.target.value) || 0 })}
         />
         <span className="probe-override-note small">
-          {traffic ? "overridden in BlueSky" : "overridden · this call returns it"}
+          {traffic ? "overridden in BlueSky" : "overridden"}
         </span>
         <button className="link probe-row-end" aria-label="clear override" onClick={() => onClear(set)}>
           ✕
