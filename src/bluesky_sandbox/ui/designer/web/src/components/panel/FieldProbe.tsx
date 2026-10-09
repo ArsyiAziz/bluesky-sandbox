@@ -396,8 +396,7 @@ function TraceRow({
   const [open, setOpen] = useState(depth < 2);
   const traffic = node.key?.startsWith("traf:") ?? false;
   const nested = node.children.length > 0 || node.leaves.length > 0;
-  const numeric = Number.isFinite(Number(node.value)) && node.value !== "";
-  const whole = numeric ? overrideOf(node.key, Number(node.value), own) : null;
+  const whole = node.number == null ? null : overrideOf(node.key, node.number, own);
   return (
     <>
       <OverridableRow
@@ -414,14 +413,14 @@ function TraceRow({
         head={depth === 0}
       />
       {open &&
-        node.leaves.map(([leaf, value]) => (
+        node.leaves.map(([leaf, value, number]) => (
           <OverridableRow
             key={leaf}
             depth={depth + 1}
             caret=""
             label={leaf}
             value={value}
-            override={node.key ? { target: node.key, value: Number(value), leaf } : null}
+            override={node.key ? { target: node.key, value: number, leaf } : null}
             traffic={false}
             overrides={overrides}
             onSet={onSet}

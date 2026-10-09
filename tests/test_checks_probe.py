@@ -13,6 +13,7 @@ import pytest
 
 from bluesky_sandbox.checks.probe import LagRecorder, Override, probe
 from bluesky_sandbox.config import EnvConfig
+from bluesky_sandbox.core import base_environment, services
 from bluesky_sandbox.core.layout import zero_action
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as act
@@ -130,7 +131,8 @@ def test_the_trace_shows_the_calls_made_and_the_traffic_read_under_them(flown):
     assert top.label == f"ReachNm.get({bs.traf.id[0]})"
     (call,) = [n for n in _nodes(result.trace) if n.label.startswith("reach_of(")]
     assert call.key == f"call:{__name__}:reach_of"
-    assert [leaf for leaf, _value in call.leaves] == ["nm", "climb_ft"]
+    assert [leaf for leaf, _value, _number in call.leaves] == ["nm", "climb_ft"]
+    assert call.leaves[0][2] == reach_of(0).nm  # exact, beside the few characters shown
     read = {n.label for n in call.children}
     assert {f"bs.traf.gs[{bs.traf.id[0]}]", f"bs.traf.alt[{bs.traf.id[0]}]"} <= read
 
@@ -233,3 +235,26 @@ def test_a_stepped_action_lists_each_choice_and_the_target_it_commands(flown):
     assert _stage(result, "steps").actual == 1
     (command,) = result.command
     assert command.startswith(f"HDG {own} ") and float(command.split()[-1]) == pytest.approx(targets[4] % 360)
+
+
+def test_overriding_a_call_with_what_it_returned_changes_nothing(flown):
+    env, _ = flown
+    own = bs.traf.id[0]
+    field = env.config.action_fields[1]  # steps on a 10 deg target grid
+    bs.traf.hdg[0] = 93.123456  # off the grid, to digits a summary drops
+    plain = probe(env, field, own, give=4)
+    (node,) = [n for n in _nodes(plain.trace) if n.label.startswith("value_on_grid(")]
+    assert float(node.value) != node.number  # the few characters shown are not it
+    again = probe(env, field, own, give=4, overrides=[Override(node.key, node.number)])
+    assert again.command == plain.command
+
+
+def test_a_function_override_reaches_the_modules_that_imported_it(flown):
+    env, _ = flown
+    own = bs.traf.id[0]
+    field = env.config.action_fields[0]  # applied through value_on_grid, imported by name
+    target = "call:bluesky_sandbox.core.services:value_on_grid"
+    result = probe(env, field, own, give=1400.0, overrides=[Override(target, 2000.0)])
+    nominal_ft = float(bs.traf.alt[0]) / 0.3048
+    assert float(result.command[0].split()[-1]) == pytest.approx(nominal_ft + 2000.0)
+    assert base_environment.value_on_grid is services.value_on_grid  # put back after

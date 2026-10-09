@@ -175,10 +175,12 @@ export interface ProbeStage {
 
 export interface ProbeNode {
   label: string;
+  // In a few characters, and - a number - exactly: what an override starts from.
   value: string;
+  number: number | null;
   key: string | null;
   overridden: boolean;
-  leaves: [string, string][];
+  leaves: [string, string, number][];
   children: ProbeNode[];
 }
 

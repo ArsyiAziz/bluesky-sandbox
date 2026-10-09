@@ -105,12 +105,16 @@ class TraceNode:
     """A call the field made, or a traffic value it read."""
 
     label: str
+    #: What it returned or read, in a few characters - and, a number, exactly:
+    #: what an override of it starts from.
     value: str = ""
+    number: float | None = None
     #: The override this node takes (``Override.target``), or None.
     key: str | None = None
     overridden: bool = False
-    #: Numbers in what a call returned, each overridable: ``(leaf, value)``.
-    leaves: list[tuple[str, str]] = field(default_factory=list)
+    #: Numbers in what a call returned, each overridable: ``(leaf, value,
+    #: number)``, as ``value`` and ``number`` are.
+    leaves: list[tuple[str, str, float]] = field(default_factory=list)
     children: list[TraceNode] = field(default_factory=list)
     #: The traffic paths read under this call, filled in as it runs.
     reads: list[str] = field(default_factory=list, repr=False)
@@ -373,12 +377,33 @@ def _pinned_calls(overrides) -> Iterator[list[Override]]:
             for part in path:
                 owner = getattr(owner, part)
             raw = vars(owner)[name]
+            pinned = _pinning(raw, group)
             restore.append((owner, name, raw))
-            setattr(owner, name, _pinning(raw, group))
+            setattr(owner, name, pinned)
+            if not path:
+                # A module's function is called by the name each module that
+                # imported it holds: each of those is pinned too.
+                for other, attr in _imported_as(raw, owner):
+                    restore.append((other, attr, raw))
+                    setattr(other, attr, pinned)
         yield calls
     finally:
         for owner, name, raw in reversed(restore):
             setattr(owner, name, raw)
+
+
+def _imported_as(function: Any, home: Any) -> list[tuple[Any, str]]:
+    """Every module but ``home`` holding ``function`` under a name of its own."""
+    out = []
+    for module in list(sys.modules.values()):
+        if module is None or module is home:
+            continue
+        try:
+            names = [k for k, v in vars(module).items() if v is function]
+        except TypeError:
+            continue
+        out += [(module, k) for k in names]
+    return out
 
 
 def _pinning(raw: Any, group: list[Override]) -> Any:
@@ -454,6 +479,7 @@ class _Recorder:
                 sys.setprofile(None)
                 try:
                     node.value, node.leaves = _summary(arg, self.names)
+                    node.number = _number(arg)
                 finally:
                     sys.setprofile(profile)
 
@@ -470,7 +496,7 @@ class _Recorder:
         finally:
             sys.setprofile(None)
             bluesky.traf = real
-        top = TraceNode(f"{getattr(call, '__name__', 'call')}", _summary(result, self.names)[0])
+        top = TraceNode(f"{getattr(call, '__name__', 'call')}", _summary(result, self.names)[0], _number(result))
         top.children = root.children
         top.reads = root.reads
         for node in _walk([top]):
@@ -508,12 +534,11 @@ class _Recorder:
                 for idx in (self.own, self.other):
                     if idx is not None:
                         out.append(TraceNode(
-                            f"bs.traf.{path}[{self.names[idx]}]", _short(values[idx]), key=f"traf:{path}",
+                            f"bs.traf.{path}[{self.names[idx]}]", _short(values[idx]), _number(values[idx]),
+                            key=f"traf:{path}@{self.names[idx]}",
                         ))
-                        out[-1].leaves = []
-                        out[-1].key = f"traf:{path}@{self.names[idx]}"
             elif isinstance(values, (int, float, np.number)):
-                out.append(TraceNode(f"bs.traf.{path}", _short(values)))
+                out.append(TraceNode(f"bs.traf.{path}", _short(values), _number(values)))
         return out
 
 
@@ -564,11 +589,11 @@ def _walk(nodes: list[TraceNode]) -> Iterator[TraceNode]:
         yield from _walk(node.children)
 
 
-def _summary(value: Any, names: dict[int, str]) -> tuple[str, list[tuple[str, str]]]:
+def _summary(value: Any, names: dict[int, str]) -> tuple[str, list[tuple[str, str, float]]]:
     """``value`` in a few characters, and the numbers in it one can override."""
     if value is None or isinstance(value, (bool, int, float, np.number, str, np.ndarray, list, tuple, dict)):
         return _short(value), []
-    leaves: list[tuple[str, str]] = []
+    leaves: list[tuple[str, str, float]] = []
     _leaves(value, "", leaves, depth=2)
     return type(value).__name__, leaves[:12]
 
@@ -582,7 +607,7 @@ def _leaves(obj: Any, prefix: str, out: list, depth: int) -> None:
         if isinstance(value, bool) or callable(value):
             continue
         if isinstance(value, (int, float, np.number)):
-            out.append((prefix + name, _short(value)))
+            out.append((prefix + name, _short(value), float(value)))
         elif depth > 1 and not isinstance(value, (str, np.ndarray, list, tuple, dict)) and value is not None:
             _leaves(value, f"{prefix}{name}.", out, depth - 1)
 
@@ -593,6 +618,17 @@ def _public(obj: Any) -> list[str]:
     else:
         names = [n for n, v in vars(type(obj)).items() if isinstance(v, (property, functools.cached_property))]
     return [n for n in names if not n.startswith("_")]
+
+
+def _number(value: Any) -> float | None:
+    """``value`` exactly, when it is one finite number."""
+    if isinstance(value, (bool, np.bool_)):
+        return None
+    if isinstance(value, np.ndarray) and value.size == 1:
+        value = value.reshape(-1)[0]
+    if isinstance(value, (int, float, np.number)) and np.isfinite(float(value)):
+        return float(value)
+    return None
 
 
 def _short(value: Any) -> str:
