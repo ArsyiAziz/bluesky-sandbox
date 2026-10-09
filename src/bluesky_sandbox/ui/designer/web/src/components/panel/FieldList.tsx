@@ -745,7 +745,7 @@ function FrameStackCard({
   return (
     <div className="stack-card">
       <div className="stack-card-head">
-        <span>Frame stack</span>
+        <span className="sub-label">frame stack</span>
         <button
           role="switch"
           aria-checked={on}

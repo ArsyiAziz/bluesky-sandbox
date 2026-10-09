@@ -507,7 +507,7 @@ function Sparkline({ curve, color }: { curve: Curve; color: string }) {
 }
 
 // About n round-numbered ticks across [lo, hi].
-function niceTicks(lo: number, hi: number, n = 4): number[] {
+export function niceTicks(lo: number, hi: number, n = 4): number[] {
   const span = hi - lo;
   if (!(span > 0)) return [lo];
   const rough = span / n;

@@ -14,6 +14,7 @@ import {
   type ProbeStage,
   type SpecDict,
 } from "../../api";
+import { niceTicks } from "../MdpTab";
 
 // How long the probe waits after an edit before it flies again (ms).
 const DEBOUNCE_MS = 450;
@@ -149,14 +150,16 @@ export function FieldProbe({
           {result.kind === "action" ? (
             <GivePanel result={result} give={give} onGive={setGive} stepped={!!stepNormalizer} />
           ) : (
-            <Headline result={result} />
+            result.curve.length > 1 && <NormalizerChart result={result} />
           )}
+          <div className="sub-label">stages</div>
           <StageTable result={result} />
           {result.notes.map((n) => (
             <div key={n} className="probe-note muted small">
               {n}
             </div>
           ))}
+          <div className="sub-label">trace</div>
           <div className="probe-tree">
             {result.trace.map((node, i) => (
               <TraceRow
@@ -178,7 +181,7 @@ export function FieldProbe({
                 ? "no overrides"
                 : `${overrides.length} ${overrides.length === 1 ? "override" : "overrides"}`}
             </span>
-            <button disabled={overrides.length === 0} onClick={() => setOverrides([])}>
+            <button className="link" disabled={overrides.length === 0} onClick={() => setOverrides([])}>
               clear overrides
             </button>
           </div>
@@ -188,60 +191,69 @@ export function FieldProbe({
   );
 }
 
-// ---------------------------------------------------------------- headline --
+// -------------------------------------------------------------- normalizer --
 
-function Headline({ result }: { result: ProbeResultBody }) {
-  const raw = stageOf(result, "raw");
-  const normalized = stageOf(result, "normalized");
-  const rawValue = scalar(raw?.actual);
-  const normValue = scalar(normalized?.actual);
-  return (
-    <div className="probe-headline">
-      <div className="probe-big">
-        <span className="probe-big-value">{withUnit(rawValue, result.unit)}</span>
-        <span className="muted small">raw</span>
-      </div>
-      {normalized && (
-        <>
-          <span className="probe-arrow">→</span>
-          <div className="probe-big">
-            <span className="probe-big-value accent">{fmt(normValue)}</span>
-            <span className="muted small">
-              normalized{clipNote(result) ? ` · ${clipNote(result)}` : ""}
-            </span>
-          </div>
-        </>
-      )}
-      {result.curve.length > 1 && rawValue != null && <Curve result={result} raw={rawValue} norm={normValue} />}
-    </div>
-  );
-}
-
-function Curve({ result, raw, norm }: { result: ProbeResultBody; raw: number; norm: number | null }) {
-  const w = 160;
-  const h = 64;
-  const pad = 8;
+// The normalizer across the field's bounds and a fifth either side, and where
+// this aircraft's value falls on it.
+function NormalizerChart({ result }: { result: ProbeResultBody }) {
+  const W = 420;
+  const H = 170;
+  const M = { l: 46, r: 14, t: 12, b: 34 };
+  const raw = scalar(stageOf(result, "raw")?.actual);
+  const norm = scalar(stageOf(result, "normalized")?.actual);
   const xs = result.curve.map(([x]) => x);
   const ys = result.curve.map(([, y]) => y);
   const [x0, x1] = [Math.min(...xs), Math.max(...xs)];
-  const [y0, y1] = [Math.min(...ys, norm ?? Infinity), Math.max(...ys, norm ?? -Infinity)];
-  const sx = (x: number) => pad + ((Math.min(Math.max(x, x0), x1) - x0) / (x1 - x0 || 1)) * (w - 2 * pad);
-  const sy = (y: number) => h - pad - ((y - y0) / (y1 - y0 || 1)) * (h - 2 * pad);
+  const [y0, y1] = [Math.min(...ys), Math.max(...ys)];
+  const sx = (x: number) => M.l + ((Math.min(Math.max(x, x0), x1) - x0) / (x1 - x0 || 1)) * (W - M.l - M.r);
+  const sy = (y: number) => H - M.b - ((y - y0) / (y1 - y0 || 1)) * (H - M.t - M.b);
   const points = result.curve.map(([x, y]) => `${sx(x).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
-  const [low, high] = result.bounds ?? [x0, x1];
+  const bounds = result.bounds ?? [x0, x1];
+  const unit = unitSuffix(result.unit).trim();
+  const px = raw == null ? null : sx(raw);
+  const py = norm == null ? null : sy(norm);
+  // The point's label on whichever side has room.
+  const right = px != null && px < W - M.r - 130;
   return (
-    <div className="probe-curve">
-      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-label="normalized against raw">
-        <line x1={sx(low)} y1={pad / 2} x2={sx(low)} y2={h - pad / 2} className="probe-curve-bound" />
-        <line x1={sx(high)} y1={pad / 2} x2={sx(high)} y2={h - pad / 2} className="probe-curve-bound" />
-        <polyline points={points} className="probe-curve-line" />
-        {norm != null && <circle cx={sx(raw)} cy={sy(norm)} r={5} className="probe-curve-dot" />}
+    <>
+      <div className="sub-label">normalizer</div>
+      <svg className="probe-chart" viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img" aria-label="normalized against raw">
+        {niceTicks(y0, y1, 4).map((y) => (
+          <g key={`y${y}`}>
+            <line className="mdp-grid" x1={M.l} x2={W - M.r} y1={sy(y)} y2={sy(y)} />
+            <text className="mdp-tick" x={M.l - 6} y={sy(y) + 3} textAnchor="end">
+              {fmt(y)}
+            </text>
+          </g>
+        ))}
+        {niceTicks(x0, x1, 5).map((x) => (
+          <text key={`x${x}`} className="mdp-tick" x={sx(x)} y={H - M.b + 14} textAnchor="middle">
+            {fmt(x)}
+          </text>
+        ))}
+        {bounds.map((b, i) => (
+          <line key={`b${i}`} className="probe-chart-bound" x1={sx(b)} x2={sx(b)} y1={M.t} y2={H - M.b} />
+        ))}
+        <line className="mdp-axis" x1={M.l} x2={W - M.r} y1={H - M.b} y2={H - M.b} />
+        <line className="mdp-axis" x1={M.l} x2={M.l} y1={M.t} y2={H - M.b} />
+        <text className="mdp-tick" x={(M.l + W - M.r) / 2} y={H - 4} textAnchor="middle">
+          raw{unit ? ` (${unit})` : ""}
+        </text>
+        <text className="mdp-tick" x={11} y={(M.t + H - M.b) / 2} textAnchor="middle"
+          transform={`rotate(-90 11 ${(M.t + H - M.b) / 2})`}>
+          normalized
+        </text>
+        <polyline points={points} className="probe-chart-line" />
+        {px != null && py != null && (
+          <>
+            <circle cx={px} cy={py} r={4} className="probe-chart-dot" />
+            <text className="probe-chart-label" x={right ? px + 8 : px - 8} y={py - 8} textAnchor={right ? "start" : "end"}>
+              {withUnit(raw, result.unit)} → {fmt(norm)}
+            </text>
+          </>
+        )}
       </svg>
-      <span className="muted small">
-        bounds {fmt(low)} – {fmt(high)}
-        {result.unit ? ` ${result.unit}` : ""}
-      </span>
-    </div>
+    </>
   );
 }
 
@@ -262,7 +274,7 @@ function GivePanel({
   if (stepped && result.choices.length) {
     return (
       <div className="probe-give">
-        <span className="muted">give a choice</span>
+        <div className="sub-label">give a choice</div>
         <div className="probe-choices" style={{ gridTemplateColumns: `repeat(${Math.min(result.choices.length, 7)}, minmax(0, 1fr))` }}>
           {result.choices.map((c) => (
             <button
@@ -282,17 +294,16 @@ function GivePanel({
     );
   }
   return (
-    <div className="probe-give row">
+    <div className="probe-give">
       <label className="numfield inline">
-        <span>give</span>
+        <span>policy gives</span>
         <input type="number" step={0.1} value={give} onChange={(e) => onGive(Number(e.target.value) || 0)} />
+        {target && (
+          <span className="muted">
+            → {target.name} {withUnit(scalar(target.actual), result.unit)}
+          </span>
+        )}
       </label>
-      {target && (
-        <div className="probe-big end">
-          <span className="probe-big-value accent">{withUnit(scalar(target.actual), result.unit)}</span>
-          <span className="muted small">{target.name}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -300,41 +311,40 @@ function GivePanel({
 // ------------------------------------------------------------------ stages --
 
 function StageTable({ result }: { result: ProbeResultBody }) {
-  const state = result.stages.some((s) => s.agrees === false)
-    ? "bad"
-    : result.stages.some((s) => s.agrees === true)
-      ? "ok"
-      : "";
   return (
-    <div className={`probe-stages ${state}`}>
-      <span />
-      <span className="muted small" title="what the env computes for the policy">
-        actual
-      </span>
-      <span className="muted small" title="the field's plain statement of it, one value at a time">
-        expected
-      </span>
-      <span />
-      <span />
-      {result.stages.map((s) =>
-        s.name === "BS command" ? (
-          <Fragment key={s.name}>
-            <span className="muted">{s.name}</span>
-            <span className="mono wide">{s.actual ?? "—"}</span>
-          </Fragment>
-        ) : (
-          <Fragment key={s.name}>
-            <span className="muted">{s.name}</span>
-            <span className="mono">{stageText(s, result)}</span>
-            <span className="mono">{s.expected == null ? "" : stageText({ ...s, actual: s.expected }, result)}</span>
-            <span className={s.agrees === false ? "bad" : "ok"}>{s.agrees == null ? "" : s.agrees ? "✓" : "✗"}</span>
-            <span className="muted small">
-              {s.name === "normalized" ? clipNote(result) : s.agrees === false ? differNote(s, result) : s.note}
-            </span>
-          </Fragment>
-        ),
-      )}
-    </div>
+    <table className="probe-stages">
+      <thead>
+        <tr>
+          <th />
+          <th title="what the env computes for the policy">actual</th>
+          <th title="the field's plain statement of it, one value at a time">expected</th>
+          <th />
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        {result.stages.map((s) =>
+          s.name === "BS command" ? (
+            <tr key={s.name}>
+              <td className="muted">{s.name}</td>
+              <td className="mono" colSpan={4}>
+                {s.actual ?? "—"}
+              </td>
+            </tr>
+          ) : (
+            <tr key={s.name}>
+              <td className="muted">{s.name}</td>
+              <td className="mono">{stageText(s, result)}</td>
+              <td className="mono">{s.expected == null ? "" : stageText({ ...s, actual: s.expected }, result)}</td>
+              <td className={s.agrees === false ? "bad" : "ok"}>{s.agrees == null ? "" : s.agrees ? "✓" : "✗"}</td>
+              <td className="muted small">
+                {s.name === "normalized" ? clipNote(result) : s.agrees === false ? differNote(s, result) : s.note}
+              </td>
+            </tr>
+          ),
+        )}
+      </tbody>
+    </table>
   );
 }
 
@@ -472,7 +482,7 @@ function OverridableRow({
           onChange={(e) => onSet({ ...set, value: Number(e.target.value) || 0 })}
         />
         <span className="probe-override-note small">
-          {traffic ? "overridden in BlueSky · all that reads it sees it" : "overridden · this call returns it"}
+          {traffic ? "overridden in BlueSky" : "overridden · this call returns it"}
         </span>
         <button className="link probe-row-end" aria-label="clear override" onClick={() => onClear(set)}>
           ✕
@@ -488,7 +498,7 @@ function OverridableRow({
         {value !== "" && <> {label.startsWith("bs.traf") || !onToggle ? "=" : "→"} {value}</>}
       </span>
       {override && (
-        <button className="probe-row-end small" onClick={() => onSet(override)}>
+        <button className="link probe-row-end small" onClick={() => onSet(override)}>
           override
         </button>
       )}
@@ -663,9 +673,9 @@ function Cost({ result }: { result: ProbeResultBody }) {
   const line = paths.map((p) => `${ms(cost.ms![p])} ${p}`).join(" · ");
   return (
     <div className="probe-cost">
-      <button className="probe-row head" onClick={() => setOpen(!open)}>
+      <button className="probe-row" onClick={() => setOpen(!open)}>
         <span className="probe-caret">{open ? "▾" : "▸"}</span>
-        cost <span className="muted">{line}</span>
+        <span className="sub-label inline">cost</span> <span className="muted">{line}</span>
         {cost.batched_path === false && <span className="warn"> · no batched path</span>}
       </button>
       {open && (
