@@ -406,14 +406,17 @@ def create_app() -> FastAPI:
         except (BuildError, ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
-    @app.post("/api/spec/check-fields")
-    def check_fields(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        """Every field of the design checked against itself and timed, and
-        each action probed once, by spec entry - see
-        :func:`runner.check_design_fields`."""
+    @app.post("/api/spec/report")
+    def report(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """The design's fields over its episodes for the seeds given: what a
+        step costs at each count of aircraft, and each field's values against
+        its bounds - see :func:`runner.report_design`."""
         spec = _parse_spec(body.get("spec", body))
         try:
-            return _runner.check_design_fields(spec)
+            first, last = (int(s) for s in body["seeds"])
+            return _runner.report_design(spec, seeds=list(range(first, last + 1)), steps=int(body["steps"]))
+        except KeyError as e:
+            raise HTTPException(status_code=422, detail=f"missing {e}") from e
         except (BuildError, ValueError, TypeError) as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 

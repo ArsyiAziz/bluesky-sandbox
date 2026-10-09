@@ -22,6 +22,7 @@ import numpy as np
 from bluesky_sandbox.interface.fields.base import PairObsField
 
 from .slot import Slot, unique_names
+from .step_timing import StepTimer
 
 __all__ = ["RawObservation", "StepValues", "raw_action_values"]
 
@@ -32,7 +33,9 @@ ACID = "acid"
 class StepValues:
     """This step's raw field values, one batched computation per field."""
 
-    def __init__(self) -> None:
+    def __init__(self, timer: StepTimer | None = None) -> None:
+        #: Times each field's computation, when the env's step is timed.
+        self.timer = StepTimer() if timer is None else timer
         self._stamp: tuple[float, tuple[str, ...]] | None = None
         self._values: dict[int, np.ndarray] = {}
         self._pairs: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -79,7 +82,8 @@ class StepValues:
         self._current()
         values = self._values.get(id(field))
         if values is None:
-            values = np.asarray(field.get_many(tuple(range(bs.traf.ntraf))))
+            with self.timer.field(field, "fields"):
+                values = np.asarray(field.get_many(tuple(range(bs.traf.ntraf))))
             self._values[id(field)] = values
         return values
 
@@ -89,7 +93,8 @@ class StepValues:
         cached = self._pairs.get(id(field))
         if cached is not None and np.array_equal(cached[0], owns):
             return cached[1]
-        matrix = np.asarray(field.get_pair_matrix(owns))
+        with self.timer.field(field, "fields"):
+            matrix = np.asarray(field.get_pair_matrix(owns))
         self._pairs[id(field)] = (np.array(owns, dtype=np.intp), matrix)
         return matrix
 

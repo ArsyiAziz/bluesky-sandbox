@@ -253,34 +253,45 @@ export interface ProbeRequest {
   give?: number | null;
 }
 
-// Each field checked against itself and timed, and each action probed once,
-// by spec entry (see runner.check_design_fields).
-export interface FieldEntryCheck {
-  entry: number;
-  fields: string[];
-  findings: string[];
-  notes: string[];
-  ms: number | null;
-  batched: boolean;
+// A series at each count of aircraft: its median and the percentiles about it.
+export interface ReportSpread {
+  median: (number | null)[];
+  low: (number | null)[];
+  high: (number | null)[];
 }
 
-export interface ActionEntryCheck {
-  entry: number;
-  field?: string;
-  agrees?: boolean | null;
-  actual?: number | null;
-  expected?: number | null;
-  command?: string[];
-  error?: string;
-}
-
-export interface FieldsCheck {
-  entries: Record<string, FieldEntryCheck[]>;
-  actions: ActionEntryCheck[];
-  episode_findings: string[];
-  aircraft: number;
-  step_ms: number | null;
-  fields_ms: number | null;
+// The design's fields over sampled episodes (see checks.report): what a step
+// costs at each count of aircraft, and each field's values against its bounds.
+export interface FieldReportResult {
+  cost: {
+    aircraft: number[];
+    // Whether the sampled episodes flew that count (else it was topped up).
+    sampled: boolean[];
+    steps: number[];
+    percentiles: [number, number];
+    total: ReportSpread;
+    phases: Record<string, ReportSpread>;
+    // Each field's raw computation per count, by its config place "list:index".
+    fields: Record<string, (number | null)[]>;
+  };
+  fields: Record<string, { name: string; batched: boolean | null; list: string; entry: number | null }>;
+  bounds: {
+    field: string;
+    name: string;
+    samples: number;
+    below: number;
+    above: number;
+    min: number | null;
+    max: number | null;
+    normalized_min: number | null;
+    normalized_max: number | null;
+    fixed_bounds: [number, number] | null;
+    normalizer: string;
+    output: [number, number] | null;
+    clips: boolean;
+    bins: number;
+    histogram: Record<string, number>;
+  }[];
 }
 
 export interface SampleResult {
@@ -495,12 +506,12 @@ export const api = {
       body: JSON.stringify({ spec, seed, at_s: atS, acid, max_agents: maxAgents, max_intruders: maxIntruders }),
     }).then((r) => jsonOrThrow<SampleResult>(r)),
 
-  checkFields: (spec: SpecDict) =>
-    trackedFetch("/api/spec/check-fields", {
+  report: (spec: SpecDict, seeds: [number, number], steps: number) =>
+    trackedFetch("/api/spec/report", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spec }),
-    }).then((r) => jsonOrThrow<FieldsCheck>(r)),
+      body: JSON.stringify({ spec, seeds, steps }),
+    }).then((r) => jsonOrThrow<FieldReportResult>(r)),
 
   probeCost: (spec: SpecDict, request: ProbeRequest) =>
     trackedFetch("/api/spec/probe/cost", {

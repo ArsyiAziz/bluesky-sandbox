@@ -3,7 +3,7 @@
 // classes in custom_fields.py.
 import { Fragment, useEffect, useState } from "react";
 import Editor from "@monaco-editor/react";
-import type { ActionEntryCheck, FieldEntryCheck, SpecDict } from "../../api";
+import type { SpecDict } from "../../api";
 import { scaffoldClass, type Scaffolds } from "../../specHelpers";
 import { registerPythonIntel } from "../../code/pythonEditor";
 import { FieldPicker } from "./FieldPicker";
@@ -102,7 +102,7 @@ export function FieldList({
   addLabel,
   spec,
   listKey,
-  checks,
+  open,
 }: {
   label: string;
   fields: SpecDict[];
@@ -127,10 +127,18 @@ export function FieldList({
   // them, a field's editor can probe it.
   spec?: SpecDict;
   listKey?: string;
-  // The last field check, by entry: an observation's or an action's.
-  checks?: (FieldEntryCheck | ActionEntryCheck)[];
+  // An entry to open on its Probe tab (a new object each time it is asked).
+  open?: { entry: number } | null;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
+  const [startTab, setStartTab] = useState<"code" | "probe">("code");
+  useEffect(() => {
+    if (open && open.entry < fields.length) {
+      setStartTab("probe");
+      setEditing(open.entry);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   // A row being dragged, and the gap it would drop into (0 is before the first).
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
@@ -202,9 +210,15 @@ export function FieldList({
               title={`${problem ? validationError : opt?.doc || f.field}\n\nDrag, or Alt+↑/↓, to reorder.`}
               tabIndex={0}
               draggable={armed === i}
-              onClick={() => setEditing(i)}
+              onClick={() => {
+                setStartTab("code");
+                setEditing(i);
+              }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") setEditing(i);
+                if (e.key === "Enter") {
+                  setStartTab("code");
+                  setEditing(i);
+                }
                 else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
                   e.preventDefault();
                   move(i, e.key === "ArrowUp" ? i - 1 : i + 2);
@@ -275,7 +289,6 @@ export function FieldList({
                   {params}
                 </span>
               )}
-              {checks && <CheckLine check={checks.find((c) => c.entry === i)} />}
             </div>
           );
         })}
@@ -318,6 +331,7 @@ export function FieldList({
           onFieldChange={(nextField) => setField(editing, nextField)}
           onClose={() => setEditing(null)}
           probe={spec && listKey ? { spec, listKey, entry: editing } : undefined}
+          startTab={startTab}
         />
       )}
 
@@ -336,56 +350,6 @@ export function FieldList({
       </div>
     </div>
   );
-}
-
-// What the last check found for one entry, in a line under its row: whether
-// it holds, and what it costs a step.
-function CheckLine({ check }: { check?: FieldEntryCheck | ActionEntryCheck }) {
-  if (!check) return null;
-  if (!("fields" in check)) {
-    if (check.error) {
-      return (
-        <span className="field-row-check muted" title={check.error}>
-          not probed
-        </span>
-      );
-    }
-    if (check.agrees == null) return null;
-    const command = (check.command ?? []).join("; ");
-    return check.agrees ? (
-      <span className="field-row-check ok" title={command}>
-        ✓ commands as stated
-      </span>
-    ) : (
-      <span className="field-row-check bad" title={command}>
-        ✗ commands {brief(check.actual)}, states {brief(check.expected)}
-      </span>
-    );
-  }
-  const [mark, text, tone] = check.findings.length
-    ? ["✗", check.findings[0], "bad"]
-    : check.notes.length
-      ? ["⚠", check.notes[0].split(" (")[0], "warn"]
-      : ["✓", "", "ok"];
-  return (
-    <span className="field-row-check" title={[...check.findings, ...check.notes].join("\n") || "holds"}>
-      <span className={tone}>
-        {mark}
-        {text && ` ${text}`}
-      </span>
-      {check.ms != null && <span className="muted"> · {ms(check.ms)}</span>}
-      {!check.batched && <span className="warn"> · no batched path</span>}
-    </span>
-  );
-}
-
-function brief(x: number | null | undefined): string {
-  return x == null ? "—" : Number(x.toPrecision(6)).toLocaleString("en-US");
-}
-
-// A time to read: µs under a millisecond, so a small one keeps its digits.
-export function ms(x: number): string {
-  return x < 1 ? `${Number((x * 1000).toPrecision(3))} µs` : `${Number(x.toPrecision(3))} ms`;
 }
 
 // A field's configured arguments in one line, e.g. `goal, low=-1, high=1`:
@@ -468,6 +432,7 @@ function FieldConfigModal({
   onFieldChange,
   onClose,
   probe,
+  startTab = "code",
 }: {
   field: SpecDict;
   option?: FieldOption;
@@ -484,9 +449,10 @@ function FieldConfigModal({
   onFieldChange: (field: SpecDict) => void;
   onClose: () => void;
   probe?: { spec: SpecDict; listKey: string; entry: number };
+  startTab?: "code" | "probe";
 }) {
   const { theme } = useTheme();
-  const [tab, setTab] = useState<"code" | "probe">("code");
+  const [tab, setTab] = useState<"code" | "probe">(startTab);
   const queryableSpec = option?.queryable_spec ?? option?.profile?.queryable_spec ?? null;
   const params = (option?.params ?? []).filter((p) => p.name !== "normalizer");
   const genericParams = params.filter((p) => !isQueryableParam(p.name, queryableSpec));

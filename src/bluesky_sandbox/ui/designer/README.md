@@ -305,8 +305,9 @@ best that way, and either form converts to the other.
 A design's tests live in its folder's `tests/`: situations and cases in
 `cases.json`, and test files of your own. A generated package holds them in its
 `tests/` folder, so `pytest` runs them there too. In the designer, a field is
-probed from its editor (the Probe tab), and the Spaces tab checks every field
-and times it.
+probed from its editor (the Probe tab), and the Spaces tab's Field report flies
+sampled episodes: what a step costs at each count of aircraft, phase by phase
+and field by field, and where each field's values fall against its bounds.
 
 From the command line, without the designer:
 

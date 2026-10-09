@@ -92,6 +92,15 @@ config = EnvConfig(
    :members: RawObservation, StepValues
 ```
 
+## `bluesky_sandbox.core.step_timing`
+
+An env can time its own steps, phase by phase: `env.step_timer.enabled = True`, and after each step `env.step_timer.last` holds the step's total, each phase's own time (actions, the BlueSky simulation, bookkeeping, aircraft lifecycle, fields, normalizing and packing, hooks, and `other` for what runs outside them, so they add up to the total) and each field's raw computation. Off, it costs next to nothing.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.core.step_timing
+   :members: StepTimer, StepTiming
+```
+
 ## `bluesky_sandbox.core.batch`
 
 Batched hooks: `reward_batch`, `cost_batch`, `terminated_batch` and

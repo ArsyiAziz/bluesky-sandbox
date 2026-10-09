@@ -70,6 +70,7 @@ from bluesky_sandbox.sim.weather import WindField, wind_from_config
 from bluesky_sandbox.ui.drivers import FRAME_DRIVERS, RenderMode, get_driver_class
 
 from .runtime import BlueSkyRuntime
+from .step_timing import StepTimer
 from .services import (
     ActionDispatcher,
     AgentInfoBuilder,
@@ -296,7 +297,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._agent_context_cache: dict[str, AgentStepContext] = {}
         self._query_batch_cache: dict[tuple, Any] = {}
         # Raw field values this step, shared by the observation and the hooks.
-        self._step_values = StepValues()
+        #: Times each step phase by phase, when switched on (``enabled``).
+        self.step_timer = StepTimer()
+        self._step_values = StepValues(self.step_timer)
         # This step for every agent at once, built on first use by a batched hook.
         self._batch: StepBatch | None = None
         self._agent_context_cache_enabled = False
@@ -501,14 +504,93 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self,
         actions: AgentActions,
     ) -> tuple[AgentObservations, AgentRewards, DoneFlags, DoneFlags, AgentInfos]:
+        self.step_timer.begin_step()
+        try:
+            return self._step(actions)
+        finally:
+            self.step_timer.end_step()
+
+    def _step(
+        self,
+        actions: AgentActions,
+    ) -> tuple[AgentObservations, AgentRewards, DoneFlags, DoneFlags, AgentInfos]:
+        timer = self.step_timer
         self._clear_agent_context_cache()
         self._step_values.begin_step()
         self._batch = None
-        self._delete_marked_aircraft()
-        self._spawn_generator.drain(self._rng)
-        self._traffic_monitor.begin_step()
-        self._query_state_monitor.begin_step()
-        self._hooks.on_before_step()
+        with timer.phase("lifecycle"):
+            self._delete_marked_aircraft()
+            self._spawn_generator.drain(self._rng)
+        with timer.phase("bookkeeping"):
+            self._traffic_monitor.begin_step()
+            self._query_state_monitor.begin_step()
+        with timer.phase("hooks"):
+            self._hooks.on_before_step()
+        with timer.phase("actions"):
+            applied = self._apply_actions(actions)
+
+        # Own navigation meeting arrival times: BlueSky's RTA gives up on a
+        # fix whose time has passed, so an overdue aircraft flies flat out.
+        with timer.phase("actions"):
+            if self.config.fly_arrival_times:
+                hurry_overdue()
+
+        # A steady field is applied once at reset; only a gusting one needs
+        # pushing into BlueSky again each step.
+        with timer.phase("bookkeeping"):
+            self._wind.advance(float(self.config.dt), self._rng)
+            if self._wind.is_dynamic:
+                self._runtime.apply_wind(self._wind)
+
+        for _ in range(self._n_substeps):
+            with timer.phase("simulation"):
+                self._driver.step()
+            with timer.phase("bookkeeping"):
+                self._advance_motion(every="substep")
+                self._traffic_monitor.record_substep()
+                self._query_state_monitor.record_substep()
+            with timer.phase("hooks"):
+                self._hooks.on_sim_step()
+        with timer.phase("bookkeeping"):
+            # A region moved once a step: now, at its end.
+            self._advance_motion()
+
+        with timer.phase("lifecycle"):
+            self._purge_missing_aircraft_state()
+        with timer.phase("fields"):
+            self._update_stateful_fields()
+        controlled_agents = self._controlled_live_agents
+        with timer.phase("packing"):
+            observations = self._assemble_observations(controlled_agents)
+        with timer.phase("hooks"):
+            infos, terminations, truncations, rewards = self._outcomes(controlled_agents, observations, actions, applied)
+        with timer.phase("lifecycle"):
+            self._transition_done_agents(
+                controlled_agents,
+                terminations,
+                truncations,
+                infos,
+            )
+            self._purge_missing_aircraft_state()
+            self._delete_marked_aircraft()
+            # Steady-state top-up runs after this step's rewards/dones are settled,
+            # so replacements first appear in ``next_observations`` and receive an
+            # action next step (never a null-action reward this step).
+            self._spawn_generator.maintain(self._rng)
+
+        # Return post-cleanup observations for the next policy step. Terminal
+        # observations are preserved in info["final_observation"] for replay.
+        next_controlled_agents = self._controlled_live_agents
+        if tuple(next_controlled_agents) == tuple(controlled_agents):
+            next_observations = observations
+        else:
+            with timer.phase("packing"):
+                next_observations = self._assemble_observations(next_controlled_agents)
+
+        return next_observations, rewards, terminations, truncations, infos
+
+    def _apply_actions(self, actions: AgentActions) -> dict[Callsign, list[bool]]:
+        """Each controlled agent's action applied: what each field applied."""
         # Temporary clearances that ran out resume own navigation before the
         # new actions, so a clearance given this step takes over from it.
         if self._timed_clearances:
@@ -538,31 +620,17 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 values = self._action_dispatcher.denormalize(idx, action)
                 self._step_values.record_action(acid, raw_action_values(values))
                 applied[acid] = self._action_dispatcher.apply_values(idx, values)
+        return applied
 
-        # Own navigation meeting arrival times: BlueSky's RTA gives up on a
-        # fix whose time has passed, so an overdue aircraft flies flat out.
-        if self.config.fly_arrival_times:
-            hurry_overdue()
-
-        # A steady field is applied once at reset; only a gusting one needs
-        # pushing into BlueSky again each step.
-        self._wind.advance(float(self.config.dt), self._rng)
-        if self._wind.is_dynamic:
-            self._runtime.apply_wind(self._wind)
-
-        for _ in range(self._n_substeps):
-            self._driver.step()
-            self._advance_motion(every="substep")
-            self._traffic_monitor.record_substep()
-            self._query_state_monitor.record_substep()
-            self._hooks.on_sim_step()
-        # A region moved once a step: now, at its end.
-        self._advance_motion()
-
-        self._purge_missing_aircraft_state()
-        self._update_stateful_fields()
-        controlled_agents = self._controlled_live_agents
-        observations = self._assemble_observations(controlled_agents)
+    def _outcomes(
+        self,
+        controlled_agents: Sequence[Callsign],
+        observations: AgentObservations,
+        actions: AgentActions,
+        applied: dict[Callsign, list[bool]],
+    ) -> tuple[AgentInfos, DoneFlags, DoneFlags, AgentRewards]:
+        """The step's infos, done flags and rewards: the hooks', on this step's
+        observations."""
         infos = self._build_infos(controlled_agents)
         self._add_action_applied(infos, applied)
         self._populate_task_info(observations, actions, infos)
@@ -585,28 +653,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
             if terminations[acid] or truncations[acid]:
                 infos[acid]["final_observation"] = observations[acid]
                 infos[acid]["final_observation_agent_ids"] = tuple(controlled_agents)
-        self._transition_done_agents(
-            controlled_agents,
-            terminations,
-            truncations,
-            infos,
-        )
-        self._purge_missing_aircraft_state()
-        self._delete_marked_aircraft()
-        # Steady-state top-up runs after this step's rewards/dones are settled,
-        # so replacements first appear in ``next_observations`` and receive an
-        # action next step (never a null-action reward this step).
-        self._spawn_generator.maintain(self._rng)
-
-        # Return post-cleanup observations for the next policy step. Terminal
-        # observations are preserved in info["final_observation"] for replay.
-        next_controlled_agents = self._controlled_live_agents
-        if tuple(next_controlled_agents) == tuple(controlled_agents):
-            next_observations = observations
-        else:
-            next_observations = self._assemble_observations(next_controlled_agents)
-
-        return next_observations, rewards, terminations, truncations, infos
+        return infos, terminations, truncations, rewards
 
     def _transition_done_agents(
         self,

@@ -56,6 +56,16 @@ curve = cost_curve(env, obs.AltFt(), like=Like.of(0))
 curve.aircraft, curve.ms["batched"], curve.ms["one at a time"], curve.sim_step_ms
 ```
 
+**A report over sampled episodes.** `field_report(env, seeds, steps)` flies the design's episode for each seed, timing every step by phase and every field's raw computation, and groups the steps by how many aircraft were in the air. An episode whose aircraft spawn over time is flown until they do; steps with none in the air are not timed. Past the most aircraft an episode flew, it is topped up with copies of its aircraft to the design's most (`episode_max_aircraft`); below the fewest, it is set again with none of its traffic and copies of one of its aircraft placed. Each is stepped and timed at every count, so every count from one aircraft to the design's most is measured. The same steps tally each field's values against its bounds: how many fall below and above, the range seen, raw and normalized, whether the normalizer clips, and a histogram. The designer's Field report shows it.
+
+```python
+from bluesky_sandbox.checks.report import field_report
+
+report = field_report(env, seeds=range(5), steps=100)
+report.cost.aircraft, report.cost.total.median, report.cost.phases["simulation"].median
+[(t.name, t.above / t.samples) for t in report.bounds]
+```
+
 ## `bluesky_sandbox.checks.fields`
 
 ```{eval-rst}
@@ -93,5 +103,13 @@ curve.aircraft, curve.ms["batched"], curve.ms["one at a time"], curve.sim_step_m
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.checks.cost
    :members:
+   :show-inheritance:
+```
+
+## `bluesky_sandbox.checks.report`
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.checks.report
+   :members: field_report, FieldReport, CostReport, Spread, BoundsTally
    :show-inheritance:
 ```

@@ -949,70 +949,27 @@ def probe_cost(
     return _run_script(spec, "designed_probe_cost", _PROBE_COST_TEMPLATE, params, timeout_s)
 
 
-# One-shot script: every field of the design checked against itself and
-# timed, and each action probed once: whether it commands what it states.
-_FIELDS_TEMPLATE = """\
-\"\"\"Auto-generated: a designed env's fields checked and timed.\"\"\"
+# One-shot script: the design's episodes for the seeds given, every step timed
+# and every field's values tallied against its bounds (see checks.report).
+_REPORT_TEMPLATE = """\
+\"\"\"Auto-generated: a designed env's fields reported over sampled episodes.\"\"\"
 from __future__ import annotations
 
 import json
 
-import bluesky as bs
-
-from bluesky_sandbox.checks import check_fields
-from bluesky_sandbox.checks.cost import field_cost, fill_traffic, sim_step_ms
-from bluesky_sandbox.checks.probe import probe
+from bluesky_sandbox.checks.report import as_plain, field_report
 from {pkg} import Env
 
+SEEDS = {seeds!r}
+STEPS = {steps!r}
 MARKER = {marker!r}
-
-
-def _middle(field):
-    \"\"\"What the policy gives an action to probe it: its middle choice, or 0.\"\"\"
-    steps = getattr(getattr(field, "normalizer", None), "steps", None)
-    return float(len(steps()) // 2) if callable(steps) else 0.0
 
 
 def main() -> None:
     env = Env(render_mode=None)
-    base = env.unwrapped
     try:
-        report = check_fields(base)
-        fields = [
-            {{
-                "list": r.where[0], "index": r.where[1], "field": r.field,
-                "findings": list(r.findings[:5]), "notes": list(r.notes),
-                "batched": r.batched,
-            }}
-            for r in report.results
-        ]
-        actions = []
-        acid = str(bs.traf.id[0]) if bs.traf.ntraf else None
-        for i, field in enumerate(base.config.action_fields):
-            if acid is None:
-                break
-            try:
-                result = probe(base, field, acid, give=_middle(field))
-                target = next((s for s in result.stages if s.name == "target"), None)
-                actions.append({{
-                    "index": i, "field": result.field, "agrees": None if target is None else target.agrees,
-                    "actual": None if target is None else target.actual,
-                    "expected": None if target is None else target.expected,
-                    "command": result.command,
-                }})
-            except Exception as e:  # noqa: BLE001 - reported as the action's
-                actions.append({{"index": i, "error": f"{{type(e).__name__}}: {{e}}"}})
-        # Last: it adds aircraft, as many as the design may fly - each field
-        # timed as the env reads it, and the simulation's step, on them.
-        aircraft = fill_traffic(base)
-        for f in fields:
-            cost = field_cost(getattr(base.config, f["list"])[f["index"]], every_way=False)
-            f["ms"] = cost.ms.get(cost.env_path)
-        out = {{
-            "fields": fields, "actions": actions, "episode_findings": list(report.episode_findings),
-            "step_ms": sim_step_ms(base), "aircraft": aircraft,
-        }}
-        print(MARKER + json.dumps(out, default=float))
+        report = field_report(env, SEEDS, STEPS)
+        print(MARKER + json.dumps(as_plain(report)))
     finally:
         env.close()
 
@@ -1022,42 +979,24 @@ if __name__ == "__main__":
 """
 
 
-def check_design_fields(spec: DesignSpec, *, timeout_s: float = 300.0) -> dict[str, Any]:
-    """Every field of the design checked against itself (see
-    :func:`bluesky_sandbox.checks.check_fields`) and timed on as many aircraft
-    as it may fly (:mod:`bluesky_sandbox.checks.cost`), and each action probed once:
-    each result placed at the spec entry it is - a frame stack's fields
-    together, as the one entry they are."""
+def report_design(spec: DesignSpec, *, seeds: list[int], steps: int, timeout_s: float = 900.0) -> dict[str, Any]:
+    """The design's fields over its episodes for ``seeds``, ``steps`` steps
+    each: what a step costs at each count of aircraft, phase by phase and
+    field by field, and each field's values against its bounds - see
+    :func:`bluesky_sandbox.checks.report.field_report`. Each field carries
+    the spec entry it is (``list``, ``entry``), as the designer lists it."""
     build_design_config(spec)  # surface a broken design before spawning anything
-    out = _run_script(spec, "designed_fields", _FIELDS_TEMPLATE, {}, timeout_s)
-    entries: dict[str, dict[int, dict[str, Any]]] = {}
-    for r in out["fields"]:
-        entry = _entry_of(spec, r["list"], r["index"])
-        if entry is None:
-            continue
-        at = entries.setdefault(r["list"], {}).setdefault(
-            entry, {"entry": entry, "fields": [], "findings": [], "notes": [], "ms": 0.0, "batched": True}
-        )
-        at["fields"].append(r["field"])
-        at["findings"] += r["findings"]
-        at["notes"] += r["notes"]
-        at["ms"] = None if at["ms"] is None or r["ms"] is None else at["ms"] + r["ms"]
-        at["batched"] = at["batched"] and r["batched"] is not False
-    actions = []
-    for a in out["actions"]:
-        entry = _entry_of(spec, "action_fields", a["index"])
-        # A clearance's parts after its action: the action is the entry's.
-        if entry is not None and not any(x["entry"] == entry for x in actions):
-            actions.append({**a, "entry": entry})
-    timed = [e["ms"] for by in entries.values() for e in by.values() if e["ms"] is not None]
-    return {
-        "entries": {k: sorted(v.values(), key=lambda e: e["entry"]) for k, v in entries.items()},
-        "actions": actions,
-        "episode_findings": out["episode_findings"],
-        "aircraft": out["aircraft"],
-        "step_ms": out["step_ms"],
-        "fields_ms": sum(timed) if timed else None,
-    }
+    if not seeds:
+        raise ValueError("give at least one seed")
+    if int(steps) < 1:
+        raise ValueError("give at least one step")
+    out = _run_script(
+        spec, "designed_report", _REPORT_TEMPLATE, {"seeds": [int(s) for s in seeds], "steps": int(steps)}, timeout_s
+    )
+    for key, info in out["fields"].items():
+        list_key, index = key.rsplit(":", 1)
+        info["list"], info["entry"] = list_key, _entry_of(spec, list_key, int(index))
+    return out
 
 
 def _entry_of(spec: DesignSpec, list_key: str, index: int) -> int | None:

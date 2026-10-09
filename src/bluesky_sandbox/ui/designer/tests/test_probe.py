@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 
 from bluesky_sandbox.ui.designer.api import create_app
 from bluesky_sandbox.ui.designer.builder import BuildError, build_scenario, config_fields_of
-from bluesky_sandbox.ui.designer.runner import check_design_fields, probe_cost, probe_design
+from bluesky_sandbox.ui.designer.runner import probe_cost, probe_design, report_design
 
 from .test_designer import _example_design_spec
 
@@ -72,18 +72,6 @@ def test_the_endpoint_probes_and_refuses_what_it_cannot():
     assert client.post("/api/spec/probe", json={"spec": spec, "list": "obs_fields", "entry": 7}).status_code == 422
 
 
-def test_the_fields_are_checked_and_timed_by_spec_entry():
-    out = check_design_fields(_stacked())
-    own = {e["entry"]: e for e in out["entries"]["obs_fields"]}
-    assert set(own) == {0, 1, 2}
-    # A frame stack is one entry: its live field and both lags, timed together.
-    assert len(own[2]["fields"]) == 3 and own[2]["ms"] > 0 and own[2]["batched"]
-    assert out["entries"]["intruder_obs_fields"][0]["entry"] == 0
-    assert [a["entry"] for a in out["actions"]] == [0, 1]
-    assert out["actions"][1]["agrees"] is True and out["actions"][1]["command"][0].startswith("SPD ")
-    assert out["step_ms"] > 0 and out["fields_ms"] > 0 and out["aircraft"] > 0
-
-
 def test_a_fields_cost_is_timed_from_one_aircraft_up_to_the_designs_most():
     spec = _example_design_spec()
     out = probe_cost(spec, list_key="obs_fields", entry=2, at_s=1.0)
@@ -92,3 +80,24 @@ def test_a_fields_cost_is_timed_from_one_aircraft_up_to_the_designs_most():
     assert set(out["ms"]) == {"batched", "one at a time"} and out["env_path"] == "batched"
     assert all(len(v) == len(out["aircraft"]) and all(t > 0 for t in v) for v in out["ms"].values())
     assert len(out["sim_step_ms"]) == len(out["aircraft"])
+
+
+def test_the_report_places_each_field_at_its_spec_entry():
+    out = report_design(_stacked(), seeds=[0], steps=3)
+    fields = out["fields"]
+    # The stack's live field and its lags are the one entry, the third.
+    assert {fields[k]["entry"] for k in ("obs_fields:2", "obs_fields:3", "obs_fields:4")} == {2}
+    assert fields["obs_fields:3"]["name"] == "AltFt_lag1" and fields["obs_fields:3"]["list"] == "obs_fields"
+    cost = out["cost"]
+    assert cost["aircraft"][-1] == build_scenario(_stacked()).support().max_aircraft
+    assert {"simulation", "fields"} <= set(cost["phases"])
+    assert {b["field"] for b in out["bounds"]} >= {"obs_fields:2", "intruder_obs_fields:0"}
+
+
+def test_the_report_endpoint_takes_a_range_of_seeds():
+    client = TestClient(create_app())
+    spec = _example_design_spec().to_dict()
+    ok = client.post("/api/spec/report", json={"spec": spec, "seeds": [0, 1], "steps": 2})
+    assert ok.status_code == 200 and ok.json()["cost"]["steps"]
+    assert client.post("/api/spec/report", json={"spec": spec, "seeds": [0, 1], "steps": 0}).status_code == 422
+    assert client.post("/api/spec/report", json={"spec": spec, "steps": 2}).status_code == 422
