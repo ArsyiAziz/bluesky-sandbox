@@ -540,7 +540,7 @@ function LagRing({ lag, result, dt }: { lag: ProbeLag; result: ProbeResultBody; 
         <div className="probe-lag">
           {frames.map((f, i) =>
             f === null ? (
-              <div key={`fold${i}`} className="probe-frame muted small">
+              <div key={`fold${i}`} className="probe-frame fold muted small">
                 … {lag.frames.length - 2 * FOLD_KEEP} more frames
               </div>
             ) : (

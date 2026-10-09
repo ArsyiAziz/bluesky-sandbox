@@ -466,8 +466,9 @@ function FieldConfigModal({
       onFieldChange(rest);
     }
   };
+  // As deep as the design needs: the ring is sized from the deepest lag.
   const setStackDepth = (depth: number) => {
-    const d = Math.max(1, Math.min(9, Math.round(depth) || 3));
+    const d = Math.max(2, Math.round(depth) || 2);
     onFieldChange({ ...field, transform: "stacked", transform_kwargs: { depth: d } });
   };
   const transformKwargs: SpecDict = field.transform_kwargs ?? {};
@@ -530,36 +531,13 @@ function FieldConfigModal({
               </label>
             )}
             {stackEligible && (
-              <>
-                <label className="radio modal-check rel-toggle">
-                  <input
-                    type="checkbox"
-                    checked={isStacked}
-                    onChange={(e) => setStacked(e.target.checked)}
-                  />
-                  frame stack (live + lagged copies)
-                </label>
-                {isStacked && (
-                  <>
-                    <label className="numfield inline">
-                      <span>depth</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={9}
-                        value={stackDepth}
-                        onChange={(e) => setStackDepth(Number(e.target.value))}
-                      />
-                    </label>
-                    <div className="muted small field-doc">
-                      Emits {stackDepth} channels: the live value plus{" "}
-                      {stackDepth - 1} lagged {stackDepth === 2 ? "copy" : "copies"}{" "}
-                      (t−1{stackDepth > 2 ? ` … t−${stackDepth - 1}` : ""}), each on
-                      the same normalizer and bounds as the live one.
-                    </div>
-                  </>
-                )}
-              </>
+              <FrameStackCard
+                name={option?.profile?.meta?.name ?? field.field.split(":").pop() ?? field.field}
+                on={isStacked}
+                depth={stackDepth}
+                onToggle={setStacked}
+                onDepth={setStackDepth}
+              />
             )}
             <div className="sub-label">constructor</div>
             {isRelative ? (
@@ -743,6 +721,76 @@ function FieldConfigModal({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Frame stacking: the live field and a lagged field for each frame back, each
+// its own column. A long stack's chips fold in the middle.
+function FrameStackCard({
+  name,
+  on,
+  depth,
+  onToggle,
+  onDepth,
+}: {
+  name: string;
+  on: boolean;
+  depth: number;
+  onToggle: (on: boolean) => void;
+  onDepth: (depth: number) => void;
+}) {
+  const fields = Array.from({ length: depth }, (_, k) => (k === 0 ? name : `_lag${k}`));
+  const chips: (string | null)[] = fields.length <= 6 ? fields : [...fields.slice(0, 3), null, ...fields.slice(-2)];
+  return (
+    <div className="stack-card">
+      <div className="stack-card-head">
+        <span>Frame stack</span>
+        <button
+          role="switch"
+          aria-checked={on}
+          aria-label="frame stack"
+          className={on ? "switch on" : "switch"}
+          onClick={() => onToggle(!on)}
+        >
+          <span />
+        </button>
+      </div>
+      {on && (
+        <>
+          <div className="stack-card-row">
+            <span className="muted">frames</span>
+            <div className="stepper">
+              <button aria-label="one frame fewer" disabled={depth <= 2} onClick={() => onDepth(depth - 1)}>
+                −
+              </button>
+              <input
+                type="number"
+                min={2}
+                aria-label="frames"
+                value={depth}
+                onChange={(e) => onDepth(Number(e.target.value))}
+              />
+              <button aria-label="one frame more" onClick={() => onDepth(depth + 1)}>
+                +
+              </button>
+            </div>
+          </div>
+          <div className="stack-chips">
+            {chips.map((c, i) =>
+              c === null ? (
+                <span key="fold" className="stack-chip fold">
+                  … {fields.length - 5} more
+                </span>
+              ) : (
+                <span key={i} className="stack-chip">
+                  {c}
+                </span>
+              ),
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
