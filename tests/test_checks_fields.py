@@ -4,6 +4,7 @@ a time, against its own ``expected``, normalized as a batch or not."""
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Any
 
@@ -208,3 +209,24 @@ def test_each_field_is_found_where_it_is_and_says_how_it_reads():
     assert by_name["States"].where == ("obs_fields", 0) and by_name["AltFt"].where == ("obs_fields", 1)
     assert by_name["DistToOwnNm"].where == ("intruder_obs_fields", 0)
     assert by_name["AltFt"].batched is True and by_name["DistToOwnNm"].batched is True
+
+
+class _Later(_Scenario):
+    """The same traffic, spawned 20 s into the episode: none at reset."""
+
+    def support(self):
+        episode = super().support()
+        (region,) = episode.spawn.regions
+        regions = [dataclasses.replace(region, spawn_time=20.0)]
+        return dataclasses.replace(episode, spawn=dataclasses.replace(episode.spawn, regions=regions))
+
+
+def test_a_design_whose_aircraft_spawn_later_is_checked_once_they_have():
+    config = EnvConfig(dt=5.0, obs_fields=[obs.AltFt()], state_fields=[BulkOff()], action_fields=[])
+    env = BlueskyEnv(scenario=_Later(), config=config)
+    try:
+        report = check_fields(env, steps=8)
+    finally:
+        env.close()
+    # Flown on past the empty start, so the bulk path is caught.
+    assert not {r.field: r for r in report.results}["BulkOff"].ok

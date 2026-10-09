@@ -160,7 +160,7 @@ def probe(
     *,
     other: str | None = None,
     overrides: tuple[Override, ...] | list[Override] = (),
-    give: float | None = None,
+    give: float | list[float] | None = None,
     history: LagRecorder | None = None,
 ) -> ProbeResult:
     """Read ``field_obj`` - an observation or an action of ``env``'s config -
@@ -256,16 +256,18 @@ def _observation(field_obj, own, oth, is_pair, recorder, history, notes, pinned)
 def _action(env, field_obj, own, give, recorder, notes) -> tuple[list[Stage], list[str], list[TraceNode]]:
     if give is None:
         raise ValueError(f"{type(field_obj).__name__} is an action: give it a value")
+    # One value, or as many as the action's normalizer takes (an angle's two).
+    given = np.asarray(give, dtype=np.float32).reshape(-1)
     stages = [Stage("policy", give)]
     acting = services._acting(field_obj, own)
     normalizer = getattr(acting, "normalizer", None)
     steps = getattr(normalizer, "steps", None)
     if callable(steps):
         choices = steps()
-        stages.append(Stage("steps", choices[min(max(int(round(float(give))), 0), len(choices) - 1)]))
+        stages.append(Stage("steps", choices[min(max(int(round(float(given[0]))), 0), len(choices) - 1)]))
     # The normalizer's own calls - a step's grid, the reach it reads - traced.
     value, denormalizing = recorder.run(
-        lambda: services._denormalized(acting, np.array([give], dtype=np.float32), own), f"denormalize({_short(give)})"
+        lambda: services._denormalized(acting, given, own), f"denormalize({_short(give)})"
     )
     stages.append(Stage("value", value))
     on_grid = services._on_grid(acting, value, own)

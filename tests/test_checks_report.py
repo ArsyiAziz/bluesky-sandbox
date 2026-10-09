@@ -9,12 +9,12 @@ import json
 import numpy as np
 import pytest
 
-from bluesky_sandbox.checks.report import BoundsTally, _field_name, as_plain, field_report
+from bluesky_sandbox.checks.report import BoundsTally, _field_name, as_plain, checks_plain, field_checks, field_report
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as act
 from bluesky_sandbox.interface.fields import observations as obs
-from bluesky_sandbox.interface.wrappers.observations.normalizer import MinMaxNormalizer
+from bluesky_sandbox.interface.wrappers.observations.normalizer import CircularNormalizer, MinMaxNormalizer
 
 from test_env_bound import _Scenario
 
@@ -94,3 +94,35 @@ def test_a_value_far_out_is_kept_in_the_last_bin_either_side():
 
 def test_a_difference_from_the_ownship_is_named_after_its_field():
     assert _field_name(obs.AltFt().relative_to_own()) == "AltFt − own"
+
+
+def test_the_checks_say_what_each_field_and_action_holds_to():
+    config = EnvConfig(
+        dt=5.0,
+        obs_fields=[_ALT, obs.TasKts()],
+        intruder_obs_fields=[obs.DistToOwnNm()],
+        # Given in its own unit; and as an angle's two values.
+        action_fields=[
+            act.SpdKts(),
+            act.HdgDeltaDeg(normalizer=CircularNormalizer()),
+            act.AutopilotLnav(),
+            act.ActionMask(target=act.SpdKts),
+        ],
+    )
+    env = BlueskyEnv(scenario=_Scenario(), config=config)
+    try:
+        plain = checks_plain(*field_checks(env, seed=0, steps=3))
+    finally:
+        env.close()
+    json.dumps(plain)
+    fields = {f["field"]: f for f in plain["fields"]}
+    assert set(fields) == {"obs_fields:0", "obs_fields:1", "intruder_obs_fields:0"}
+    assert not any(f["findings"] for f in fields.values())
+    assert fields["obs_fields:0"]["notes"]  # spawned above its 20,000 ft ceiling
+    speed, heading, switch, mask = plain["actions"]
+    assert speed["field"] == "action_fields:0" and speed["agrees"] is True and speed["command"][0].startswith("SPD ")
+    assert heading["error"] == "" and heading["agrees"] is True and heading["command"][0].startswith("HDG ")
+    # A switch, probed on: its command given, no target to hold it to.
+    assert switch["error"] == "" and switch["command"]
+    assert mask["error"] == ""  # a mask is a switch too: probed on, not at 0.5
+    assert plain["episode"] == []

@@ -292,6 +292,21 @@ export interface FieldReportResult {
     bins: number;
     histogram: Record<string, number>;
   }[];
+  // Each field checked against itself (the first seed, flown twice), and each
+  // action probed once: what fails it (findings) and what is worth knowing.
+  checks: {
+    episode: string[];
+    fields: { field: string; findings: string[]; notes: string[] }[];
+    actions: {
+      field: string;
+      name: string;
+      agrees: boolean | null;
+      actual: number | null;
+      expected: number | null;
+      command: string[];
+      error: string;
+    }[];
+  };
 }
 
 export interface SampleResult {

@@ -957,7 +957,7 @@ from __future__ import annotations
 
 import json
 
-from bluesky_sandbox.checks.report import as_plain, field_report
+from bluesky_sandbox.checks.report import as_plain, checks_plain, field_checks, field_report
 from {pkg} import Env
 
 SEEDS = {seeds!r}
@@ -968,8 +968,10 @@ MARKER = {marker!r}
 def main() -> None:
     env = Env(render_mode=None)
     try:
-        report = field_report(env, SEEDS, STEPS)
-        print(MARKER + json.dumps(as_plain(report)))
+        out = as_plain(field_report(env, SEEDS, STEPS))
+        # The checks: the first seed's episode, the same steps, flown twice.
+        out["checks"] = checks_plain(*field_checks(env, seed=SEEDS[0], steps=STEPS))
+        print(MARKER + json.dumps(out, default=float))
     finally:
         env.close()
 
@@ -996,6 +998,13 @@ def report_design(spec: DesignSpec, *, seeds: list[int], steps: int, timeout_s: 
     for key, info in out["fields"].items():
         list_key, index = key.rsplit(":", 1)
         info["list"], info["entry"] = list_key, _entry_of(spec, list_key, int(index))
+    # An action is placed at its spec entry too: a clearance's parts at its.
+    for action in out["checks"]["actions"]:
+        list_key, index = action["field"].rsplit(":", 1)
+        out["fields"].setdefault(
+            action["field"],
+            {"name": action["name"], "batched": None, "list": list_key, "entry": _entry_of(spec, list_key, int(index))},
+        )
     return out
 
 

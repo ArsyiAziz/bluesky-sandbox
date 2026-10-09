@@ -30,12 +30,13 @@ import bluesky as bs
 import numpy as np
 
 from bluesky_sandbox.checks.cost import Like, counts_to, fill_traffic
-from bluesky_sandbox.checks.fields import _checkable, _drawn, batched_path
+from bluesky_sandbox.checks.fields import _checkable, _drawn, batched_path, check_fields, spawned_all
 from bluesky_sandbox.checks.placement import without_traffic
+from bluesky_sandbox.checks.probe import probe
 from bluesky_sandbox.core import services
-from bluesky_sandbox.interface.fields.base import ObsField, PairObsField
+from bluesky_sandbox.interface.fields.base import ActionKind, ObsField, PairObsField, action_kind
 
-__all__ = ["BoundsTally", "CostReport", "FieldReport", "Spread", "field_report"]
+__all__ = ["ActionCheck", "BoundsTally", "CostReport", "FieldReport", "Spread", "field_checks", "field_report"]
 
 #: The phase of what the env's wrappers add around its step.
 WRAPPERS = "wrappers"
@@ -183,7 +184,7 @@ def field_report(
             flown: list[int] = []
             like: Like | None = None
             for _ in range(int(steps)):
-                if bs.traf.ntraf == 0 and _spawned_all(base):
+                if bs.traf.ntraf == 0 and spawned_all(base):
                     break
                 if bs.traf.ntraf == 0:
                     # Waiting for the first to spawn: nothing to time.
@@ -214,12 +215,6 @@ def field_report(
     finally:
         timer.enabled = False
     return FieldReport(_cost(rows, percentiles), list(tallies.values()), names)
-
-
-def _spawned_all(base) -> bool:
-    """Whether every aircraft scheduled this episode has been spawned."""
-    progress = base.episode_spawn_progress
-    return progress.spawned >= progress.scheduled
 
 
 def _timed_step(env, base, rng, sampled, where_of):
@@ -324,6 +319,86 @@ def _field_name(field_obj: Any) -> str:
     query = getattr(field_obj, "query_name", "")
     name = type(field_obj).__name__
     return f"{name}({query})" if query else name
+
+
+@dataclass(frozen=True)
+class ActionCheck:
+    """One action probed once: whether the target it commands is the one it
+    states (``agrees``), with both; or why it could not be probed."""
+
+    where: tuple[str, int]
+    name: str
+    agrees: bool | None = None
+    actual: float | None = None
+    expected: float | None = None
+    command: tuple[str, ...] = ()
+    error: str = ""
+
+
+def field_checks(env: Any, *, seed: int, steps: int) -> tuple[Any, list[ActionCheck]]:
+    """Every field of ``env`` checked against itself over episode ``seed``,
+    ``steps`` steps flown twice (:func:`.fields.check_fields`), and each action
+    probed once at the end: what the checks found, field by field."""
+    base = env.unwrapped if hasattr(env, "unwrapped") else env
+    report = check_fields(base, steps=int(steps), seed=int(seed))
+    actions = []
+    for i, field_obj in enumerate(base.config.action_fields):
+        where = ("action_fields", i)
+        name = _field_name(field_obj)
+        if bs.traf.ntraf == 0:
+            actions.append(ActionCheck(where, name, error="no aircraft in the air to probe it on"))
+            continue
+        try:
+            result = probe(base, field_obj, str(bs.traf.id[0]), give=_middle(field_obj, 0))
+        except Exception as e:  # noqa: BLE001 - reported as the action's
+            actions.append(ActionCheck(where, name, error=f"{type(e).__name__}: {e}"))
+            continue
+        target = next((stage for stage in result.stages if stage.name == "target"), None)
+        actions.append(
+            ActionCheck(
+                where,
+                name,
+                agrees=None if target is None else target.agrees,
+                actual=None if target is None or target.actual is None else float(target.actual),
+                expected=None if target is None or target.expected is None else float(target.expected),
+                command=tuple(result.command),
+            )
+        )
+    return report, actions
+
+
+def _middle(field_obj: Any, idx: int) -> float | list[float]:
+    """What the policy gives an action to probe it: a switch, the value that
+    turns it on; any other, the middle of its bounds for aircraft ``idx``, in
+    its own unit, through its normalizer if it has one - whatever the
+    normalizer (a choice, an angle's two values)."""
+    if action_kind(field_obj) is ActionKind.BINARY:
+        return float(field_obj.switch_on_value())
+    acting = services._acting(field_obj, idx)
+    low, high = acting.bounds(idx)
+    middle = (float(low) + float(high)) / 2.0
+    normalizer = getattr(acting, "normalizer", None)
+    return middle if normalizer is None else [float(v) for v in normalizer.normalize(acting, middle, idx)]
+
+
+def checks_plain(report: Any, actions: list[ActionCheck]) -> dict[str, Any]:
+    """:func:`field_checks`' findings as JSON values, config places as
+    ``"list:index"``."""
+    return {
+        "episode": list(report.episode_findings),
+        "fields": [
+            {"field": f"{r.where[0]}:{r.where[1]}", "findings": list(r.findings), "notes": list(r.notes)}
+            for r in report.results
+            if r.where is not None
+        ],
+        "actions": [
+            {
+                "field": f"{a.where[0]}:{a.where[1]}", "name": a.name, "agrees": a.agrees,
+                "actual": a.actual, "expected": a.expected, "command": list(a.command), "error": a.error,
+            }
+            for a in actions
+        ],
+    }
 
 
 def as_plain(report: FieldReport) -> dict[str, Any]:

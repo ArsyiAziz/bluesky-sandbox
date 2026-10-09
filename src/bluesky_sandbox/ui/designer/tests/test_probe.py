@@ -92,6 +92,9 @@ def test_the_report_places_each_field_at_its_spec_entry():
     assert cost["aircraft"][-1] == build_scenario(_stacked()).support().max_aircraft
     assert {"simulation", "fields"} <= set(cost["phases"])
     assert {b["field"] for b in out["bounds"]} >= {"obs_fields:2", "intruder_obs_fields:0"}
+    # Its checks, field by field and action by action, each at its entry.
+    assert {f["field"] for f in out["checks"]["fields"]} >= {"obs_fields:2", "intruder_obs_fields:0"}
+    assert [fields[a["field"]]["entry"] for a in out["checks"]["actions"]] == [0, 1]
 
 
 def test_the_report_endpoint_takes_a_range_of_seeds():

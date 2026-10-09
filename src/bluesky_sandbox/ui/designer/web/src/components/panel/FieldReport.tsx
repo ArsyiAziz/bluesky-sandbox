@@ -48,7 +48,7 @@ export function FieldReport({
   onClose: () => void;
   onOpenField: (list: string, entry: number) => void;
 }) {
-  const [tab, setTab] = useState<"cost" | "bounds">("cost");
+  const [tab, setTab] = useState<"cost" | "bounds" | "checks">("cost");
   // What to sample: in the inputs, for the designer to set.
   const [firstSeed, setFirstSeed] = useState(last?.seeds[0] ?? 0);
   const [lastSeed, setLastSeed] = useState(last?.seeds[1] ?? 4);
@@ -97,6 +97,9 @@ export function FieldReport({
             <button role="tab" aria-selected={tab === "bounds"} className={tab === "bounds" ? "on" : ""} onClick={() => setTab("bounds")}>
               Bounds
             </button>
+            <button role="tab" aria-selected={tab === "checks"} className={tab === "checks" ? "on" : ""} onClick={() => setTab("checks")}>
+              Checks{report && failures(report) ? <span className="bad"> · {failures(report)} ✗</span> : null}
+            </button>
           </div>
           <button className="link" onClick={onClose}>
             done
@@ -126,7 +129,9 @@ export function FieldReport({
             </div>
           )}
           {error && <div className="probe-error">{error}</div>}
-          {report && !loading && (tab === "cost" ? <CostTab report={report} onOpen={onOpenField} /> : <BoundsTab report={report} onOpen={onOpenField} />)}
+          {report && !loading && tab === "cost" && <CostTab report={report} onOpen={onOpenField} />}
+          {report && !loading && tab === "bounds" && <BoundsTab report={report} onOpen={onOpenField} />}
+          {report && !loading && tab === "checks" && <ChecksTab report={report} seed={firstSeed} steps={steps} onOpen={onOpenField} />}
         </div>
       </div>
     </div>
@@ -528,6 +533,104 @@ function Histogram({ tally, report, onOpen }: { tally: Bounds; report: Report; o
         {info && <FieldLink info={info} onOpen={onOpen} label="open in its Probe tab" />}
       </div>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------- checks --
+
+// What fails a field or an action: the count the tab shows.
+function failures(report: Report): number {
+  const checks = report.checks;
+  return (
+    checks.episode.length +
+    checks.fields.filter((f) => f.findings.length).length +
+    checks.actions.filter((a) => a.agrees === false).length
+  );
+}
+
+function ChecksTab({
+  report,
+  seed,
+  steps,
+  onOpen,
+}: {
+  report: Report;
+  seed: number;
+  steps: number;
+  onOpen: (list: string, entry: number) => void;
+}) {
+  const checks = report.checks;
+  // Each field: what fails it first, then what is worth knowing, then what holds.
+  const rank = (f: { findings: string[]; notes: string[] }) => (f.findings.length ? 0 : f.notes.length ? 1 : 2);
+  const fields = [...checks.fields].sort((a, b) => rank(a) - rank(b));
+  const actionRank = (a: Report["checks"]["actions"][number]) => (a.agrees === false ? 0 : a.error ? 1 : 2);
+  const actions = [...checks.actions].sort((a, b) => actionRank(a) - actionRank(b));
+  return (
+    <>
+      <div className="muted small">
+        seed {seed} · {steps} steps · flown twice
+      </div>
+      {checks.episode.map((f) => (
+        <div key={f} className="probe-error">
+          {f}
+        </div>
+      ))}
+      <div className="report-table-box grow">
+        <table className="report-table">
+          <thead>
+            <tr>
+              <th>field</th>
+              <th>part</th>
+              <th>result</th>
+              <th>what it found</th>
+            </tr>
+          </thead>
+          <tbody>
+            {fields.map((f) => {
+              const info = report.fields[f.field];
+              const said = f.findings.length ? f.findings : f.notes;
+              return (
+                <tr key={f.field}>
+                  <td>{info ? <FieldLink info={info} onOpen={onOpen} /> : <span className="mono">{f.field}</span>}</td>
+                  <td className="muted">{info ? PARTS[info.list] ?? info.list : ""}</td>
+                  <td className={f.findings.length ? "bad" : f.notes.length ? "warn" : "ok"}>
+                    {f.findings.length ? "✗ fails" : f.notes.length ? "⚠ note" : "✓ holds"}
+                  </td>
+                  <td className="report-found">
+                    {said.map((line) => (
+                      <div key={line}>{line}</div>
+                    ))}
+                  </td>
+                </tr>
+              );
+            })}
+            {actions.map((a) => {
+              const info = report.fields[a.field];
+              return (
+                <tr key={a.field}>
+                  <td>{info ? <FieldLink info={info} onOpen={onOpen} /> : <span className="mono">{a.name}</span>}</td>
+                  <td className="muted">action</td>
+                  <td className={a.agrees === false ? "bad" : a.error ? "muted" : "ok"}>
+                    {a.agrees === false ? "✗ fails" : a.error ? "not probed" : a.agrees ? "✓ holds" : "—"}
+                  </td>
+                  <td className="report-found">
+                    {a.error ? (
+                      <div>{a.error}</div>
+                    ) : a.agrees === false ? (
+                      <div>
+                        commands {num(a.actual)}, states {num(a.expected)}
+                      </div>
+                    ) : (
+                      <div className="mono muted">{a.command.join("; ")}</div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 

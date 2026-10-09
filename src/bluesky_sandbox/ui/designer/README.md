@@ -307,7 +307,8 @@ A design's tests live in its folder's `tests/`: situations and cases in
 `tests/` folder, so `pytest` runs them there too. In the designer, a field is
 probed from its editor (the Probe tab), and the Spaces tab's Field report flies
 sampled episodes: what a step costs at each count of aircraft, phase by phase
-and field by field, and where each field's values fall against its bounds.
+and field by field, where each field's values fall against its bounds, and
+each field checked against itself and each action against what it states.
 
 From the command line, without the designer:
 

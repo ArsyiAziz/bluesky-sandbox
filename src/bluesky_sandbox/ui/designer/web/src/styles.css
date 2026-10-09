@@ -4582,6 +4582,19 @@ button:disabled {
   color: var(--warning-text);
 }
 
+.report-table .ok {
+  color: var(--success);
+}
+
+.report-table .bad,
+.field-report .bad {
+  color: var(--danger);
+}
+
+.report-found {
+  overflow-wrap: anywhere;
+}
+
 .report-field {
   color: var(--text);
   text-align: left;

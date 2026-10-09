@@ -29,7 +29,7 @@ from bluesky_sandbox.core import services
 from bluesky_sandbox.interface.fields._consistency import differs
 from bluesky_sandbox.interface.fields.base import ObsField, PairObsField
 
-__all__ = ["FieldCheck", "FieldsReport", "batched_path", "check_fields", "normalization_findings"]
+__all__ = ["FieldCheck", "FieldsReport", "batched_path", "check_fields", "normalization_findings", "spawned_all"]
 
 
 @dataclass(frozen=True)
@@ -130,16 +130,23 @@ _Step = tuple[tuple[str, ...], dict[int, Any]]
 def _fly(env: Any, checked: list[Any], steps: int, seed: int) -> list[_Step]:
     """``env``'s episode ``seed``, ``steps`` steps of actions drawn from its
     action space by a generator seeded ``seed``, recorded after the reset and
-    each step."""
+    each step - flown on while aircraft are still to spawn, and ended early
+    once none are in the air and none are to come."""
     env.reset(seed=seed)
     rng = np.random.default_rng(seed)
     record = [_record(checked)]
     for _ in range(steps):
-        if not env.agents:
+        if bs.traf.ntraf == 0 and spawned_all(env):
             break
         env.step({agent: _drawn(env.action_space(agent), rng) for agent in env.agents})
         record.append(_record(checked))
     return record
+
+
+def spawned_all(env: Any) -> bool:
+    """Whether every aircraft ``env`` scheduled this episode has been spawned."""
+    progress = env.unwrapped.episode_spawn_progress if hasattr(env, "unwrapped") else env.episode_spawn_progress
+    return progress.spawned >= progress.scheduled
 
 
 def _record(checked: list[Any]) -> _Step:

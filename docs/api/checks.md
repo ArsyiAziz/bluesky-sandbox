@@ -56,7 +56,7 @@ curve = cost_curve(env, obs.AltFt(), like=Like.of(0))
 curve.aircraft, curve.ms["batched"], curve.ms["one at a time"], curve.sim_step_ms
 ```
 
-**A report over sampled episodes.** `field_report(env, seeds, steps)` flies the design's episode for each seed, timing every step by phase and every field's raw computation, and groups the steps by how many aircraft were in the air. An episode whose aircraft spawn over time is flown until they do; steps with none in the air are not timed. Past the most aircraft an episode flew, it is topped up with copies of its aircraft to the design's most (`episode_max_aircraft`); below the fewest, it is set again with none of its traffic and copies of one of its aircraft placed. Each is stepped and timed at every count, so every count from one aircraft to the design's most is measured. The same steps tally each field's values against its bounds: how many fall below and above, the range seen, raw and normalized, whether the normalizer clips, and a histogram. The designer's Field report shows it.
+**A report over sampled episodes.** `field_report(env, seeds, steps)` flies the design's episode for each seed, timing every step by phase and every field's raw computation, and groups the steps by how many aircraft were in the air. An episode whose aircraft spawn over time is flown until they do; steps with none in the air are not timed. Past the most aircraft an episode flew, it is topped up with copies of its aircraft to the design's most (`episode_max_aircraft`); below the fewest, it is set again with none of its traffic and copies of one of its aircraft placed. Each is stepped and timed at every count, so every count from one aircraft to the design's most is measured. The same steps tally each field's values against its bounds: how many fall below and above, the range seen, raw and normalized, whether the normalizer clips, and a histogram. `field_checks(env, seed=0, steps=100)` runs `check_fields` on one episode and probes each action once, in the middle of its bounds through its own normalizer, to see that it commands the target it states. The designer's Field report shows both: its Cost, Bounds and Checks tabs.
 
 ```python
 from bluesky_sandbox.checks.report import field_report
@@ -110,6 +110,6 @@ report.cost.aircraft, report.cost.total.median, report.cost.phases["simulation"]
 
 ```{eval-rst}
 .. automodule:: bluesky_sandbox.checks.report
-   :members: field_report, FieldReport, CostReport, Spread, BoundsTally
+   :members: field_report, field_checks, FieldReport, CostReport, Spread, BoundsTally, ActionCheck
    :show-inheritance:
 ```
