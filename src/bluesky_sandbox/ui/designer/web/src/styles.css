@@ -56,6 +56,8 @@
   --warning: #fbbf24;
   --warning-text: #e5c07b;
   --warning-soft: #2e2817;
+  /* A lag read that stands in for history not there yet. */
+  --placeholder-fill: #5c4519;
   --warning-border: #6b5a2a;
   --warning-strong-bg: #7c5b13;
   --warning-strong-text: #ffd98a;
@@ -157,6 +159,7 @@
   --warning: #a16207;
   --warning-text: #8a5a00;
   --warning-soft: #fdf3dc;
+  --placeholder-fill: #fbe7c2;
   --warning-border: #e0c27a;
   --warning-strong-bg: #fdf0d5;
   --warning-strong-text: #7a4e00;
@@ -3267,6 +3270,357 @@ button:disabled {
 
 .normalizer-label {
   margin-top: 16px;
+}
+
+/* The field editor's right pane: its code, or the field probed. */
+.pane-tabs {
+  display: flex;
+  gap: 4px;
+  margin: -4px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-tabs button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+}
+
+.pane-tabs button.on {
+  border-bottom-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* Probe (see FieldProbe.tsx) */
+.probe {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.probe .mono,
+.probe-tree,
+.probe-cell,
+.probe-big-value {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.probe-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.probe-controls .numfield.inline {
+  margin-top: 0;
+}
+
+.probe-controls .numfield.inline > span {
+  min-width: 0;
+}
+
+.probe-controls input[type="number"] {
+  width: 64px;
+  flex: none;
+}
+
+.probe-error {
+  padding: 8px 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: 6px;
+  background: var(--danger-soft);
+}
+
+.probe-headline,
+.probe-give {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-low);
+}
+
+.probe-give:not(.row) {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.probe-big {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.probe-big.end {
+  margin-left: auto;
+  align-items: flex-end;
+}
+
+.probe-big-value {
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.probe-big-value.accent {
+  color: var(--accent-text);
+}
+
+.probe-arrow {
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.probe-curve {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.probe-curve-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.probe-curve-bound {
+  stroke: var(--border);
+  stroke-dasharray: 3 3;
+}
+
+.probe-curve-dot {
+  fill: var(--warning);
+  stroke: var(--panel);
+  stroke-width: 2;
+}
+
+.probe-choices {
+  display: grid;
+  gap: 6px;
+}
+
+.probe-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  min-width: 0;
+}
+
+.probe-choice.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.probe-stages {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) minmax(0, 1fr) 18px minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: baseline;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.probe-stages.ok {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+}
+
+.probe-stages.bad {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.probe-stages .wide {
+  grid-column: 2 / -1;
+  overflow-wrap: anywhere;
+}
+
+.probe-stages .ok {
+  color: var(--success);
+}
+
+.probe .bad {
+  color: var(--danger);
+}
+
+.probe .warn {
+  color: var(--warning-text);
+}
+
+.probe-tree,
+.probe-cost {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.probe-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 12px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.probe-row.head {
+  background: var(--surface);
+}
+
+.probe-row + .probe-row.head {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.probe-row.overridden {
+  background: var(--warning-soft);
+  border-left: 3px solid var(--warning);
+}
+
+.probe-row.overridden input {
+  width: 96px;
+  font: inherit;
+}
+
+.probe-override-note {
+  color: var(--warning-text);
+  font-family: var(--font-ui);
+}
+
+.probe-toggle {
+  cursor: pointer;
+}
+
+.probe-caret {
+  display: inline-block;
+  width: 14px;
+  color: var(--muted);
+}
+
+.probe-row-end {
+  margin-left: auto;
+  flex: none;
+}
+
+.probe-lag-head {
+  cursor: pointer;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.probe-lag {
+  padding: 4px 12px 10px 32px;
+}
+
+.probe-frame {
+  display: grid;
+  grid-template-columns: 96px 120px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.probe-readers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--accent-text);
+}
+
+.probe-reader,
+.probe-cell {
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.probe-reader.placeholder,
+.probe-cell.placeholder,
+.probe-grid-cell.placeholder,
+.probe-swatch {
+  background: var(--placeholder-fill);
+}
+
+.probe-progression {
+  margin-top: 8px;
+  overflow-x: auto;
+}
+
+.probe-table {
+  display: grid;
+  gap: 3px 0;
+  align-items: baseline;
+}
+
+.probe-grid {
+  display: grid;
+  gap: 2px;
+  align-items: center;
+}
+
+.probe-grid-cell {
+  height: 14px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.probe-grid-cell.bad {
+  background: var(--danger);
+}
+
+.probe-grid-head {
+  text-align: center;
+}
+
+.probe-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-family: var(--font-ui);
+}
+
+.probe-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+
+.probe-cost-table {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 16px;
+  padding: 4px 12px 10px 34px;
+}
+
+.probe-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.probe-foot button {
+  margin-left: auto;
 }
 
 .normalizer-params {

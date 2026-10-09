@@ -182,6 +182,97 @@ export interface SampleAgent {
   action: { name: string; value: number[] }[];
 }
 
+// One field probed at one moment (see bluesky_sandbox.checks.probe).
+export interface ProbeOverride {
+  target: string; // "traf:<path>" or "call:<module>:<qualname>"
+  value: number;
+  aircraft?: string | null;
+  leaf?: string;
+}
+
+export interface ProbeStage {
+  name: string;
+  actual: any;
+  expected: any;
+  note: string;
+  agrees: boolean | null;
+}
+
+export interface ProbeNode {
+  label: string;
+  value: string;
+  key: string | null;
+  overridden: boolean;
+  leaves: [string, string][];
+  children: ProbeNode[];
+}
+
+export interface ProbeCell {
+  steps: number;
+  value: number | null;
+  expected: number | null;
+  placeholder: boolean;
+  agrees: boolean | null;
+}
+
+export interface ProbeLag {
+  inner: string;
+  lags: number[];
+  depth: number | null;
+  frames: { back: number; value: number; read_by: number[]; placeholder: number[]; sim_time_s?: number }[];
+  progression: { sim_time_s: number; cells: ProbeCell[] }[];
+  first_s: number | null;
+  start_s: number | null;
+  fields: string[];
+}
+
+export interface ProbeCost {
+  aircraft?: number;
+  max_aircraft?: number;
+  ms?: Record<string, number>;
+  ms_at_max?: Record<string, number>;
+  batched_path?: boolean;
+}
+
+export interface ProbeResultBody {
+  field: string;
+  kind: "observation" | "pair" | "action";
+  aircraft: string;
+  other: string | null;
+  sim_time_s: number;
+  stages: ProbeStage[];
+  trace: ProbeNode[];
+  unit: string;
+  bounds: [number, number] | null;
+  curve: [number, number][];
+  choices: { choice: number; steps: number; value: number; on_grid: number; target: number | null }[];
+  command: string[];
+  lag: ProbeLag | null;
+  cost: ProbeCost;
+  notes: string[];
+}
+
+export interface ProbeResult {
+  seed: number;
+  sim_time_s: number;
+  aircraft: string[];
+  acid: string | null;
+  result?: ProbeResultBody;
+  error?: string;
+}
+
+export interface ProbeRequest {
+  list: string;
+  entry: number;
+  part?: number;
+  seed?: number;
+  at_s?: number;
+  acid?: string | null;
+  other?: string | null;
+  overrides?: ProbeOverride[];
+  give?: number | null;
+}
+
 export interface SampleResult {
   seed: number;
   sim_time_s: number;
@@ -431,6 +522,13 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spec, seed, at_s: atS, acid, max_agents: maxAgents, max_intruders: maxIntruders }),
     }).then((r) => jsonOrThrow<SampleResult>(r)),
+
+  probe: (spec: SpecDict, request: ProbeRequest) =>
+    trackedFetch("/api/spec/probe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec, ...request }),
+    }).then((r) => jsonOrThrow<ProbeResult>(r)),
 
   runStatus: () => fetch("/api/spec/run/status").then((r) => jsonOrThrow<RunStatus>(r)),
 

@@ -89,6 +89,8 @@ export default function SpacesEditor({
         {/* ------------------------------------------------------ observations */}
         <Section title="Observations" subtitle="ownship + intruder features" hint="What the policy sees each step. Ownship fields describe the aircraft being controlled; intruder fields are repeated once per other aircraft in view. Critic-only fields are visible to the value network but never to the policy.">
           <FieldList
+            spec={spec}
+            listKey="obs_fields"
             label="ownship"
             fields={env.obs_fields ?? []}
             options={(catalog?.obs_fields ?? []).filter((f: any) => !f.pair_only)}
@@ -114,6 +116,8 @@ export default function SpacesEditor({
             </label>
             {env.intruder_obs_fields != null && (
               <FieldList
+            spec={spec}
+            listKey="intruder_obs_fields"
                 label="intruder"
                 fields={env.intruder_obs_fields}
                 options={catalog?.obs_fields ?? []}
@@ -181,6 +185,8 @@ export default function SpacesEditor({
             </label>
             {env.critic_obs_fields != null && (
               <FieldList
+            spec={spec}
+            listKey="critic_obs_fields"
                 label="critic ownship"
                 fields={env.critic_obs_fields}
                 options={(catalog?.obs_fields ?? []).filter((f: any) => !f.pair_only)}
@@ -208,6 +214,8 @@ export default function SpacesEditor({
             </label>
             {env.critic_intruder_obs_fields != null && (
               <FieldList
+            spec={spec}
+            listKey="critic_intruder_obs_fields"
                 label="critic intruder"
                 fields={env.critic_intruder_obs_fields}
                 options={catalog?.obs_fields ?? []}
@@ -252,6 +260,8 @@ export default function SpacesEditor({
               </label>
               {env[key] != null && (
                 <FieldList
+            spec={spec}
+            listKey={key}
                   label={label}
                   addLabel={`Add ${perIntruder ? "an intruder" : "an ownship"} state field…`}
                   fields={env[key]}
@@ -276,6 +286,8 @@ export default function SpacesEditor({
         {/* ----------------------------------------------------------- actions */}
         <Section title="Actions" subtitle="agent control axes" hint="What the policy can command each step. A continuous action takes a range, usually normalized to [-1, 1]; the field decides what that maps to (a heading delta, an altitude delta, a speed target). A switch takes 0 or 1. With any switch, the action space is a Dict of the two parts: continuous and binary.">
           <FieldList
+            spec={spec}
+            listKey="action_fields"
             label="action"
             fields={env.action_fields ?? []}
             options={catalog?.action_fields ?? []}

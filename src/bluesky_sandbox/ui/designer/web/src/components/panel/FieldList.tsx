@@ -7,6 +7,7 @@ import type { SpecDict } from "../../api";
 import { scaffoldClass, type Scaffolds } from "../../specHelpers";
 import { registerPythonIntel } from "../../code/pythonEditor";
 import { FieldPicker } from "./FieldPicker";
+import { FieldProbe } from "./FieldProbe";
 import { Picker } from "./Picker";
 import { normalizerColor } from "../../normColors";
 import { editorTheme, useTheme } from "../../theme";
@@ -99,6 +100,8 @@ export function FieldList({
   allowRelative,
   references = {},
   addLabel,
+  spec,
+  listKey,
 }: {
   label: string;
   fields: SpecDict[];
@@ -119,6 +122,10 @@ export function FieldList({
   references?: Record<string, Choice[]>;
   // The add picker's placeholder, when the label alone does not say it.
   addLabel?: string;
+  // The design and the list these fields are in (`obs_fields`, ...): with
+  // them, a field's editor can probe it.
+  spec?: SpecDict;
+  listKey?: string;
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   // A row being dragged, and the gap it would drop into (0 is before the first).
@@ -306,6 +313,7 @@ export function FieldList({
           onChange={(kw) => setKwargs(editing, kw)}
           onFieldChange={(nextField) => setField(editing, nextField)}
           onClose={() => setEditing(null)}
+          probe={spec && listKey ? { spec, listKey, entry: editing } : undefined}
         />
       )}
 
@@ -405,6 +413,7 @@ function FieldConfigModal({
   onChange,
   onFieldChange,
   onClose,
+  probe,
 }: {
   field: SpecDict;
   option?: FieldOption;
@@ -420,8 +429,10 @@ function FieldConfigModal({
   onChange: (kwargs: SpecDict) => void;
   onFieldChange: (field: SpecDict) => void;
   onClose: () => void;
+  probe?: { spec: SpecDict; listKey: string; entry: number };
 }) {
   const { theme } = useTheme();
+  const [tab, setTab] = useState<"code" | "probe">("code");
   const queryableSpec = option?.queryable_spec ?? option?.profile?.queryable_spec ?? null;
   const params = (option?.params ?? []).filter((p) => p.name !== "normalizer");
   const genericParams = params.filter((p) => !isQueryableParam(p.name, queryableSpec));
@@ -667,6 +678,26 @@ function FieldConfigModal({
           </div>
 
           <div className="modal-pane">
+            {probe && (
+              <div className="pane-tabs" role="tablist">
+                <button role="tab" aria-selected={tab === "code"} className={tab === "code" ? "on" : ""} onClick={() => setTab("code")}>
+                  Code
+                </button>
+                <button role="tab" aria-selected={tab === "probe"} className={tab === "probe" ? "on" : ""} onClick={() => setTab("probe")}>
+                  Probe
+                </button>
+              </div>
+            )}
+            {probe && tab === "probe" ? (
+              <FieldProbe
+                spec={probe.spec}
+                listKey={probe.listKey}
+                entry={probe.entry}
+                kind={kind}
+                stepNormalizer={normalizer?.name === "StepNormalizer" ? normalizer : null}
+              />
+            ) : (
+            <>
             <div className="sub-label">{option ? "frozen code profile" : "custom code profile"}</div>
             <ProfileBlock option={option} field={field} />
             {custom ? (
@@ -706,6 +737,8 @@ function FieldConfigModal({
               </>
             ) : (
               <div className="muted small">source profile unavailable for this custom reference</div>
+            )}
+            </>
             )}
           </div>
         </div>
