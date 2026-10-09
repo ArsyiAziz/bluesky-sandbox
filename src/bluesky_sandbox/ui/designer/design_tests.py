@@ -234,7 +234,7 @@ def cases_module(spec: DesignSpec, package: str | None = None) -> str | None:
     situations = design_situations(spec)
     cases = design_cases(spec)
     em = _Emitter(package=package)
-    case_lines = [_case(d, {k: _expr(em, ref) for k, ref in refs.items()}) for d, refs in cases]
+    case_lines = [_case(d, {k: em.field(ref, _module(k, d)) for k, ref in refs.items()}) for d, refs in cases]
     situation_lines = [_situation(s) for s in situations]
     return f'''"""This design's test cases: situations placed by hand, and the value each
 field should give in them. Run them with ``bluesky_sandbox.checks.run_cases``.
@@ -266,11 +266,14 @@ def _aircraft(a: Aircraft) -> str:
     return f"Aircraft({a.acid!r}, {', '.join(given)})"
 
 
-def _expr(em: _Emitter, ref: FieldRef) -> str:
-    """``ref`` as code: from the actions module where it names an action."""
-    from bluesky_sandbox.interface.fields import actions  # noqa: PLC0415
-
-    return em.field(ref, "act" if hasattr(actions, ref.name) else "obs")
+def _module(key: str, case: dict[str, Any]) -> str:
+    """The module a case's field ``key`` is written from: what it gives
+    (``apply``) is an action, and what it reads is that action when it reads
+    what it gave, else an observation. Never by name - an observation and an
+    action can share one (``AltFt`` is both)."""
+    if key == "apply" or case.get("apply") == case["field"]:
+        return "act"
+    return "obs"
 
 
 def _case(d: dict[str, Any], exprs: dict[str, str]) -> str:

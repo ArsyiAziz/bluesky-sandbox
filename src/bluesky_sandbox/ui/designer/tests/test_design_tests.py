@@ -226,3 +226,20 @@ def test_the_command_line_runs_them_and_exits_as_pytest_does(tmp_path):
     assert cli_main(["design", "test", str(tmp_path / "ok"), "-q", "-p", "no:warnings"]) == 0
     write_folder(_with_files({"test_mine.py": _MY_TESTS}), tmp_path / "failing")
     assert cli_main(["design", "test", str(tmp_path / "failing"), "-q", "-p", "no:warnings"]) == 1
+
+
+def test_an_observation_and_an_action_of_one_name_are_told_apart():
+    # AltFt is an observation and an action. Read alone, it is the
+    # observation; read after giving it a value, the action it gave.
+    tests = _tests()
+    tests["cases"] = [
+        {"situation": "head-on", "field": {"field": "AltFt"}, "expected": 10000, "tolerance": {"abs": 1}},
+        {"situation": "head-on", "apply": {"field": "AltFt"}, "value": 12000, "field": {"field": "AltFt"},
+         "expected": 12000, "tolerance": {"abs": 1}},
+    ]
+    namespace: dict = {}
+    exec(compile(cases_module(_design(tests)), "cases.py", "exec"), namespace)  # noqa: S102
+    observed, given = namespace["CASES"]
+    assert type(observed.field).__module__.endswith("observations.kinematics")
+    assert type(given.field).__module__ == type(given.apply).__module__
+    assert ".actions." in type(given.apply).__module__
