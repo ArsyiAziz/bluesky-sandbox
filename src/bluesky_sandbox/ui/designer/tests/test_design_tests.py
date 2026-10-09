@@ -7,13 +7,11 @@ from __future__ import annotations
 import json
 
 import pytest
-from starlette.testclient import TestClient
 
 from bluesky_sandbox.checks import Case, Situation
 from bluesky_sandbox.cli import main as cli_main
 from bluesky_sandbox.ui.designer import codegen
 from bluesky_sandbox.ui.designer import spec as S
-from bluesky_sandbox.ui.designer.api import create_app
 from bluesky_sandbox.ui.designer.design_tests import cases_module, design_cases
 from bluesky_sandbox.ui.designer.folder import CASES_FILE, read_folder, write_folder
 from bluesky_sandbox.ui.designer.schema import design_schema
@@ -107,42 +105,7 @@ def test_a_package_carries_them_only_when_there_are_some():
     assert "pkg/cases.py" not in codegen.generate_task(_design({}), "pkg")
 
 
-def test_they_run_field_checks_then_cases_and_stream_each_result():
-    client = TestClient(create_app())
-    response = client.post("/api/spec/test", json={"spec": _design().to_dict()})
-    assert response.status_code == 200
-    lines = [json.loads(line) for line in response.text.splitlines() if line.strip()]
-    fields = [r for r in lines if r["kind"] == "field"]
-    cases = {r["index"]: r for r in lines if r["kind"] == "case"}
-    assert fields and all(r["ok"] for r in fields)
-    assert cases[0]["ok"] and cases[0]["got"] == pytest.approx(500.0, rel=0.01)
-    assert not cases[1]["ok"] and cases[1]["got"] == pytest.approx(10_000.0, abs=1)
-    assert lines[-1]["kind"] == "done"
-
-
-def test_broken_tests_are_refused_before_anything_runs():
-    tests = _tests()
-    tests["cases"][0]["situation"] = "nowhere"
-    response = TestClient(create_app()).post("/api/spec/test", json={"spec": _design(tests).to_dict()})
-    assert response.status_code == 422
-    assert "nowhere" in response.json()["detail"]
-
-
-def test_each_situation_is_placed_for_the_tab_to_draw():
-    body = TestClient(create_app()).post("/api/spec/test/situations", json={"spec": _design().to_dict()}).json()
-    own, intr = body["situations"]["head-on"]
-    assert (own["acid"], own["lat"], own["lon"]) == ("OWN", 52.0, 4.0)
-    # 10 nm east of the ownship, as the checks place it.
-    assert intr["lat"] == pytest.approx(52.0, abs=1e-3) and intr["lon"] == pytest.approx(4.0 + 10 / 60 / 0.6157, rel=1e-3)
-    # One being written does not hide the rest: each is placed on its own.
-    tests = _tests()
-    tests["situations"].append({"name": "unfinished", "aircraft": [{"acid": "A", "lat": 52.0, "lon": 4.0}]})
-    body = TestClient(create_app()).post("/api/spec/test/situations", json={"spec": _design(tests).to_dict()}).json()
-    assert list(body["situations"]) == ["head-on"]
-    assert body["errors"] == ["tests: situation 'unfinished', aircraft 'A' needs track_deg, gs_kts, alt_ft, actype"]
-
-
-def test_an_action_case_applies_and_reads():
+def test_an_action_case_applies_and_reads(tmp_path):
     tests = _tests()
     tests["cases"] = [
         {"situation": "head-on", "apply": {"field": "AltDeltaFt"}, "value": 1000, "field": {"field": "AltDeltaFt"},
@@ -157,9 +120,8 @@ def test_an_action_case_applies_and_reads():
     held, selected = namespace["CASES"]
     assert type(held.apply).__name__ == type(held.field).__name__ == "AltDeltaFt" and held.value == 1000
     assert type(selected.field).__name__ == "ApAltFt"
-    response = TestClient(create_app()).post("/api/spec/test", json={"spec": design.to_dict()})
-    cases = [json.loads(line) for line in response.text.splitlines() if '"case"' in line]
-    assert [c["ok"] for c in cases] == [True, True], cases
+    write_folder(design, tmp_path)
+    assert cli_main(["design", "test", str(tmp_path), "-q", "-p", "no:warnings", "-k", "case"]) == 0
 
 
 def test_half_an_action_case_is_refused():
@@ -209,14 +171,6 @@ def test_a_package_runs_its_tests_with_pytest():
     assert {"pkg/tests/conftest.py", "pkg/tests/test_design.py", "pkg/tests/test_mine.py"} <= set(files)
     assert "def design_env" in files["pkg/tests/conftest.py"]
     assert "check_fields(design_env)" in files["pkg/tests/test_design.py"]
-
-
-def test_the_designer_runs_the_test_files_after_the_cases():
-    response = TestClient(create_app()).post("/api/spec/test", json={"spec": _with_files({"test_mine.py": _MY_TESTS}).to_dict()})
-    tests = {r["name"]: r for r in map(json.loads, response.text.splitlines()) if r["kind"] == "test"}
-    assert tests["test_mine.py::test_it_resets_with_aircraft"]["ok"]
-    wrong = tests["test_mine.py::test_wrong_on_purpose"]
-    assert not wrong["ok"] and wrong["line"] == 11 and "not 999 aircraft" in wrong["error"]
 
 
 def test_the_command_line_runs_them_and_exits_as_pytest_does(tmp_path):

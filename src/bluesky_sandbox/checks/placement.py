@@ -43,7 +43,7 @@ class Aircraft:
 
     #: The ways an aircraft is placed, each the fields given together: by
     #: position, or by distance and bearing from an aircraft placed before it.
-    #: Exactly one - what the design schema and the Tests tab read too.
+    #: Exactly one - what the design schema reads too.
     PLACEMENTS: ClassVar[tuple[tuple[str, ...], ...]] = (
         ("lat", "lon"),
         ("relative_to", "distance_nm", "bearing_deg"),

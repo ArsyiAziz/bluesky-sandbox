@@ -16,14 +16,13 @@ import SpacesTab from "./components/SpacesTab";
 import { RefreshContext } from "./refresh";
 import { EpisodeContext, useEpisodeState } from "./episode";
 import MetadataTab from "./components/MetadataTab";
-import TestsTab from "./components/TestsTab";
 import RunModal from "./components/RunModal";
 import AboutModal from "./components/AboutModal";
 import { Picker } from "./components/panel/Picker";
 import brandMark from "@brand/bluesky-sandbox-icon-small.svg";
 import { setThemePreference, type ThemePreference, useTheme } from "./theme";
 
-type Tab = "map" | "route" | "spaces" | "config" | "code" | "tests" | "metadata";
+type Tab = "map" | "route" | "spaces" | "config" | "code" | "metadata";
 
 const normalizeSpec = (spec: SpecDict): SpecDict => {
   const next = migrateTypesOntoRegions(
@@ -73,12 +72,6 @@ const TABS: { id: Tab; label: string; hint: string; icon: string }[] = [
     label: "Code",
     hint: "The design's code: hooks, task info, custom fields, and the spec itself",
     icon: "m8.6 16.6-4.6-4.6 4.6-4.6L7.2 6 1.2 12l6 6 1.4-1.4Zm6.8 0 4.6-4.6-4.6-4.6L16.8 6l6 6-6 6-1.4-1.4Z",
-  },
-  {
-    id: "tests",
-    label: "Tests",
-    hint: "Test cases for the design's fields",
-    icon: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z",
   },
   {
     id: "metadata",
@@ -533,8 +526,6 @@ export default function App() {
           <RouteTab spec={spec} onSpecChange={updateSpec} />
         ) : tab === "metadata" ? (
           <MetadataTab spec={spec} onChange={updateSpec} />
-        ) : tab === "tests" ? (
-          <TestsTab spec={spec} onChange={updateSpec} />
         ) : tab === "spaces" ? (
           <SpacesTab
             spec={spec}

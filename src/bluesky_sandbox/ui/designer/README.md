@@ -302,9 +302,11 @@ the file as the design runs it; it is rewritten on every save and never read
 back. A design saved earlier as one `.json` file stays one; it still shares
 best that way, and either form converts to the other.
 
-Tests are written in the Tests tab: situations, cases, and test files. A
-generated package holds them in its `tests/` folder, so `pytest` runs them there
-too.
+A design's tests live in its folder's `tests/`: situations and cases in
+`cases.json`, and test files of your own. A generated package holds them in its
+`tests/` folder, so `pytest` runs them there too. In the designer, a field is
+probed from its editor (the Probe tab), and the Spaces tab checks every field
+and times it.
 
 From the command line, without the designer:
 

@@ -41,7 +41,6 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from bluesky_sandbox import __version__
-from bluesky_sandbox.checks import positions
 
 from . import catalog as _catalog
 from . import codegen as _codegen
@@ -50,7 +49,6 @@ from . import runner as _runner
 from . import spec as _spec
 from .builder import BuildError, build_design_config, build_scenario
 from .code_intel import code_intel, describe_type, forget_type_checking_names
-from .design_tests import design_cases, situation_of
 from .diagnostics import diagnostics
 from .mdp import mdp_summary
 from .preview import airspace_warnings, alert_hued_colors, scenario_preview
@@ -472,58 +470,6 @@ def create_app() -> FastAPI:
 
         # Declared unencoded, so the gzip middleware passes each line through
         # as it comes instead of holding the stream to compress it.
-        return StreamingResponse(
-            lines(),
-            media_type="application/x-ndjson",
-            headers={"Content-Encoding": "identity", "Cache-Control": "no-store"},
-        )
-
-    @app.post("/api/spec/test/situations")
-    def test_situations(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        """Where each situation's aircraft are - ``{name: [{acid, lat, lon,
-        track_deg, alt_ft}]}`` - for the Tests tab to draw; each situation on
-        its own, so one being written does not hide the rest (``errors``)."""
-        spec = _parse_spec(body.get("spec", body))
-        out: dict[str, Any] = {}
-        errors: list[str] = []
-        for i, d in enumerate((spec.tests or {}).get("situations") or []):
-            try:
-                s = situation_of(d, i)
-            except ValueError as e:
-                errors.append(str(e))
-                continue
-            at = positions(s)
-            out[s.name] = [
-                {"acid": a.acid, "lat": at[a.acid][0], "lon": at[a.acid][1], "track_deg": a.track_deg, "alt_ft": a.alt_ft}
-                for a in s.aircraft
-            ]
-        return {"ok": not errors, "situations": out, "errors": errors}
-
-    @app.post("/api/spec/test")
-    def test_design(body: dict[str, Any] = Body(...)) -> StreamingResponse:
-        """The design's field checks, then its test cases, one JSON line each
-        as it is known, then a ``done`` line - see
-        :func:`runner.iter_design_tests`. A broken design, or broken tests, is
-        refused before the stream starts; a run that fails midway ends with an
-        ``error`` line."""
-        spec = _parse_spec(body.get("spec", body))
-        try:
-            build_design_config(spec)
-            design_cases(spec)
-        except (BuildError, ValueError, TypeError) as e:
-            raise HTTPException(status_code=422, detail=str(e)) from e
-        run = _runner.iter_design_tests(spec)
-
-        def lines():
-            try:
-                for item in run:
-                    yield json.dumps(item) + "\n"
-                yield json.dumps({"kind": "done"}) + "\n"
-            except (BuildError, ValueError, TypeError) as e:
-                yield json.dumps({"kind": "error", "error": str(e)}) + "\n"
-            finally:
-                run.close()
-
         return StreamingResponse(
             lines(),
             media_type="application/x-ndjson",

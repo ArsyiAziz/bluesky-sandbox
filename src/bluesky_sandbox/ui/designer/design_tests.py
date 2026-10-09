@@ -1,5 +1,5 @@
 """A design's test cases: situations placed by hand, and the value each field
-should give in them - the data the Tests tab edits, checked here and
+should give in them - the data a design folder keeps in ``tests/``, checked here and
 generated into the task package as ``cases.py`` for
 :mod:`bluesky_sandbox.checks` to run::
 
