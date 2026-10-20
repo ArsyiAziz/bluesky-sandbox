@@ -41,6 +41,23 @@ demo_task/
   __main__.py   # python -m demo_task - a short example rollout
 ```
 
+### Templates
+
+The **Generate task** dialog has three templates. The design keeps the selected
+template in `metadata["template"]`.
+
+| Template | Adds | Use it to |
+|---|---|---|
+| **Plain** | nothing | Use the environment with your own trainer. |
+| **RL** | `train.py`: a training-loop scaffold for the MDP of the design | Write your own algorithm. The scaffold includes a privileged critic and a cost critic when the design needs them. |
+| **SB3** | `train.py`, `evaluate.py`, `masked_ppo.py`, `wrappers.py`, and `networks.py` or `ppo_lagrangian.py` when the design needs them | Train with Stable-Baselines3 PPO, one policy for all agents. |
+
+For the RL and SB3 templates, **processes** sets how many simulators the
+training script runs at the same time (`metadata["processes"]`). With the SB3
+template, the dialog also shows what SB3 cannot do with the design. For
+example, SB3 cannot train a continuous action together with a choice. See the
+[SB3 training tutorial](tutorials/train-sb3.md).
+
 The hooks in `env.py` and the task-info functions in `setup.py` are annotated
 with the types in `task_types.py`, generated from the design: an editor that
 reads annotations (VS Code, PyCharm) completes `context.obs["ownship"]["alt_ft"]`

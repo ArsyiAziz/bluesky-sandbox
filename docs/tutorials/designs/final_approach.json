@@ -1,0 +1,279 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "final_approach"
+  },
+  "airspace": {
+    "ref": "approach_area"
+  },
+  "shapes": {
+    "approach_area": {
+      "type": "region",
+      "footprint": {
+        "type": "disk",
+        "center": {
+          "lat_deg": 40.55,
+          "lon_deg": -73.56
+        },
+        "radius_nm": 45
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 0,
+        "max_ft": 14000
+      }
+    },
+    "east_feed": {
+      "type": "region",
+      "footprint": {
+        "type": "annular_sector",
+        "center": {
+          "lat_deg": 40.5506,
+          "lon_deg": -73.5557
+        },
+        "inner_radius_nm": 28,
+        "outer_radius_nm": 34,
+        "bearing_deg": 80,
+        "half_angle_deg": 12
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 8000,
+        "max_ft": 10000
+      }
+    },
+    "south_feed": {
+      "type": "region",
+      "footprint": {
+        "type": "annular_sector",
+        "center": {
+          "lat_deg": 40.5506,
+          "lon_deg": -73.5557
+        },
+        "inner_radius_nm": 28,
+        "outer_radius_nm": 34,
+        "bearing_deg": 170,
+        "half_angle_deg": 12
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 8000,
+        "max_ft": 10000
+      }
+    },
+    "if31r": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 40.5506,
+          "lon_deg": -73.5557
+        }
+      }
+    },
+    "faf31r": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 40.5979,
+          "lon_deg": -73.659
+        }
+      }
+    },
+    "rw31r": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 40.64517,
+          "lon_deg": -73.76247
+        }
+      }
+    }
+  },
+  "queryables": {
+    "IF31R": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "if31r"
+      },
+      "reach_radius_nm": 2
+    },
+    "FAF31R": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "faf31r"
+      },
+      "reach_radius_nm": 2
+    },
+    "RW31R": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "rw31r"
+      },
+      "reach_radius_nm": 1.5
+    }
+  },
+  "spawn": {
+    "type": "spawn_config",
+    "regions": [
+      {
+        "type": "spawn_region",
+        "name": "east",
+        "shape": {
+          "ref": "east_feed"
+        },
+        "n_aircraft": 5,
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 1500
+        },
+        "params": {
+          "alt_ft": {
+            "type": "range",
+            "low": 8000,
+            "high": 10000
+          },
+          "spd_kts": {
+            "type": "range",
+            "low": 240,
+            "high": 250
+          },
+          "hdg_deg": 260
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 2,
+            "B738": 2,
+            "E190": 1
+          }
+        },
+        "route": "final"
+      },
+      {
+        "type": "spawn_region",
+        "name": "south",
+        "shape": {
+          "ref": "south_feed"
+        },
+        "n_aircraft": 5,
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 1500
+        },
+        "params": {
+          "alt_ft": {
+            "type": "range",
+            "low": 8000,
+            "high": 10000
+          },
+          "spd_kts": {
+            "type": "range",
+            "low": 240,
+            "high": 250
+          },
+          "hdg_deg": 350
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 2,
+            "B738": 2,
+            "E190": 1
+          }
+        },
+        "route": "final"
+      }
+    ],
+    "route": null,
+    "routes": {
+      "final": [
+        {
+          "waypoint": "IF31R",
+          "alt_ft": 3000,
+          "speed_kts": 210
+        },
+        {
+          "waypoint": "FAF31R",
+          "alt_ft": 1900,
+          "speed_kts": 170
+        },
+        {
+          "waypoint": "RW31R",
+          "alt_ft": 100
+        }
+      ]
+    },
+    "conflict_free_spawn": true
+  },
+  "env": {
+    "obs_fields": [
+      {
+        "field": "AltFt",
+        "kwargs": {
+          "low": 0,
+          "high": 12000
+        }
+      },
+      {
+        "field": "CasKts"
+      },
+      {
+        "field": "ActiveRouteWaypointDistanceNm",
+        "kwargs": {
+          "high": 40
+        }
+      },
+      {
+        "field": "ActiveRouteWaypointEteS",
+        "kwargs": {
+          "high": 900
+        }
+      }
+    ],
+    "intruder_obs_fields": [
+      {
+        "field": "DistToOwnNm",
+        "kwargs": {
+          "high": 40
+        }
+      },
+      {
+        "field": "IntruderFixApproachDistNm",
+        "kwargs": {
+          "high": 40
+        }
+      },
+      {
+        "field": "IntruderFixArrivalDeltaS",
+        "kwargs": {
+          "low": -300,
+          "high": 300
+        }
+      }
+    ],
+    "action_fields": [
+      {
+        "field": "ActiveRouteWaypointSpdDeltaKts",
+        "kwargs": {
+          "low": -40,
+          "high": 20
+        }
+      }
+    ],
+    "hooks": {
+      "reward": "reward = 0.0\n# Spacing: an intruder whose path passes within 3 nm of my next fix, and\n# which is due there within 90 s of me, is too close in the sequence.\nintruders = context.obs[\"intruders\"]\nsame_fix = intruders[\"intruder_fix_approach_dist_nm\"] < 3.0\ntoo_close = abs(intruders[\"intruder_fix_arrival_delta_s\"]) < 90.0\nreward -= 0.1 * float((same_fix & too_close).sum())\nif context.separation.los:\n    reward -= 1.0\nif context.query(\"RW31R\").current.satisfied:\n    reward += 10.0\nreturn reward",
+      "terminated": "return context.query(\"RW31R\").current.satisfied",
+      "truncated": "return not context.airspace.current.inside",
+      "on_aircraft_spawned": "# BlueSky leaves VNAV off after ADDWPT: turn it on so the route's\n# altitude constraints are flown.\nbs.stack.stack(f\"VNAV {callsign} ON\")"
+    },
+    "dt": 5.0,
+    "pz_radius_nm": 3.0,
+    "pz_height_ft": 1000,
+    "hook_setup": "import bluesky as bs"
+  }
+}

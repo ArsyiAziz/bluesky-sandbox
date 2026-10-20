@@ -1,0 +1,376 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "storm_arrival"
+  },
+  "airspace": {
+    "ref": "terminal_area"
+  },
+  "shapes": {
+    "terminal_area": {
+      "type": "region",
+      "footprint": {
+        "type": "box",
+        "lat_min_deg": 38.8,
+        "lat_max_deg": 40.3,
+        "lon_min_deg": -75.3,
+        "lon_max_deg": -73.4
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 0,
+        "max_ft": 30000
+      }
+    },
+    "weather_box": {
+      "type": "region",
+      "footprint": {
+        "type": "box",
+        "lat_min_deg": 39.3,
+        "lat_max_deg": 40.2,
+        "lon_min_deg": -74.6,
+        "lon_max_deg": -73.6
+      }
+    },
+    "entry": {
+      "type": "region",
+      "footprint": {
+        "type": "annular_sector",
+        "center": {
+          "lat_deg": 39.0955,
+          "lon_deg": -74.80033333
+        },
+        "inner_radius_nm": 8,
+        "outer_radius_nm": 12,
+        "bearing_deg": 225,
+        "half_angle_deg": 30
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 19000,
+        "max_ft": 24000
+      }
+    },
+    "storm_1": {
+      "type": "region",
+      "footprint": {
+        "type": "generated",
+        "generator": "Blob",
+        "params": {
+          "center": {
+            "lat_deg": 39.62,
+            "lon_deg": -74.12
+          },
+          "radius_nm": {
+            "type": "range",
+            "low": 7,
+            "high": 11
+          },
+          "amplitude": 0.3
+        }
+      },
+      "motion": [
+        {
+          "type": "Drift",
+          "heading_deg": {
+            "type": "range",
+            "low": 0,
+            "high": 360
+          },
+          "speed_kts": {
+            "type": "range",
+            "low": 10,
+            "high": 25
+          },
+          "within": {
+            "ref": "weather_box"
+          }
+        },
+        {
+          "type": "Grow",
+          "rate_per_hr": {
+            "type": "range",
+            "low": -0.3,
+            "high": 0.5
+          },
+          "min_scale": 0.6,
+          "max_scale": 1.6
+        }
+      ]
+    },
+    "storm_2": {
+      "type": "region",
+      "footprint": {
+        "type": "generated",
+        "generator": "Blob",
+        "params": {
+          "center": {
+            "lat_deg": 40.0,
+            "lon_deg": -73.95
+          },
+          "radius_nm": {
+            "type": "range",
+            "low": 5,
+            "high": 8
+          },
+          "amplitude": 0.35
+        }
+      },
+      "motion": [
+        {
+          "type": "Drift",
+          "heading_deg": {
+            "type": "range",
+            "low": 0,
+            "high": 360
+          },
+          "speed_kts": {
+            "type": "range",
+            "low": 10,
+            "high": 25
+          },
+          "within": {
+            "ref": "weather_box"
+          }
+        },
+        {
+          "type": "Spin",
+          "rate_deg_s": 0.02
+        }
+      ]
+    },
+    "sie": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "fix": "SIE"
+      }
+    },
+    "boton": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "fix": "BOTON"
+      }
+    },
+    "hoggs": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "fix": "HOGGS"
+      }
+    },
+    "panze": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "fix": "PANZE"
+      }
+    },
+    "karrs": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "fix": "KARRS"
+      }
+    },
+    "camrn": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "fix": "CAMRN"
+      }
+    }
+  },
+  "queryables": {
+    "SIE": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "sie"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "BOTON": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "boton"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "HOGGS": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "hoggs"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "PANZE": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "panze"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "KARRS": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "karrs"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "CAMRN": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "camrn"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "STORM_1": {
+      "type": "query_region",
+      "shape": {
+        "ref": "storm_1"
+      },
+      "color": "yellow"
+    },
+    "STORM_2": {
+      "type": "query_region",
+      "shape": {
+        "ref": "storm_2"
+      },
+      "color": "yellow"
+    }
+  },
+  "spawn": {
+    "type": "spawn_config",
+    "regions": [
+      {
+        "type": "spawn_region",
+        "name": "south",
+        "shape": {
+          "ref": "entry"
+        },
+        "n_aircraft": 6,
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 3000
+        },
+        "params": {
+          "alt_ft": {
+            "type": "range",
+            "low": 19000,
+            "high": 24000
+          },
+          "spd_kts": {
+            "type": "range",
+            "low": 280,
+            "high": 300
+          },
+          "hdg_deg": 40
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "A321": 1,
+            "B738": 1,
+            "B739": 1
+          }
+        },
+        "route": "CAMRN4"
+      }
+    ],
+    "route": null,
+    "routes": {
+      "CAMRN4": [
+        "SIE",
+        "BOTON",
+        "HOGGS",
+        "PANZE",
+        "KARRS",
+        "CAMRN"
+      ]
+    },
+    "conflict_free_spawn": true
+  },
+  "env": {
+    "obs_fields": [
+      {
+        "field": "AltFt"
+      },
+      {
+        "field": "CasKts"
+      },
+      {
+        "field": "ActiveRouteWaypointDistanceNm",
+        "kwargs": {
+          "high": 60
+        }
+      },
+      {
+        "field": "ActiveRouteWaypointTrackErrorDeg"
+      },
+      {
+        "field": "QueryRegionInside",
+        "kwargs": {
+          "query_name": "STORM_1"
+        }
+      },
+      {
+        "field": "QueryRegionInside",
+        "kwargs": {
+          "query_name": "STORM_2"
+        }
+      },
+      {
+        "field": "ClearanceTimeLeftS",
+        "kwargs": {
+          "target": "active_route_waypoint_hdg_delta_deg"
+        }
+      }
+    ],
+    "intruder_obs_fields": [
+      {
+        "field": "DistToOwnNm",
+        "kwargs": {
+          "high": 40
+        }
+      },
+      {
+        "field": "BrgFromOwnRelTrkDeg"
+      }
+    ],
+    "action_fields": [
+      {
+        "field": "ActiveRouteWaypointHdgDeltaDeg",
+        "kwargs": {
+          "low": -60,
+          "high": 60
+        },
+        "clearance": {
+          "duration": [
+            60,
+            600
+          ],
+          "lock": "duration",
+          "duration_grid": {
+            "type": "grid",
+            "step": 60
+          }
+        }
+      }
+    ],
+    "hooks": {
+      "reward": "camrn = context.query(\"CAMRN\").step\nreward = -0.01  # time: a detour or a turn-back costs\nif context.query(\"STORM_1\").current.inside or context.query(\"STORM_2\").current.inside:\n    reward -= 1.0\nif context.separation.los:\n    reward -= 1.0\nif camrn.reached or camrn.satisfied:\n    reward += 10.0\nreturn reward",
+      "terminated": "# Checked on every substep: passed by LNAV, or inside the reach ring\n# at any moment of the step.\ncamrn = context.query(\"CAMRN\").step\nreturn camrn.reached or camrn.satisfied",
+      "truncated": "# Left the terminal area without reaching CAMRN.\nreturn not context.airspace.current.inside"
+    },
+    "dt": 5.0
+  }
+}
