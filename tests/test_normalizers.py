@@ -710,6 +710,17 @@ def test_an_unset_normalizer_reports_bounds_per_aircraft():
     assert (low[0], high[0]) == field.bounds(0)
 
 
+def test_pinned_bounds_bound_the_space_of_a_dynamic_field():
+    """A dynamic field with ``low`` and ``high`` given has the same bounds for
+    every aircraft, so its space is bounded by them, not left infinite: SB3's
+    PPO refuses a continuous action space without finite bounds."""
+    field = actions.ActiveRouteWaypointSpdDeltaKts(low=-40, high=20)
+    assert field.meta.dynamic_bounds
+    assert services._field_output_bounds(field, None) == ([-40.0], [20.0])
+    unpinned = actions.ActiveRouteWaypointSpdDeltaKts()
+    assert services._field_output_bounds(unpinned, None) == ([-math.inf], [math.inf])
+
+
 # ---- lag depth ------------------------------------------------------------ #
 #
 # ``LaggedObs``/``LaggedPair`` promise that "bounds, normalizer and output size
