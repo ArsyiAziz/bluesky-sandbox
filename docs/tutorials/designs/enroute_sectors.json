@@ -1,0 +1,515 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "enroute_sectors"
+  },
+  "airspace": {
+    "ref": "center"
+  },
+  "shapes": {
+    "center": {
+      "type": "region",
+      "footprint": {
+        "type": "box",
+        "lat_min_deg": 39.5,
+        "lat_max_deg": 41.5,
+        "lon_min_deg": -82.0,
+        "lon_max_deg": -79.0
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 24000,
+        "max_ft": 45000
+      }
+    },
+    "sectors": {
+      "type": "region",
+      "footprint": {
+        "type": "generated",
+        "generator": "VoronoiSectors",
+        "params": {
+          "parent": {
+            "ref": "center"
+          },
+          "sectors": 4,
+          "min_spacing_nm": 40
+        }
+      }
+    },
+    "west_entry": {
+      "type": "region",
+      "footprint": {
+        "type": "box",
+        "lat_min_deg": 40.0,
+        "lat_max_deg": 41.0,
+        "lon_min_deg": -81.95,
+        "lon_max_deg": -81.8
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 29000,
+        "max_ft": 39000
+      }
+    },
+    "east_entry": {
+      "type": "region",
+      "footprint": {
+        "type": "box",
+        "lat_min_deg": 40.0,
+        "lat_max_deg": 41.0,
+        "lon_min_deg": -79.2,
+        "lon_max_deg": -79.05
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 29000,
+        "max_ft": 39000
+      }
+    },
+    "south_entry": {
+      "type": "region",
+      "footprint": {
+        "type": "box",
+        "lat_min_deg": 39.55,
+        "lat_max_deg": 39.65,
+        "lon_min_deg": -81.0,
+        "lon_max_deg": -80.0
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 29000,
+        "max_ft": 39000
+      }
+    },
+    "north_entry": {
+      "type": "region",
+      "footprint": {
+        "type": "box",
+        "lat_min_deg": 41.35,
+        "lat_max_deg": 41.45,
+        "lon_min_deg": -81.0,
+        "lon_max_deg": -80.0
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 29000,
+        "max_ft": 39000
+      }
+    },
+    "west_exit": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 40.5,
+          "lon_deg": -81.8
+        }
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 24000,
+        "max_ft": 45000
+      }
+    },
+    "east_exit": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 40.5,
+          "lon_deg": -79.2
+        }
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 24000,
+        "max_ft": 45000
+      }
+    },
+    "south_exit": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 39.65,
+          "lon_deg": -80.5
+        }
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 24000,
+        "max_ft": 45000
+      }
+    },
+    "north_exit": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 41.35,
+          "lon_deg": -80.5
+        }
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 24000,
+        "max_ft": 45000
+      }
+    }
+  },
+  "queryables": {
+    "WEST_EXIT": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "west_exit"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "EAST_EXIT": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "east_exit"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "SOUTH_EXIT": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "south_exit"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "NORTH_EXIT": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "north_exit"
+      },
+      "reach_radius_nm": 5,
+      "track_temporal_state": true
+    },
+    "SECTOR_0": {
+      "type": "query_region",
+      "shape": {
+        "ref": "sectors.0"
+      }
+    },
+    "SECTOR_1": {
+      "type": "query_region",
+      "shape": {
+        "ref": "sectors.1"
+      }
+    },
+    "SECTOR_2": {
+      "type": "query_region",
+      "shape": {
+        "ref": "sectors.2"
+      }
+    },
+    "SECTOR_3": {
+      "type": "query_region",
+      "shape": {
+        "ref": "sectors.3"
+      }
+    }
+  },
+  "spawn": {
+    "type": "spawn_config",
+    "regions": [
+      {
+        "type": "spawn_region",
+        "name": "west",
+        "shape": {
+          "ref": "west_entry"
+        },
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "randint",
+          "args": [
+            4,
+            7
+          ],
+          "kwds": {}
+        },
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 1500
+        },
+        "params": {
+          "alt_ft": {
+            "type": "envelope",
+            "alt_floor_ft": 33000,
+            "alt_step_ft": 2000
+          },
+          "spd_kts": {
+            "type": "range",
+            "low": 270,
+            "high": 300
+          },
+          "hdg_deg": 90
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "B738": 1,
+            "A333": 1,
+            "B77W": 1
+          }
+        },
+        "route": "eastbound"
+      },
+      {
+        "type": "spawn_region",
+        "name": "east",
+        "shape": {
+          "ref": "east_entry"
+        },
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "randint",
+          "args": [
+            4,
+            7
+          ],
+          "kwds": {}
+        },
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 1500
+        },
+        "params": {
+          "alt_ft": {
+            "type": "envelope",
+            "alt_floor_ft": 33000,
+            "alt_step_ft": 2000
+          },
+          "spd_kts": {
+            "type": "range",
+            "low": 270,
+            "high": 300
+          },
+          "hdg_deg": 270
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "B738": 1,
+            "A333": 1,
+            "B77W": 1
+          }
+        },
+        "route": "westbound"
+      },
+      {
+        "type": "spawn_region",
+        "name": "south",
+        "shape": {
+          "ref": "south_entry"
+        },
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "randint",
+          "args": [
+            4,
+            7
+          ],
+          "kwds": {}
+        },
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 1500
+        },
+        "params": {
+          "alt_ft": {
+            "type": "envelope",
+            "alt_floor_ft": 33000,
+            "alt_step_ft": 2000
+          },
+          "spd_kts": {
+            "type": "range",
+            "low": 270,
+            "high": 300
+          },
+          "hdg_deg": 0
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "B738": 1,
+            "A333": 1,
+            "B77W": 1
+          }
+        },
+        "route": "northbound"
+      },
+      {
+        "type": "spawn_region",
+        "name": "north",
+        "shape": {
+          "ref": "north_entry"
+        },
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "randint",
+          "args": [
+            4,
+            7
+          ],
+          "kwds": {}
+        },
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 1500
+        },
+        "params": {
+          "alt_ft": {
+            "type": "envelope",
+            "alt_floor_ft": 33000,
+            "alt_step_ft": 2000
+          },
+          "spd_kts": {
+            "type": "range",
+            "low": 270,
+            "high": 300
+          },
+          "hdg_deg": 180
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "B738": 1,
+            "A333": 1,
+            "B77W": 1
+          }
+        },
+        "route": "southbound"
+      }
+    ],
+    "route": null,
+    "routes": {
+      "eastbound": [
+        "EAST_EXIT"
+      ],
+      "westbound": [
+        "WEST_EXIT"
+      ],
+      "northbound": [
+        "NORTH_EXIT"
+      ],
+      "southbound": [
+        "SOUTH_EXIT"
+      ]
+    },
+    "conflict_free_spawn": true
+  },
+  "env": {
+    "obs_fields": [
+      {
+        "field": "AltFt",
+        "kwargs": {
+          "low": 24000,
+          "high": 45000
+        }
+      },
+      {
+        "field": "ActiveRouteWaypointDistanceNm",
+        "kwargs": {
+          "high": 200
+        }
+      },
+      {
+        "field": "ActiveRouteWaypointTrackErrorDeg"
+      },
+      {
+        "field": "ClearanceTimeLeftS",
+        "kwargs": {
+          "target": "active_route_waypoint_hdg_delta_deg"
+        }
+      },
+      {
+        "field": "QueryRegionInside",
+        "kwargs": {
+          "query_name": "SECTOR_0"
+        }
+      },
+      {
+        "field": "QueryRegionInside",
+        "kwargs": {
+          "query_name": "SECTOR_1"
+        }
+      },
+      {
+        "field": "QueryRegionInside",
+        "kwargs": {
+          "query_name": "SECTOR_2"
+        }
+      },
+      {
+        "field": "QueryRegionInside",
+        "kwargs": {
+          "query_name": "SECTOR_3"
+        }
+      }
+    ],
+    "intruder_obs_fields": [
+      {
+        "field": "DistToOwnNm",
+        "kwargs": {
+          "high": 60
+        }
+      },
+      {
+        "field": "BrgFromOwnRelTrkDeg"
+      },
+      {
+        "field": "ConflictTcpaS"
+      },
+      {
+        "field": "ConflictHorizontalDistAtCpaNm"
+      },
+      {
+        "field": "ConflictVerticalSepAtCpaFt"
+      }
+    ],
+    "action_fields": [
+      {
+        "field": "ActiveRouteWaypointHdgDeltaDeg",
+        "kwargs": {
+          "low": -45,
+          "high": 45
+        },
+        "clearance": {
+          "duration": [
+            60,
+            600
+          ],
+          "lock": "duration",
+          "duration_grid": {
+            "type": "grid",
+            "step": 60
+          }
+        }
+      }
+    ],
+    "hooks": {
+      "reward": "reward = 0.0\nif context.separation.los:\n    reward -= 1.0\nelif context.separation.conflict:\n    reward -= 0.1\nreturn reward",
+      "terminated": "# Reached the exit on its own route (route.index is None for the others),\n# checked on every substep.\nfor name in (\"EAST_EXIT\", \"WEST_EXIT\", \"NORTH_EXIT\", \"SOUTH_EXIT\"):\n    exit_fix = context.query(name)\n    if exit_fix.route.index is not None and (exit_fix.step.reached or exit_fix.step.satisfied):\n        return True\nreturn False",
+      "truncated": "return not context.airspace.current.inside"
+    },
+    "dt": 5.0,
+    "cd_method": "CSTATEBASED",
+    "pz_radius_nm": 5.0,
+    "pz_height_ft": 1000,
+    "lookahead_s": 300
+  }
+}

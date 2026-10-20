@@ -47,8 +47,25 @@ for _ in range(1000):
 env.close()
 ```
 
-Swap the random policy for your learner and you are training. 
+Swap the random policy for your learner and you are training.
+
+## 3. Train with Stable-Baselines3
+
+To get training code with the package, select the **SB3** template in the
+**Generate task** dialog. The package then also contains `train.py` and
+`evaluate.py`. All agents share one PPO policy:
+
+```bash
+pip install "bluesky-sandbox[sb3] @ git+https://github.com/ArsyiAziz/bluesky-sandbox.git"
+python -m demo_task.train       # train; the model is saved as ppo_demo_task.zip
+tensorboard --logdir runs       # the training curves
+python -m demo_task.evaluate    # fly the trained policy
+```
+
+The [SB3 training tutorial](tutorials/train-sb3.md) trains a speed policy on
+the final approach task, step by step.
 
 ## Next steps
+- [Tutorials](tutorials/index.md): Build complete tasks in the designer, and train a policy on one.
 - [Environment and configuration](api/env.md): Customize core Bluesky Simulator settings, reward hooks, and termination rules.
 - [Observation and action fields](api/fields.md): Define agent observations spaces and action spaces.
