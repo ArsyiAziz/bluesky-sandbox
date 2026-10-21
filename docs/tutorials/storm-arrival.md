@@ -82,11 +82,11 @@ of the 18 aircraft that reached CAMRN. All three came back to LNAV after a
 vector and passed CAMRN outside the reach ring, so no end-of-step position was
 inside it. Substep tracking caught all 18.
 
-Next, in the **Route** tab, create a route named `CAMRN4` with the six fixes in
+Next, in the **Route** tab, create a route named `CAMRN5` with the six fixes in
 order:
 
 ```json
-"routes": {"CAMRN4": ["SIE", "BOTON", "HOGGS", "PANZE", "KARRS", "CAMRN"]}
+"routes": {"CAMRN5": ["SIE", "BOTON", "HOGGS", "PANZE", "KARRS", "CAMRN"]}
 ```
 
 At spawn, the environment gives this route to BlueSky as a flight plan. The
@@ -119,7 +119,7 @@ Then set up the spawn region on this shape:
              "spd_kts": {"type": "range", "low": 280, "high": 300},
              "hdg_deg": 40},
   "aircraft_type": {"type": "categorical", "weights": {"A320": 1, "A321": 1, "B738": 1, "B739": 1}},
-  "route": "CAMRN4"
+  "route": "CAMRN5"
 }
 ```
 
@@ -237,7 +237,7 @@ Dict('binary': MultiBinary(1), 'continuous': Box([-60. 60.], [60. 600.], (2,), f
 - `lock: "duration"` refuses a new heading until the current clearance has run
   out. A vector is flown, not only started.
 - When the duration ends, own navigation (LNAV) takes the heading back, and
-  the aircraft continues along `CAMRN4`.
+  the aircraft continues along `CAMRN5`.
 
 :::{important}
 Do not use the plain `ActiveRouteWaypointHdgDeltaDeg` action for a route task.
