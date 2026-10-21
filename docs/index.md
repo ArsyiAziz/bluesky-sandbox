@@ -4,12 +4,11 @@ Highly modular Air Traffic Control environments for machine learning.
 
 Bluesky Sandbox is a [PettingZoo](https://pettingzoo.farama.org/) framework powered by the
 open-source [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) ATM simulator. It turns
-Air Traffic Control problems — sector conflict resolution, arrival sequencing, trajectory
-optimization — into customizable multi-agent environments with minimal setup.
+Air Traffic Control problems (sector conflict resolution, arrival sequencing, trajectory
+optimization) into customizable multi-agent environments with minimal setup.
 
 :::{warning}
-Bluesky Sandbox is in active development and not yet on PyPI. Install directly from git —
-see [Installation](installation.md).
+Bluesky Sandbox is in active development and not yet on PyPI. Install directly from git, see [Installation](installation.md).
 :::
 
 ```{figure} media/point-merge.gif
@@ -63,6 +62,13 @@ diagnostics
 
 ```{toctree}
 :maxdepth: 2
+:caption: Tutorials
+
+tutorials/index
+```
+
+```{toctree}
+:maxdepth: 2
 :caption: Reference
 
 api/index
@@ -84,7 +90,7 @@ Bluesky Sandbox is a sister project to
 | | BlueSky-Gym | Bluesky Sandbox |
 |---|---|---|
 | Interface | Gymnasium, single-agent | PettingZoo `ParallelEnv`, multi-agent |
-| Environments | A curated, prebuilt set — `gym.make('MergeEnv-v0')` | You design your own |
+| Environments | A curated, prebuilt set: `gym.make('MergeEnv-v0')` | You design your own |
 | Best for | Benchmarking against a standard task set | Building a task that does not exist yet |
 
 ## License
