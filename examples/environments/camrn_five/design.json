@@ -1,0 +1,728 @@
+{
+  "version": 1,
+  "nav_cycle": null,
+  "metadata": {
+    "name": "camrn-five",
+    "note": "Arrivals into JFK on the CAMRN FIVE STAR (SIE.CAMRN5): from SIE VORTAC on SIE R-049 and DPK R-221 to CAMRN, crossing HOGGS at FL180 and CAMRN at 11000 and 250 KT, as the chart's planning information expects. Two streams feed SIE in trail, on J121 from RADDS and on oceanic B24 from FISSH. Jets only. Done at CAMRN, where JFK approach would vector them to final."
+  },
+  "airspace": {
+    "ref": "airspace"
+  },
+  "queryables": {
+    "RADDS": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "RADDS"
+      }
+    },
+    "FISSH": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "FISSH"
+      }
+    },
+    "BOTON": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "BOTON"
+      }
+    },
+    "SIE": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "SIE"
+      }
+    },
+    "HOGGS": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "HOGGS"
+      }
+    },
+    "KARRS": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "KARRS"
+      }
+    },
+    "CAMRN": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "CAMRN"
+      }
+    },
+    "J121_ENTRY": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "magenta",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "J121_ENTRY"
+      }
+    },
+    "B24_ENTRY": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "yellow",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "B24_ENTRY"
+      }
+    },
+    "PANZE": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "PANZE"
+      }
+    }
+  },
+  "shapes": {
+    "airspace": {
+      "type": "region",
+      "footprint": {
+        "type": "disk",
+        "center": {
+          "lat_deg": 39.35,
+          "lon_deg": -74.45
+        },
+        "radius_nm": 200,
+        "n_vertices": 72
+      },
+      "altitude": null
+    },
+    "RADDS": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 38.648556,
+          "lon_deg": -75.088467
+        },
+        "fix": "RADDS"
+      }
+    },
+    "FISSH": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 38.891425,
+          "lon_deg": -74.383956
+        },
+        "fix": "FISSH"
+      }
+    },
+    "BOTON": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 39.414472,
+          "lon_deg": -74.454744
+        },
+        "fix": "BOTON"
+      }
+    },
+    "SIE": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 39.0955,
+          "lon_deg": -74.80033333
+        },
+        "fix": "SIE"
+      }
+    },
+    "HOGGS": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 39.582847,
+          "lon_deg": -74.270575
+        },
+        "fix": "HOGGS"
+      }
+    },
+    "KARRS": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 39.840872,
+          "lon_deg": -73.985989
+        },
+        "fix": "KARRS"
+      }
+    },
+    "CAMRN": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 40.017303,
+          "lon_deg": -73.861058
+        },
+        "fix": "CAMRN"
+      }
+    },
+    "J121_ENTRY": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 38.4259,
+          "lon_deg": -75.2313
+        }
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 24000,
+        "max_ft": 28000
+      }
+    },
+    "B24_ENTRY": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 38.7472,
+          "lon_deg": -74.1134
+        }
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 24000,
+        "max_ft": 28000
+      }
+    },
+    "PANZE": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 39.676,
+          "lon_deg": -74.168194
+        },
+        "fix": "PANZE"
+      }
+    }
+  },
+  "spawn": {
+    "type": "spawn_config",
+    "route": null,
+    "routes": {
+      "J121": {
+        "type": "route",
+        "steps": [
+          "RADDS",
+          "SIE"
+        ],
+        "color": "green"
+      },
+      "B24": {
+        "type": "route",
+        "steps": [
+          "FISSH",
+          "SIE"
+        ],
+        "color": "blue"
+      },
+      "CAMRN5": {
+        "type": "route",
+        "steps": [
+          "SIE",
+          "BOTON",
+          {
+            "waypoint": "HOGGS",
+            "alt_ft": 18000
+          },
+          "PANZE",
+          "KARRS",
+          {
+            "waypoint": "CAMRN",
+            "alt_ft": 11000,
+            "speed_kts": 250
+          }
+        ],
+        "color": "magenta"
+      },
+      "VIA_J121": [
+        {
+          "route": "J121"
+        },
+        {
+          "route": "CAMRN5"
+        }
+      ],
+      "VIA_B24": [
+        {
+          "route": "B24"
+        },
+        {
+          "route": "CAMRN5"
+        }
+      ]
+    },
+    "regions": [
+      {
+        "type": "spawn_region",
+        "shape": {
+          "ref": "J121_ENTRY"
+        },
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "randint",
+          "args": [],
+          "kwds": {
+            "low": 3,
+            "high": 6
+          }
+        },
+        "params": {
+          "spd_kts": {
+            "type": "range",
+            "low": 280,
+            "high": 300
+          },
+          "hdg_deg": {
+            "type": "toward_route"
+          }
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "B738": 1,
+            "A321": 1,
+            "B739": 1,
+            "E190": 1
+          }
+        },
+        "callsign_prefixes": null,
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 900
+        },
+        "route": "VIA_J121",
+        "name": "J121",
+        "render_shape": true,
+        "render_name": true,
+        "spawn_gap_s": 120,
+        "conflict_free_spawn": true,
+        "conflict_free_margin_nm": 5,
+        "conflict_free_margin_ft": 1000
+      },
+      {
+        "type": "spawn_region",
+        "shape": {
+          "ref": "B24_ENTRY"
+        },
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "randint",
+          "args": [],
+          "kwds": {
+            "low": 3,
+            "high": 6
+          }
+        },
+        "params": {
+          "spd_kts": {
+            "type": "range",
+            "low": 280,
+            "high": 300
+          },
+          "hdg_deg": {
+            "type": "toward_route"
+          }
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "B738": 1,
+            "A321": 1,
+            "B739": 1,
+            "E190": 1
+          }
+        },
+        "callsign_prefixes": null,
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 900
+        },
+        "route": "VIA_B24",
+        "name": "B24",
+        "render_shape": true,
+        "render_name": true,
+        "spawn_gap_s": 120,
+        "conflict_free_spawn": true,
+        "conflict_free_margin_nm": 5,
+        "conflict_free_margin_ft": 1000
+      }
+    ]
+  },
+  "transform": null,
+  "env": {
+    "obs_fields": [
+      {
+        "field": "ActiveRouteWaypointDistanceNm",
+        "kwargs": {
+          "low": 0,
+          "high": 60,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ActiveRouteWaypointTrackErrorDeg",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "CircularNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "AltFt",
+        "kwargs": {
+          "low": 15000,
+          "high": 25000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "CasKts",
+        "kwargs": {
+          "low": 200,
+          "high": 350,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "VsFtMin",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "TrkDeg",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "CircularNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "GsKts",
+        "kwargs": {
+          "low": 250,
+          "high": 550,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ApCasKts",
+        "kwargs": {
+          "low": 200,
+          "high": 350,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "PerfVminKts",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "PerfVmaxKts",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      }
+    ],
+    "intruder_obs_fields": [
+      {
+        "field": "RelPosAlongTrackNm",
+        "kwargs": {
+          "low": -60,
+          "high": 60,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelPosCrossTrackNm",
+        "kwargs": {
+          "low": -60,
+          "high": 60,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "AltFt",
+        "transform": "relative_to_own",
+        "transform_kwargs": {
+          "low": -2000,
+          "high": 2000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelVelAlongTrackKts",
+        "kwargs": {
+          "low": -600,
+          "high": 600,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelVelCrossTrackKts",
+        "kwargs": {
+          "low": -600,
+          "high": 600,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelVsFtMin",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "DistToOwnNm",
+        "kwargs": {
+          "low": 0,
+          "high": 90,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ConflictTcpaS",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ConflictTlosS",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "InConf"
+      },
+      {
+        "field": "InLosNow"
+      }
+    ],
+    "critic_obs_fields": null,
+    "critic_intruder_obs_fields": null,
+    "state_fields": null,
+    "intruder_state_fields": null,
+    "action_fields": [
+      {
+        "field": "HdgDeg",
+        "clearance": {
+          "duration": null,
+          "lock": null
+        }
+      },
+      {
+        "field": "SpdKts",
+        "clearance": {
+          "duration": null,
+          "lock": null
+        }
+      },
+      {
+        "field": "AutopilotLnav",
+        "clearance": {
+          "duration": null,
+          "lock": null
+        }
+      }
+    ],
+    "task_info_setup": "",
+    "task_info": [],
+    "task_info_providers": [],
+    "hook_setup": "import bluesky as bs\n",
+    "hooks": {
+      "cost": "# Seconds in loss of separation this step.\nreturn float(context.separation.los.time.during_step_s)\n",
+      "on_aircraft_spawned": "# Hook for tasks that need to tune aircraft after route creation.\n# fly the route's altitude and speed crossing\n\n\nbs.stack.stack(f\"VNAV {callsign} ON\")\nreturn None\n",
+      "reward": "# Every minute flown costs 0.1, every second in loss of separation 1:\n# through the encounter safely, and without a long detour.\nreturn -0.1 * self.config.dt / 60.0 - float(context.separation.los.time.during_step_s)\n",
+      "terminated": "# at CAMRN: handed to JFK approach\nreturn context.query(\"CAMRN\").current.within_lateral or not info[\"in_airspace\"]\n",
+      "truncated": "return False\n"
+    },
+    "dt": 1,
+    "simdt": 1,
+    "asas_dt": 1,
+    "cd_method": "CSTATEBASED",
+    "reso_method": null,
+    "intruder_obs_bounds": "ownship",
+    "pz_radius_nm": 5,
+    "pz_height_ft": 1000,
+    "lookahead_s": 300,
+    "performance_model": "openap",
+    "wind_dir_deg": 270,
+    "wind_kts": 0,
+    "turbulence_kts": 0,
+    "gust_tau_s": 30
+  },
+  "code": {},
+  "scenario_setup": "from bluesky.tools.geo import kwikqdrdist, qdrpos\n",
+  "scenario_hooks": {}
+}
