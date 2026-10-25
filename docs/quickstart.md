@@ -21,6 +21,8 @@ demo_task/
   env.py        # reward, termination, and other task hooks
   task_types.py # this design's keys as types, for your editor
   __main__.py   # python -m demo_task - a short smoke rollout
+  __init__.py   # Env, Scenario, and the design's version
+  README.md     # what the design is, from its note.
 ```
 
 > Note: The generated code is built on the primitives defined in the [API reference](api/index.md).
