@@ -5,6 +5,30 @@ from an empty map to a package you can train on. Each one also shows a different
 set of designer features. The last tutorial trains a policy on one of these
 tasks with Stable-Baselines3.
 
+## Start here
+
+::::{grid} 1 1 3 3
+:gutter: 3
+
+:::{grid-item-card} Your first task in the designer
+:link: converging-fix
+:link-type: doc
+:img-top: ../media/tutorials/converging-fix.png
+
+Arrivals converge on one fix near Washington Dulles. A policy gives heading
+offsets to keep them separated. Every step is a click in the designer, with a
+screenshot.
+
+*Search, shapes, spawn traffic, routes, fields, hooks, Run, Generate task.*
+:::
+
+::::
+
+## Designer features
+
+The next three tutorials show each step as the `design.json` that the designer
+writes, so that you can see how each setting is stored.
+
 ::::{grid} 1 1 3 3
 :gutter: 3
 
@@ -87,7 +111,7 @@ package. `test` runs the field checks that are described in
 
 ## The common pattern
 
-All three tasks are built in the same order. The designer tabs follow this order:
+All the tasks are built in the same order. The designer tabs follow this order:
 
 1. **Map**: shapes, waypoints, spawn regions. Everything on the map is a
    named *shape*. The airspace, spawn regions and query regions refer to shapes
@@ -111,6 +135,7 @@ includes such a run and its result.
 ```{toctree}
 :hidden:
 
+converging-fix
 storm-arrival
 final-approach
 enroute-sectors

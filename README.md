@@ -84,6 +84,7 @@ See the [SB3 training tutorial](https://bluesky-sandbox.readthedocs.io/en/latest
 
 | Tutorial | What it shows |
 |---|---|
+| [Your first task in the designer](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/converging-fix.html) | Every step in the designer, with screenshots: map, routes, fields, hooks, Run, Generate task |
 | [Arrival through moving weather](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/storm-arrival.html) | Named fixes, routes, moving shapes, heading clearances |
 | [Final approach spacing](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/final-approach.html) | Route constraints, VNAV, speed control at a merge |
 | [En route sectors](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/enroute-sectors.html) | Sector generators, sampled traffic, conflict detection |

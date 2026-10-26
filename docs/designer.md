@@ -7,7 +7,8 @@ pip install "bluesky-sandbox[designer] @ git+https://github.com/ArsyiAziz/bluesk
 python -m bluesky_sandbox.ui.designer --port 8765
 ```
 
-Then open `http://localhost:8765`.
+Then open `http://localhost:8765`. For a step-by-step walk-through of the
+designer, see [Your first task in the designer](tutorials/converging-fix.md).
 
 ```{image} media/screenshots/designer.png
 :alt: Designing an arrival into JFK.
