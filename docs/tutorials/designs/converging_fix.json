@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "nav_cycle": null,
+  "metadata": {
+    "name": "converging_fix"
+  },
+  "airspace": {
+    "ref": "sector"
+  },
+  "queryables": {
+    "gibbz": {
+      "type": "waypoint",
+      "reach_radius_nm": 1,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "gibbz"
+      }
+    }
+  },
+  "shapes": {
+    "gibbz": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 38.965797,
+          "lon_deg": -77.759592
+        },
+        "fix": "GIBBZ"
+      }
+    },
+    "sector": {
+      "type": "region",
+      "footprint": {
+        "type": "disk",
+        "center": {
+          "lat_deg": 38.965797,
+          "lon_deg": -77.759592
+        },
+        "radius_nm": 40,
+        "n_vertices": 72
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 0,
+        "max_ft": 20000
+      }
+    },
+    "ring": {
+      "type": "region",
+      "footprint": {
+        "type": "annular_sector",
+        "center": {
+          "lat_deg": 38.965797,
+          "lon_deg": -77.759592
+        },
+        "inner_radius_nm": 25,
+        "outer_radius_nm": 35,
+        "bearing_deg": 90,
+        "half_angle_deg": 180,
+        "n_vertices": 48
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 5000,
+        "max_ft": 15000
+      }
+    }
+  },
+  "spawn": {
+    "type": "spawn_config",
+    "regions": [
+      {
+        "type": "spawn_region",
+        "shape": {
+          "ref": "ring"
+        },
+        "n_aircraft": 8,
+        "params": {
+          "spd_kts": {
+            "type": "range",
+            "low": 250,
+            "high": 280
+          },
+          "alt_ft": 10000
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "B738": 1
+          }
+        },
+        "callsign_prefixes": null,
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 900
+        },
+        "route": "direct",
+        "name": "ring",
+        "render_shape": true,
+        "render_name": true,
+        "conflict_free_spawn": true
+      }
+    ],
+    "route": null,
+    "routes": {
+      "direct": [
+        "gibbz"
+      ]
+    }
+  },
+  "transform": null,
+  "env": {
+    "obs_fields": [
+      {
+        "field": "ActiveRouteWaypointDistanceNm",
+        "kwargs": {
+          "high": 40,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "ActiveRouteWaypointTrackErrorDeg",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {}
+          }
+        }
+      }
+    ],
+    "intruder_obs_fields": [
+      {
+        "field": "DistToOwnNm",
+        "kwargs": {
+          "high": 40,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "BrgFromOwnRelTrkDeg",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "ClosingRateKts",
+        "kwargs": {
+          "low": -600,
+          "high": 600,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {}
+          }
+        }
+      }
+    ],
+    "critic_obs_fields": null,
+    "critic_intruder_obs_fields": null,
+    "state_fields": null,
+    "intruder_state_fields": null,
+    "action_fields": [
+      {
+        "field": "ActiveRouteWaypointHdgDeltaDeg",
+        "kwargs": {
+          "low": -45,
+          "high": 45,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {}
+          }
+        }
+      }
+    ],
+    "task_info_setup": "",
+    "task_info": [],
+    "task_info_providers": [],
+    "hook_setup": "",
+    "hooks": {
+      "reward": "# A small cost for every step, so a long detour costs more than a short one.\nreward = -0.01\nif context.separation.los:\n    reward -= 1.0\nif context.query(\"gibbz\").current.satisfied:\n    reward += 10.0\nreturn reward\n",
+      "terminated": "return context.query(\"gibbz\").current.satisfied\n",
+      "truncated": "return not context.airspace.current.inside\n"
+    },
+    "dt": 5,
+    "simdt": null,
+    "asas_dt": null,
+    "cd_method": "CSTATEBASED",
+    "reso_method": null,
+    "intruder_obs_bounds": "ownship",
+    "pz_radius_nm": null,
+    "pz_height_ft": null,
+    "lookahead_s": null,
+    "performance_model": "openap",
+    "wind_dir_deg": 270,
+    "wind_kts": 0,
+    "turbulence_kts": 0,
+    "gust_tau_s": 30
+  },
+  "code": {},
+  "scenario_setup": "",
+  "scenario_hooks": {}
+}

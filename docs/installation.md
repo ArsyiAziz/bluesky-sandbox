@@ -21,18 +21,23 @@ Rendering backends and the designer are optional.
 | `panda3d` | 3D rendering via Panda3D (`render_mode="panda3d"`) |
 | `designer` | Web-based [Environment Designer](designer.md) |
 | `recording` | Video recording in the Pygame driver |
+| `parallel` | Episodes in parallel processes (SuperSuit) |
+| `sb3` | Stable-Baselines3 training: the designer's SB3 template and `sb3_vec_env` (includes `parallel`) |
 | `all` | All backends plus the designer |
 
 ```bash
 # Example: the web designer plus the Pygame backend
 pip install "bluesky-sandbox[designer,pygame] @ git+https://github.com/ArsyiAziz/bluesky-sandbox.git"
+
+# Example: the designer, Pygame and Stable-Baselines3 training
+pip install "bluesky-sandbox[designer,pygame,sb3] @ git+https://github.com/ArsyiAziz/bluesky-sandbox.git"
 ```
 
 ## Development setup
 
 ```bash
 git clone https://github.com/ArsyiAziz/bluesky-sandbox.git
-cd bluesky_sandbox
+cd bluesky-sandbox
 
 pip install -e ".[dev]"
 pytest

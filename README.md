@@ -6,6 +6,8 @@ Bluesky Sandbox is a PettingZoo framework powered by the open-source BlueSky ATM
 
 > ⚠️ Note: Bluesky Sandbox is currently in active development and not yet on PyPI. Install directly via Git (see [Installation](#installation)).
 
+**Docs:** [bluesky-sandbox.readthedocs.io](https://bluesky-sandbox.readthedocs.io/en/latest/) · **Tutorials:** [https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/index.html)
+
 
 <p align="center">
   <img src="docs/media/point-merge.gif" alt="Twenty aircraft sequencing onto a point merge, with live ETA and distance-to-merge tables" width="620">
@@ -19,6 +21,7 @@ Bluesky Sandbox is a PettingZoo framework powered by the open-source BlueSky ATM
 * **Low Boilerplate:**  Graphically plot airspaces, routes, and spawn sectors right in your browser.
 * **Low-Code UI:** Export full, clean Python task packages with pre-configured rewards, actions, and observations.
 * **Multi-Backend Rendering:** Choose between lightweight Pygame, immersive 3D Panda3D, or BlueSky’s native QtGL radar interface.
+* **Ready to Train:** Generate a package with a Stable-Baselines3 PPO training script.
 
 ## Quickstart
 
@@ -43,7 +46,7 @@ demo_task/
   config.py     # observation + action fields, simulator settings
   setup.py      # module-level helpers the hooks lean on
   env.py        # reward, termination, and other task hooks
-  __main__.py   # python -m demo_task — a short smoke rollout
+  __main__.py   # python -m demo_task: a short smoke rollout
 ```
 
 **2.  Plug in Your RL Algorithm.** The generated package exposes a standard PettingZoo Env interface:
@@ -64,6 +67,38 @@ for _ in range(1000):
     obs, rewards, terminations, truncations, infos = env.step(actions)
 
 env.close()
+```
+
+**3. Train with Stable-Baselines3.** Select the **SB3** template in **Generate task**.
+The package then also contains `train.py` and `evaluate.py`:
+
+```bash
+pip install "bluesky-sandbox[sb3] @ git+https://github.com/ArsyiAziz/bluesky-sandbox.git"
+python -m demo_task.train       # one PPO policy shared by all agents
+python -m demo_task.evaluate    # fly the trained policy
+```
+
+See the [SB3 training tutorial](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/train-sb3.html).
+
+## Tutorials
+
+| Tutorial | What it shows |
+|---|---|
+| [Your first task in the designer](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/converging-fix.html) | Every step in the designer, with screenshots: map, routes, fields, hooks, Run, Generate task |
+| [Arrival through moving weather](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/storm-arrival.html) | Named fixes, routes, moving shapes, heading clearances |
+| [Final approach spacing](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/final-approach.html) | Route constraints, VNAV, speed control at a merge |
+| [En route sectors](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/enroute-sectors.html) | Sector generators, sampled traffic, conflict detection |
+| [Train a speed policy with Stable-Baselines3](https://bluesky-sandbox.readthedocs.io/en/latest/tutorials/train-sb3.html) | SB3 template, parallel training, evaluation |
+
+The finished designs are in [`docs/tutorials/designs/`](docs/tutorials/designs/).
+
+## Examples
+
+* [`random_encounters`](examples/environments/random_encounters): 2-6 aircraft on crossing tracks.
+* [`mvp.py`](examples/geometric/mvp.py): BlueSky's MVP conflict resolution as a policy for that task.
+
+```bash
+python -m examples.geometric.mvp 10 --render pygame   # from the repository root
 ```
 
 ## Rendering
@@ -104,6 +139,9 @@ pip install "bluesky-sandbox[designer,pygame] @ git+https://github.com/ArsyiAziz
 | `qtgl` | BlueSky's native QtGL radar window |
 | `panda3d` | 3D rendering via Panda3D (`render_mode="panda3d"`) |
 | `designer` | Web-based Environment Designer |
+| `recording` | Video recording in the Pygame driver |
+| `parallel` | Episodes in parallel processes (SuperSuit) |
+| `sb3` | Stable-Baselines3 training: the designer's SB3 template and `sb3_vec_env` (includes `parallel`) |
 | `all` | Full suite (all backends + designer tools) |
 
 ## Environment Designer
@@ -147,7 +185,7 @@ bluesky-sandbox-doctor
 ```bash
 # Clone the repository
 git clone https://github.com/ArsyiAziz/bluesky-sandbox.git
-cd bluesky_sandbox
+cd bluesky-sandbox
 
 # Install editable package with dev dependencies (Node required for UI build)
 pip install -e ".[dev]"
@@ -176,6 +214,6 @@ Bluesky Sandbox is a sister project to
 | | BlueSky-Gym | Bluesky Sandbox |
 |---|---|---|
 | Interface | Gymnasium, single-agent | PettingZoo `ParallelEnv`, multi-agent |
-| Environments | A curated, prebuilt set — `gym.make('MergeEnv-v0')` | You design your own |
+| Environments | A curated, prebuilt set: `gym.make('MergeEnv-v0')` | You design your own |
 | Best for | Benchmarking against a standard task set | Building a task that does not exist yet |
 

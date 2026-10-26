@@ -58,9 +58,10 @@ def _field_normalizer(field) -> Normalizer | None:
 def _field_output_bounds(field, idx: int | None) -> tuple[list[float], list[float]]:
     normalizer = _field_normalizer(field)
     if normalizer is None:
-        if idx is None and field.meta.dynamic_bounds:
+        if idx is None and _bounds_vary_by_aircraft(field):
             # Unbounded per output component (multi-dim dynamic fields must span
-            # their full width here, not a single element).
+            # their full width here, not a single element). Bounds pinned by
+            # ``low``/``high`` are the same for every aircraft: they bound the space.
             size = _field_output_size(field)
             return [float("-inf")] * size, [float("inf")] * size
         idx = 0 if idx is None else idx

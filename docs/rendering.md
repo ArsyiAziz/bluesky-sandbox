@@ -13,7 +13,7 @@ want during training.
 env = Env(render_mode="pygame")
 ```
 
-Each renderer contains optional extras — see [Installation](installation.md#optional-extras).
+Each renderer contains optional extras, see [Installation](installation.md#optional-extras).
 
 ## Recording video
 
