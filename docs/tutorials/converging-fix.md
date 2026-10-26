@@ -75,6 +75,12 @@ airports…**) at the top left. The list shows **FIX GIBBZ**.
 :align: center
 ```
 
+```{image} ../media/tutorials/designer/02-waypoint.png
+:alt: The element list with the waypoint gibbz under Waypoints
+:width: 300px
+:align: center
+```
+
 A waypoint is a named point that the task can ask about. An aircraft that
 passes within the reach radius (1 nm by default) of `gibbz` has reached it. To
 change the reach radius, click `gibbz` in the list.
