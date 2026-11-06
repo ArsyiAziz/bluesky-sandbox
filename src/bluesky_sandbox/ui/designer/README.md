@@ -61,10 +61,7 @@ validate and preview against the backend live.
   rings so they remain distinct from navdb fixes and stay above the basemap.
 - **Composition** — footprints compose via a `boolean` shape (union / intersection
   / difference) with two nested sub-shapes, to any depth.
-- **Properties panel** — structured forms for the whole design, grouped into
-  **subtabs** (Geometry / Fields / Config / Sampling). Every dropdown is the
-  same searchable, category-grouped picker used by the fields/actions lists
-  (one `Picker` component, uniform across panel, toolbar, and modals):
+- **Tabs** - the design is edited across six tabs: **Map** (airspace, waypoints, spawn regions), **Route** (the route library and each step's crossing), **Spaces** (observation and action fields, with the field probe and report), **Code** (hooks, scenario code, spawn plans, custom code, the generated package), **Config** (simulator and conflict-detection settings), and **Metadata** (design name, version, note). Every dropdown is the same searchable, category-grouped picker used by the fields/actions lists (one `Picker` component, uniform across panel, toolbar, and modals):
   - **All bounds primitives** — every footprint (box / disk / sector /
     annular_sector / polygon / boolean) and altitude band (constant / linear /
     radial / vertex), assignable as the airspace singleton, queryable

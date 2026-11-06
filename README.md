@@ -43,7 +43,10 @@ demo_task/
   config.py     # observation + action fields, simulator settings
   setup.py      # module-level helpers the hooks lean on
   env.py        # reward, termination, and other task hooks
+  task_types.py # this design's keys as types, for your editor
   __main__.py   # python -m demo_task — a short smoke rollout
+  __init__.py   # Env, Scenario, and the design's version
+  README.md     # what the design is, from its note.
 ```
 
 **2.  Plug in Your RL Algorithm.** The generated package exposes a standard PettingZoo Env interface:
@@ -117,9 +120,9 @@ python -m bluesky_sandbox.ui.designer --port 8765 --reload
 Open `http://localhost:8765` in your browser to access the designer.
 
 <p align="center">
-  <img src="docs/media/screenshots/designer.png" alt="The Environment Designer with a CAMRN FOUR arrival into JFK: named waypoints, spawn regions and routes on the map, with the geometry outline alongside" width="620">
+  <img src="docs/media/screenshots/designer.png" alt="The Environment Designer with JFK's CAMRN FIVE arrival: its fixes, two spawn streams feeding SIE, and the route library on the map" width="620">
   <br>
-  <em>Designing an arrival into JFK.</em>
+  <em>Designing JFK's CAMRN FIVE arrival. More of the designer in the <a href="docs/designer.md">designer guide</a>.</em>
 </p>
 
 * **Frontend Development:** To work on the UI directly, run the Vite dev server inside `src/bluesky_sandbox/ui/designer/web`.
