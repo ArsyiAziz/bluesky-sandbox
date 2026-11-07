@@ -90,6 +90,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "src/bluesky_sandbox/ui/designer/tests"]
+pythonpath = ["."]
 
 [tool.black]
 line-length = 88
